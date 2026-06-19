@@ -1,0 +1,9 @@
+.DS_Store
+build/
+cmake-build-*/
+*.dll
+*.so
+*.dylib
+*.tmp
+scores.json
+scores.json.*
