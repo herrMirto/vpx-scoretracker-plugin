@@ -1,0 +1,160 @@
+name: Build ScoreTracker VPX Plugin
+
+on:
+  push:
+    branches: [main, "feat/*"]
+    tags: ["v*"]
+    paths-ignore:
+      - README.md
+  pull_request:
+  workflow_dispatch:
+
+env:
+  VPINBALL_REPO: https://github.com/vpinball/vpinball.git
+  VPINBALL_REF: master
+  PINMAME_REPO: https://github.com/vbousquet/pinmame.git
+  VPINBALL_CONFIG_URL: https://raw.githubusercontent.com/vpinball/vpinball/master/platforms/config.sh
+
+jobs:
+  build:
+    name: Build ${{ matrix.label }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - label: Windows x64
+            runner: windows-latest
+            platform: windows
+            arch: x64
+            package: windows-x64
+          - label: Linux x64
+            runner: ubuntu-22.04
+            platform: linux
+            arch: x64
+            package: linux-x64
+          - label: Linux ARM64
+            runner: ubuntu-24.04-arm
+            platform: linux
+            arch: arm64
+            package: linux-arm64
+          - label: macOS ARM64
+            runner: macos-14
+            platform: macos
+            arch: arm64
+            package: macos-arm64
+    runs-on: ${{ matrix.runner }}
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Clone VPX and resolve its PinMAME revision
+        shell: bash
+        run: |
+          git clone --depth 1 --branch "${{ env.VPINBALL_REF }}" "${{ env.VPINBALL_REPO }}" vpinball-src
+          PINMAME_SHA="$(curl -fsSL "${{ env.VPINBALL_CONFIG_URL }}" | sed -n 's/^PINMAME_SHA=//p')"
+          test -n "$PINMAME_SHA"
+          echo "PINMAME_SHA=$PINMAME_SHA" >> "$GITHUB_ENV"
+
+      - name: Build PinMAME (Windows)
+        if: matrix.platform == 'windows'
+        shell: bash
+        run: |
+          git clone --filter=blob:none --no-checkout "${{ env.PINMAME_REPO }}" pinmame-src
+          git -C pinmame-src fetch --depth 1 origin "$PINMAME_SHA"
+          git -C pinmame-src checkout --detach "$PINMAME_SHA"
+          cp pinmame-src/cmake/libpinmame/CMakeLists.txt pinmame-src/CMakeLists.txt
+          sed -i 's/set(CMAKE_CXX_STANDARD 20)/set(CMAKE_CXX_STANDARD 17)/g' pinmame-src/CMakeLists.txt
+          cmake -S pinmame-src -B pinmame-src/build -G "Visual Studio 17 2022" -A x64 -DPLATFORM=win -DARCH=x64 -DBUILD_SHARED=ON -DBUILD_STATIC=OFF
+          cmake --build pinmame-src/build --config Release
+          mkdir -p vpinball-src/third-party/include vpinball-src/third-party/build-libs/windows-x64 vpinball-src/third-party/runtime-libs/windows-x64
+          cp pinmame-src/src/libpinmame/libpinmame.h vpinball-src/third-party/include/
+          cp pinmame-src/build/Release/pinmame64.lib vpinball-src/third-party/build-libs/windows-x64/
+          cp pinmame-src/build/Release/pinmame64.dll vpinball-src/third-party/runtime-libs/windows-x64/
+
+      - name: Build PinMAME (Unix)
+        if: matrix.platform != 'windows'
+        shell: bash
+        run: |
+          git clone --filter=blob:none --no-checkout "${{ env.PINMAME_REPO }}" pinmame-src
+          git -C pinmame-src fetch --depth 1 origin "$PINMAME_SHA"
+          git -C pinmame-src checkout --detach "$PINMAME_SHA"
+          cp pinmame-src/cmake/libpinmame/CMakeLists.txt pinmame-src/CMakeLists.txt
+          sed -i.bak 's/set(CMAKE_CXX_STANDARD 20)/set(CMAKE_CXX_STANDARD 17)/g' pinmame-src/CMakeLists.txt
+          cmake -S pinmame-src -B pinmame-src/build \
+            -DPLATFORM="${{ matrix.platform }}" \
+            -DARCH="${{ matrix.arch }}" \
+            -DBUILD_STATIC=OFF \
+            -DCMAKE_BUILD_TYPE=Release
+          cmake --build pinmame-src/build --parallel
+          mkdir -p vpinball-src/third-party/include "vpinball-src/third-party/runtime-libs/${{ matrix.platform }}-${{ matrix.arch }}"
+          cp pinmame-src/src/libpinmame/libpinmame.h vpinball-src/third-party/include/
+          if [ "${{ matrix.platform }}" = macos ]; then
+            cp pinmame-src/build/libpinmame.dylib "vpinball-src/third-party/runtime-libs/${{ matrix.platform }}-${{ matrix.arch }}/"
+          else
+            cp pinmame-src/build/libpinmame.so "vpinball-src/third-party/runtime-libs/${{ matrix.platform }}-${{ matrix.arch }}/"
+          fi
+
+      - name: Add ScoreTracker to the VPX source tree
+        shell: bash
+        run: |
+          mkdir -p vpinball-src/plugins/scoretracker
+          cp PluginMain.cpp ScoreTracker.cpp ScoreTracker.h B2STracker.cpp B2STracker.h ScoresFileWriter.cpp ScoresFileWriter.h plugin.cfg vpinball-src/plugins/scoretracker/
+          cp CMakeLists_plugin_ScoreTracker.txt vpinball-src/make/
+          cat > vpinball-src/CMakeLists.txt <<'EOF'
+          cmake_minimum_required(VERSION 3.19)
+          project(scoretracker-plugin)
+          set(CMAKE_CXX_STANDARD 20)
+          set(CMAKE_CXX_STANDARD_REQUIRED ON)
+          set(BUILD_SHARED ON)
+          set(PluginPlatform "${{ matrix.platform }}")
+          set(PluginArch "${{ matrix.arch }}")
+          set(PLUGINS_DIR "${CMAKE_BINARY_DIR}/plugins_output")
+          include("${CMAKE_SOURCE_DIR}/make/CMakeLists_plugin_ScoreTracker.txt")
+          EOF
+
+      - name: Build plugin
+        shell: bash
+        run: |
+          if [ "${{ matrix.platform }}" = windows ]; then
+            cmake -S vpinball-src -B vpinball-src/build -G "Visual Studio 17 2022" -A x64
+          else
+            cmake -S vpinball-src -B vpinball-src/build -DCMAKE_BUILD_TYPE=Release
+          fi
+          cmake --build vpinball-src/build --target ScoreTrackerPlugin --config Release --parallel
+
+      - name: Create plugin ZIP
+        shell: bash
+        run: |
+          mkdir -p dist/scoretracker
+          cp vpinball-src/build/plugins_output/scoretracker/* dist/scoretracker/
+          cd dist
+          cmake -E tar cf "scoretracker-plugin-${{ matrix.package }}.zip" --format=zip scoretracker
+
+      - name: Upload plugin ZIP
+        uses: actions/upload-artifact@v7
+        with:
+          name: scoretracker-plugin-${{ matrix.package }}.zip
+          path: dist/scoretracker-plugin-${{ matrix.package }}.zip
+          archive: false
+
+  release:
+    name: Publish GitHub release
+    needs: build
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/v')
+    permissions:
+      contents: write
+    steps:
+      - name: Download plugin ZIPs
+        uses: actions/download-artifact@v4
+        with:
+          pattern: scoretracker-plugin-*.zip
+          path: dist
+          merge-multiple: true
+
+      - name: Create GitHub release
+        uses: softprops/action-gh-release@v2
+        with:
+          name: ScoreTracker ${{ github.ref_name }}
+          generate_release_notes: true
+          files: dist/scoretracker-plugin-*.zip
