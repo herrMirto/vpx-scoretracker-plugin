@@ -1,9 +1,63 @@
 .DS_Store
-build/
-cmake-build-*/
-*.dll
+
+# Prerequisites
+*.d
+
+# Compiled objects and precompiled headers
+*.slo
+*.lo
+*.o
+*.obj
+*.gch
+*.pch
+
+# Linker and debugger files
+*.ilk
+*.pdb
+
+# Compiled libraries
 *.so
+*.so.*
 *.dylib
+*.dll
+*.lai
+*.la
+*.a
+*.lib
+
+# Executables
+*.exe
+*.out
+*.app
+
+# Build directories
+build/
+Build/
+build-*/
+cmake-build-*/
+
+# CMake generated files
+CMakeFiles/
+CMakeCache.txt
+cmake_install.cmake
+Makefile
+install_manifest.txt
+compile_commands.json
+
+# Temporary files
 *.tmp
+*.log
+*.bak
+*.swp
+
+# Local score output
 scores.json
 scores.json.*
+
+# vcpkg
+vcpkg_installed/
+
+# Debug and test output
+*.dwo
+Testing/
+.cache/
