@@ -83,7 +83,7 @@ jobs:
             -DARCH="${{ matrix.arch }}" \
             -DBUILD_STATIC=OFF \
             -DCMAKE_BUILD_TYPE=Release
-          cmake --build pinmame-src/build --parallel
+          cmake --build pinmame-src/build
           mkdir -p vpinball-src/third-party/include "vpinball-src/third-party/runtime-libs/${{ matrix.platform }}-${{ matrix.arch }}"
           cp pinmame-src/src/libpinmame/libpinmame.h vpinball-src/third-party/include/
           if [ "${{ matrix.platform }}" = macos ]; then
@@ -118,7 +118,7 @@ jobs:
           else
             cmake -S vpinball-src -B vpinball-src/build -DCMAKE_BUILD_TYPE=Release
           fi
-          cmake --build vpinball-src/build --target ScoreTrackerPlugin --config Release --parallel
+          cmake --build vpinball-src/build --target ScoreTrackerPlugin --config Release
 
       - name: Create plugin ZIP
         shell: bash
