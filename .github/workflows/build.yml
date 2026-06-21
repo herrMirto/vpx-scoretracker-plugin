@@ -54,7 +54,10 @@ jobs:
           git clone --depth 1 --branch "${{ env.VPINBALL_REF }}" "${{ env.VPINBALL_REPO }}" vpinball-src
           VPINBALL_SHA="$(git -C vpinball-src rev-parse HEAD)"
           PINMAME_SHA="$(curl -fsSL "https://raw.githubusercontent.com/vpinball/vpinball/${VPINBALL_SHA}/platforms/config.sh" | sed -n 's/^PINMAME_SHA=//p')"
-          test -n "$PINMAME_SHA"
+          if [ -z "$PINMAME_SHA" ]; then
+            echo "Failed to resolve PINMAME_SHA from VPinball config.sh" >&2
+            exit 1
+          fi
           echo "VPINBALL_SHA=$VPINBALL_SHA" >> "$GITHUB_ENV"
           echo "PINMAME_SHA=$PINMAME_SHA" >> "$GITHUB_ENV"
 
@@ -63,8 +66,8 @@ jobs:
         shell: pwsh
         run: |
           git clone --filter=blob:none --no-checkout "${{ env.PINMAME_REPO }}" pinmame-src
-          git -C pinmame-src fetch --depth 1 origin $env:PINMAME_SHA
-          git -C pinmame-src checkout --detach $env:PINMAME_SHA
+          git -C pinmame-src fetch --depth 1 origin "$env:PINMAME_SHA"
+          git -C pinmame-src checkout --detach "$env:PINMAME_SHA"
           Copy-Item pinmame-src/cmake/libpinmame/CMakeLists.txt pinmame-src/CMakeLists.txt
           cmake -S pinmame-src -B pinmame-src/build -G "Visual Studio 17 2022" -A x64 -DPLATFORM=win -DARCH=x64 -DBUILD_SHARED=ON -DBUILD_STATIC=OFF
           cmake --build pinmame-src/build --config Release
