@@ -13,7 +13,6 @@ env:
   VPINBALL_REPO: https://github.com/vpinball/vpinball.git
   VPINBALL_REF: master
   PINMAME_REPO: https://github.com/vbousquet/pinmame.git
-  VPINBALL_CONFIG_URL: https://raw.githubusercontent.com/vpinball/vpinball/master/platforms/config.sh
 
 jobs:
   build:
@@ -23,7 +22,7 @@ jobs:
       matrix:
         include:
           - label: Windows x64
-            runner: windows-latest
+            runner: windows-2022
             platform: windows
             arch: x64
             package: windows-x64
@@ -51,24 +50,30 @@ jobs:
         shell: bash
         run: |
           git clone --depth 1 --branch "${{ env.VPINBALL_REF }}" "${{ env.VPINBALL_REPO }}" vpinball-src
-          PINMAME_SHA="$(curl -fsSL "${{ env.VPINBALL_CONFIG_URL }}" | sed -n 's/^PINMAME_SHA=//p')"
+          VPINBALL_SHA="$(git -C vpinball-src rev-parse HEAD)"
+          VPINBALL_CONFIG_URL="https://raw.githubusercontent.com/vpinball/vpinball/${VPINBALL_SHA}/platforms/config.sh"
+          PINMAME_SHA="$(curl -fsSL "$VPINBALL_CONFIG_URL" | sed -n 's/^PINMAME_SHA=//p')"
+          test -n "$VPINBALL_SHA"
+          test -n "$VPINBALL_CONFIG_URL"
           test -n "$PINMAME_SHA"
+          echo "VPINBALL_SHA=$VPINBALL_SHA" >> "$GITHUB_ENV"
+          echo "VPINBALL_CONFIG_URL=$VPINBALL_CONFIG_URL" >> "$GITHUB_ENV"
           echo "PINMAME_SHA=$PINMAME_SHA" >> "$GITHUB_ENV"
 
       - name: Build PinMAME (Windows)
         if: matrix.platform == 'windows'
-        shell: bash
+        shell: pwsh
         run: |
           git clone --filter=blob:none --no-checkout "${{ env.PINMAME_REPO }}" pinmame-src
-          git -C pinmame-src fetch --depth 1 origin "$PINMAME_SHA"
-          git -C pinmame-src checkout --detach "$PINMAME_SHA"
-          cp pinmame-src/cmake/libpinmame/CMakeLists.txt pinmame-src/CMakeLists.txt
+          git -C pinmame-src fetch --depth 1 origin $env:PINMAME_SHA
+          git -C pinmame-src checkout --detach $env:PINMAME_SHA
+          Copy-Item pinmame-src/cmake/libpinmame/CMakeLists.txt pinmame-src/CMakeLists.txt
           cmake -S pinmame-src -B pinmame-src/build -G "Visual Studio 17 2022" -A x64 -DPLATFORM=win -DARCH=x64 -DBUILD_SHARED=ON -DBUILD_STATIC=OFF
           cmake --build pinmame-src/build --config Release
-          mkdir -p vpinball-src/third-party/include vpinball-src/third-party/build-libs/windows-x64 vpinball-src/third-party/runtime-libs/windows-x64
-          cp pinmame-src/src/libpinmame/libpinmame.h vpinball-src/third-party/include/
-          cp pinmame-src/build/Release/pinmame64.lib vpinball-src/third-party/build-libs/windows-x64/
-          cp pinmame-src/build/Release/pinmame64.dll vpinball-src/third-party/runtime-libs/windows-x64/
+          New-Item -ItemType Directory -Force -Path vpinball-src/third-party/include, vpinball-src/third-party/build-libs/windows-x64, vpinball-src/third-party/runtime-libs/windows-x64 | Out-Null
+          Copy-Item pinmame-src/src/libpinmame/libpinmame.h vpinball-src/third-party/include/
+          Copy-Item pinmame-src/build/Release/pinmame64.lib vpinball-src/third-party/build-libs/windows-x64/
+          Copy-Item pinmame-src/build/Release/pinmame64.dll vpinball-src/third-party/runtime-libs/windows-x64/
 
       - name: Build PinMAME (Unix)
         if: matrix.platform != 'windows'
@@ -110,14 +115,18 @@ jobs:
           include("${CMAKE_SOURCE_DIR}/make/CMakeLists_plugin_ScoreTracker.txt")
           EOF
 
-      - name: Build plugin
+      - name: Build plugin (Windows)
+        if: matrix.platform == 'windows'
+        shell: pwsh
+        run: |
+          cmake -S vpinball-src -B vpinball-src/build -G "Visual Studio 17 2022" -A x64
+          cmake --build vpinball-src/build --target ScoreTrackerPlugin --config Release --parallel
+
+      - name: Build plugin (Unix)
+        if: matrix.platform != 'windows'
         shell: bash
         run: |
-          if [ "${{ matrix.platform }}" = windows ]; then
-            cmake -S vpinball-src -B vpinball-src/build -G "Visual Studio 17 2022" -A x64
-          else
-            cmake -S vpinball-src -B vpinball-src/build -DCMAKE_BUILD_TYPE=Release
-          fi
+          cmake -S vpinball-src -B vpinball-src/build -DCMAKE_BUILD_TYPE=Release
           cmake --build vpinball-src/build --target ScoreTrackerPlugin --config Release --parallel
 
       - name: Create plugin ZIP
