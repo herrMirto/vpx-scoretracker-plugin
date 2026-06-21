@@ -21,6 +21,7 @@ jobs:
       fail-fast: false
       matrix:
         include:
+          # PinMAME and the plugin build both target the VS 2022 generator.
           - label: Windows x64
             runner: windows-2022
             platform: windows
@@ -70,9 +71,11 @@ jobs:
           Copy-Item pinmame-src/cmake/libpinmame/CMakeLists.txt pinmame-src/CMakeLists.txt
           cmake -S pinmame-src -B pinmame-src/build -G "Visual Studio 17 2022" -A x64 -DPLATFORM=win -DARCH=x64 -DBUILD_SHARED=ON -DBUILD_STATIC=OFF
           cmake --build pinmame-src/build --config Release
-          New-Item -ItemType Directory -Force -Path vpinball-src/third-party/include | Out-Null
-          New-Item -ItemType Directory -Force -Path vpinball-src/third-party/build-libs/windows-x64 | Out-Null
-          New-Item -ItemType Directory -Force -Path vpinball-src/third-party/runtime-libs/windows-x64 | Out-Null
+          @(
+            'vpinball-src/third-party/include'
+            'vpinball-src/third-party/build-libs/windows-x64'
+            'vpinball-src/third-party/runtime-libs/windows-x64'
+          ) | ForEach-Object { New-Item -ItemType Directory -Force -Path $_ | Out-Null }
           Copy-Item pinmame-src/src/libpinmame/libpinmame.h vpinball-src/third-party/include/
           Copy-Item pinmame-src/build/Release/pinmame64.lib vpinball-src/third-party/build-libs/windows-x64/
           Copy-Item pinmame-src/build/Release/pinmame64.dll vpinball-src/third-party/runtime-libs/windows-x64/
