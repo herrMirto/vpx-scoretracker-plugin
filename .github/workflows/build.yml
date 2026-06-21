@@ -49,7 +49,7 @@ jobs:
       - name: Clone VPX and resolve its PinMAME revision
         shell: bash
         run: |
-          # Resolve PinMAME from the exact checked-out VPX revision so the
+          # Resolve PinMAME from the exact checked-out VPinball revision so the
           # workflow never mixes a config from one ref with sources from another.
           git clone --depth 1 --branch "${{ env.VPINBALL_REF }}" "${{ env.VPINBALL_REPO }}" vpinball-src
           VPINBALL_SHA="$(git -C vpinball-src rev-parse HEAD)"
@@ -75,7 +75,7 @@ jobs:
             'vpinball-src/third-party/build-libs/windows-x64'
             'vpinball-src/third-party/runtime-libs/windows-x64'
           )) {
-            New-Item -ItemType Directory -Force -Path $path | Out-Null
+            New-Item -ItemType Directory -Force -Path $path
           }
           Copy-Item pinmame-src/src/libpinmame/libpinmame.h vpinball-src/third-party/include/
           Copy-Item pinmame-src/build/Release/pinmame64.lib vpinball-src/third-party/build-libs/windows-x64/
