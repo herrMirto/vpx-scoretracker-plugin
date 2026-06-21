@@ -53,11 +53,9 @@ jobs:
           # workflow never mixes a config from one ref with sources from another.
           git clone --depth 1 --branch "${{ env.VPINBALL_REF }}" "${{ env.VPINBALL_REPO }}" vpinball-src
           VPINBALL_SHA="$(git -C vpinball-src rev-parse HEAD)"
-          VPINBALL_CONFIG_URL="https://raw.githubusercontent.com/vpinball/vpinball/${VPINBALL_SHA}/platforms/config.sh"
-          PINMAME_SHA="$(curl -fsSL "$VPINBALL_CONFIG_URL" | sed -n 's/^PINMAME_SHA=//p')"
+          PINMAME_SHA="$(curl -fsSL "https://raw.githubusercontent.com/vpinball/vpinball/${VPINBALL_SHA}/platforms/config.sh" | sed -n 's/^PINMAME_SHA=//p')"
           test -n "$PINMAME_SHA"
           echo "VPINBALL_SHA=$VPINBALL_SHA" >> "$GITHUB_ENV"
-          echo "VPINBALL_CONFIG_URL=$VPINBALL_CONFIG_URL" >> "$GITHUB_ENV"
           echo "PINMAME_SHA=$PINMAME_SHA" >> "$GITHUB_ENV"
 
       - name: Build PinMAME (Windows)
@@ -70,13 +68,8 @@ jobs:
           Copy-Item pinmame-src/cmake/libpinmame/CMakeLists.txt pinmame-src/CMakeLists.txt
           cmake -S pinmame-src -B pinmame-src/build -G "Visual Studio 17 2022" -A x64 -DPLATFORM=win -DARCH=x64 -DBUILD_SHARED=ON -DBUILD_STATIC=OFF
           cmake --build pinmame-src/build --config Release
-          foreach ($path in @(
-            'vpinball-src/third-party/include'
-            'vpinball-src/third-party/build-libs/windows-x64'
-            'vpinball-src/third-party/runtime-libs/windows-x64'
-          )) {
-            New-Item -ItemType Directory -Force -Path $path
-          }
+          $thirdPartyRoot = 'vpinball-src/third-party'
+          New-Item -ItemType Directory -Force -Path "$thirdPartyRoot/include", "$thirdPartyRoot/build-libs/windows-x64", "$thirdPartyRoot/runtime-libs/windows-x64"
           Copy-Item pinmame-src/src/libpinmame/libpinmame.h vpinball-src/third-party/include/
           Copy-Item pinmame-src/build/Release/pinmame64.lib vpinball-src/third-party/build-libs/windows-x64/
           Copy-Item pinmame-src/build/Release/pinmame64.dll vpinball-src/third-party/runtime-libs/windows-x64/
