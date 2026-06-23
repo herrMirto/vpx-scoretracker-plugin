@@ -13,6 +13,8 @@ env:
   VPINBALL_REPO: https://github.com/vpinball/vpinball.git
   VPINBALL_REF: master
   PINMAME_REPO: https://github.com/vbousquet/pinmame.git
+  # Keep this in sync with PINMAME_SHA in vpinball/platforms/config.sh.
+  PINMAME_SHA: 8b143198c4f07645db39a4cb4cf7f332702673d0
 
 jobs:
   build:
@@ -46,20 +48,10 @@ jobs:
     steps:
       - uses: actions/checkout@v6
 
-      - name: Clone VPX and resolve its PinMAME revision
+      - name: Clone VPX
         shell: bash
         run: |
-          # Resolve PinMAME from the exact checked-out VPinball revision so the
-          # workflow never mixes a config from one ref with sources from another.
           git clone --depth 1 --branch "${{ env.VPINBALL_REF }}" "${{ env.VPINBALL_REPO }}" vpinball-src
-          VPINBALL_SHA="$(git -C vpinball-src rev-parse HEAD)"
-          PINMAME_SHA="$(curl -fsSL "https://raw.githubusercontent.com/vpinball/vpinball/${VPINBALL_SHA}/platforms/config.sh" | sed -n 's/^PINMAME_SHA=//p')"
-          if [ -z "$PINMAME_SHA" ]; then
-            echo "Failed to resolve PINMAME_SHA from VPinball config.sh" >&2
-            exit 1
-          fi
-          echo "VPINBALL_SHA=$VPINBALL_SHA" >> "$GITHUB_ENV"
-          echo "PINMAME_SHA=$PINMAME_SHA" >> "$GITHUB_ENV"
 
       - name: Build PinMAME (Windows)
         if: matrix.platform == 'windows'
@@ -90,7 +82,7 @@ jobs:
             -DARCH="${{ matrix.arch }}" \
             -DBUILD_STATIC=OFF \
             -DCMAKE_BUILD_TYPE=Release
-          cmake --build pinmame-src/build --parallel
+          cmake --build pinmame-src/build
           mkdir -p vpinball-src/third-party/include "vpinball-src/third-party/runtime-libs/${{ matrix.platform }}-${{ matrix.arch }}"
           cp pinmame-src/src/libpinmame/libpinmame.h vpinball-src/third-party/include/
           if [ "${{ matrix.platform }}" = macos ]; then
@@ -122,14 +114,14 @@ jobs:
         shell: pwsh
         run: |
           cmake -S vpinball-src -B vpinball-src/build -G "Visual Studio 17 2022" -A x64
-          cmake --build vpinball-src/build --target ScoreTrackerPlugin --config Release --parallel
+          cmake --build vpinball-src/build --target ScoreTrackerPlugin --config Release
 
       - name: Build plugin (Unix)
         if: matrix.platform != 'windows'
         shell: bash
         run: |
           cmake -S vpinball-src -B vpinball-src/build -DCMAKE_BUILD_TYPE=Release
-          cmake --build vpinball-src/build --target ScoreTrackerPlugin --config Release --parallel
+          cmake --build vpinball-src/build --target ScoreTrackerPlugin --config Release
 
       - name: Create plugin ZIP
         shell: bash
