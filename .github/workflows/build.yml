@@ -24,7 +24,7 @@ jobs:
       matrix:
         include:
           - label: Windows x64
-            runner: windows-latest
+            runner: windows-2022
             platform: windows
             arch: x64
             package: windows-x64
@@ -39,7 +39,7 @@ jobs:
             arch: arm64
             package: linux-arm64
           - label: macOS ARM64
-            runner: macos-14
+            runner: macos-15
             platform: macos
             arch: arm64
             package: macos-arm64
@@ -57,6 +57,8 @@ jobs:
         if: matrix.platform == 'windows'
         shell: pwsh
         run: |
+          $ErrorActionPreference = 'Stop'
+          $PSNativeCommandUseErrorActionPreference = $true
           git clone --filter=blob:none --no-checkout "${{ env.PINMAME_REPO }}" pinmame-src
           git -C pinmame-src fetch --depth 1 origin "$env:PINMAME_SHA"
           git -C pinmame-src checkout --detach "$env:PINMAME_SHA"
@@ -113,6 +115,8 @@ jobs:
         if: matrix.platform == 'windows'
         shell: pwsh
         run: |
+          $ErrorActionPreference = 'Stop'
+          $PSNativeCommandUseErrorActionPreference = $true
           cmake -S vpinball-src -B vpinball-src/build -G "Visual Studio 17 2022" -A x64
           cmake --build vpinball-src/build --target ScoreTrackerPlugin --config Release
 
