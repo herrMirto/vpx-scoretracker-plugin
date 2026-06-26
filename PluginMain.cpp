@@ -33,15 +33,38 @@ static const ScriptablePluginAPI* scriptApi = nullptr;
 static ScoreTracker* scoreTracker = nullptr;
 static B2STracker* b2sTracker = nullptr;
 
+enum class TrackingSource {
+   None,
+   NvramMap,
+   B2SFallback,
+};
+
+static TrackingSource trackingSource = TrackingSource::None;
+static std::string activeGameId;
+
+static const char* TrackingSourceName()
+{
+   switch (trackingSource) {
+   case TrackingSource::NvramMap: return "NVRAM map";
+   case TrackingSource::B2SFallback: return "B2S fallback";
+   default: return "none";
+   }
+}
+
 // Settings definitions
 MSGPI_STRING_VAL_SETTING(mapsFolderProp, "nvram_maps_folder", "JSON Maps Folder", "Folder where JSON maps and index.json are located", true, "maps", 1024);
 MSGPI_INT_VAL_SETTING(wsPortProp, "Port", "WebSocket Port", "Port number for the WebSocket server", true, 1024, 65535, 8889);
+MSGPI_BOOL_VAL_SETTING(nvramSnapshotsProp, "EnableNVRAMSnapshots", "Enable NVRAM Snapshots", "Enable the local HTTP endpoint used to capture live PinMAME NVRAM for map diagnostics", true, false);
 
 static void OnControllerGameStart(const unsigned int eventId, void* userData, void* msgData)
 {
    const CtlOnGameStartMsg* msg = static_cast<const CtlOnGameStartMsg*>(msgData);
-   if (msg == nullptr || msg->gameId == nullptr)
+   if (msg == nullptr || msg->gameId == nullptr || msg->gameId[0] == '\0') {
+      LPI_LOGI_CPP(std::string("[INFO] - Ignoring controller game-start with empty gameId; active source remains ") + TrackingSourceName());
       return;
+   }
+
+   const std::string gameId(msg->gameId);
 
    std::string tablePath = "";
    if (vpxApi != nullptr) {
@@ -53,8 +76,63 @@ static void OnControllerGameStart(const unsigned int eventId, void* userData, vo
    }
    std::string tableName = tablePath.empty() ? "unknown" : std::filesystem::path(tablePath).filename().string();
 
-   LPI_LOGI_CPP("[INFO] - Table "s + tableName + " with rom "s + msg->gameId + " started");
-   std::cout << "[INFO] - Table " << tableName << " with rom " << msg->gameId << " started" << std::endl;
+   std::string mapDetail;
+   const ScoreTracker::MapStatus mapStatus = ScoreTracker::ProbeMap(gameId, mapsFolderProp_Val, mapDetail);
+   const bool hasMap = mapStatus == ScoreTracker::MapStatus::Available;
+
+   // A mapped session is authoritative. Duplicate or fallback lifecycle events
+   // must never restart it or make us inspect a second data source.
+   if (trackingSource == TrackingSource::NvramMap && activeGameId == gameId) {
+      LPI_LOGI_CPP("[INFO] - Ignoring duplicate game-start for "s + gameId + "; NVRAM map remains authoritative");
+      return;
+   }
+   if (trackingSource == TrackingSource::NvramMap && !hasMap) {
+      LPI_LOGI_CPP("[INFO] - Ignoring lower-priority controller game-start for "s + gameId
+         + "; active NVRAM map for "s + activeGameId + " remains authoritative. Probe result: "s + mapDetail);
+      return;
+   }
+
+   if (mapStatus == ScoreTracker::MapStatus::Error) {
+      if (trackingSource == TrackingSource::B2SFallback && b2sTracker != nullptr)
+         b2sTracker->DiscardSession();
+      if (b2sTracker != nullptr)
+         b2sTracker->SetPinmameActive(true);
+      trackingSource = TrackingSource::None;
+      activeGameId.clear();
+      LPI_LOGE_CPP("[ERROR] - Map lookup failed for "s + gameId + ": "s + mapDetail
+         + ". No fallback will be activated because map priority cannot be determined.");
+      return;
+   }
+
+   if (trackingSource == TrackingSource::B2SFallback && activeGameId == gameId && !hasMap) {
+      LPI_LOGI_CPP("[INFO] - Ignoring duplicate game-start for "s + gameId + "; B2S remains the sole fallback source");
+      return;
+   }
+
+   if (hasMap) {
+      if (trackingSource == TrackingSource::B2SFallback && b2sTracker != nullptr)
+         b2sTracker->DiscardSession();
+
+      if (scoreTracker != nullptr) {
+         scoreTracker->Stop();
+         delete scoreTracker;
+         scoreTracker = nullptr;
+      }
+
+      trackingSource = TrackingSource::NvramMap;
+      activeGameId = gameId;
+      if (b2sTracker != nullptr)
+         b2sTracker->SetPinmameActive(true);
+
+      LPI_LOGI_CPP("[INFO] - Tracking mode selected: NVRAM map (authoritative), table="s + tableName
+         + ", rom="s + gameId + ", map="s + mapDetail);
+      std::cout << "[ScoreTracker] Using authoritative NVRAM map for " << gameId << std::endl;
+
+      scoreTracker = new ScoreTracker(msgApi, endpointId);
+      if (!scoreTracker->Start(gameId, mapsFolderProp_Val, wsPortProp_Val, tablePath, nvramSnapshotsProp_Val))
+         LPI_LOGE_CPP("[ERROR] - NVRAM map exists but could not be loaded for "s + gameId + "; fallbacks remain disabled");
+      return;
+   }
 
    if (scoreTracker != nullptr) {
       scoreTracker->Stop();
@@ -62,37 +140,46 @@ static void OnControllerGameStart(const unsigned int eventId, void* userData, vo
       scoreTracker = nullptr;
    }
 
-   scoreTracker = new ScoreTracker(msgApi, endpointId);
-   const bool pinmameTracking = scoreTracker->Start(msg->gameId, mapsFolderProp_Val, wsPortProp_Val, tablePath);
-
-   // EM / original tables have no NVRAM map; their scores arrive through the
-   // intercepted B2S.Server calls instead.
    if (b2sTracker != nullptr) {
-      b2sTracker->SetPinmameActive(pinmameTracking);
-      b2sTracker->OnGameStart(msg->gameId, wsPortProp_Val, tablePath);
+      if (trackingSource == TrackingSource::B2SFallback && activeGameId != gameId)
+         b2sTracker->OnGameEnd();
+      b2sTracker->SetPinmameActive(false);
+      b2sTracker->OnGameStart(gameId, wsPortProp_Val, tablePath);
    }
+   trackingSource = TrackingSource::B2SFallback;
+   activeGameId = gameId;
+   LPI_LOGI_CPP("[INFO] - No NVRAM map for "s + gameId + " ("s + mapDetail
+      + "); tracking mode selected: B2S fallback, table="s + tableName);
+   std::cout << "[ScoreTracker] No NVRAM map for " << gameId << "; B2S fallback armed" << std::endl;
 }
 
 static void OnControllerGameEnd(const unsigned int eventId, void* userData, void* msgData)
 {
-   LPI_LOGI_CPP("Game ending"s);
+   if (trackingSource == TrackingSource::NvramMap) {
+      LPI_LOGI_CPP("[INFO] - Ignoring generic controller game-end; authoritative NVRAM session remains active until VPX ends or another mapped ROM starts"s);
+      return;
+   }
+
+   if (trackingSource == TrackingSource::B2SFallback && b2sTracker != nullptr) {
+      LPI_LOGI_CPP("[INFO] - Ending B2S fallback session"s);
+      b2sTracker->OnGameEnd();
+   }
+   trackingSource = TrackingSource::None;
+   activeGameId.clear();
+}
+
+static void OnVpxGameEnd(const unsigned int eventId, void* userData, void* msgData)
+{
+   LPI_LOGI_CPP(std::string("[INFO] - VPX game-end; stopping active tracking source: ") + TrackingSourceName());
    if (scoreTracker != nullptr) {
       scoreTracker->Stop();
       delete scoreTracker;
       scoreTracker = nullptr;
    }
-   if (b2sTracker != nullptr) {
-      b2sTracker->OnGameEnd();
-      b2sTracker->SetPinmameActive(false);
-   }
-}
-
-static void OnVpxGameEnd(const unsigned int eventId, void* userData, void* msgData)
-{
-   // Player shutdown: make sure an EM session that never saw a controller
-   // game-end still flushes its summary.
    if (b2sTracker != nullptr)
       b2sTracker->OnGameEnd();
+   trackingSource = TrackingSource::None;
+   activeGameId.clear();
 }
 
 static void OnPluginLoaded(const unsigned int eventId, void* userData, void* msgData)
@@ -117,6 +204,7 @@ MSGPI_EXPORT void MSGPIAPI ScoreTrackerPluginLoad(const uint32_t sessionId, cons
    // Register settings
    msgApi->RegisterSetting(endpointId, &mapsFolderProp);
    msgApi->RegisterSetting(endpointId, &wsPortProp);
+   msgApi->RegisterSetting(endpointId, &nvramSnapshotsProp);
 
    // Fetch VPX API
    msgApi->BroadcastMsg(endpointId, getVpxApiId = msgApi->GetMsgID(VPXPI_NAMESPACE, VPXPI_MSG_GET_API), &vpxApi);

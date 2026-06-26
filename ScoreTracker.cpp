@@ -11,6 +11,9 @@
 #include <algorithm>
 #include <iostream>
 #include <chrono>
+#include <cctype>
+#include <iomanip>
+#include <sstream>
 
 #include "plugins/LoggingPlugin.h"
 #include "mongoose/mongoose.h"
@@ -29,8 +32,34 @@ void WebEventHandler(struct mg_connection* c, int ev, void* ev_data) {
         struct mg_http_message* hm = static_cast<struct mg_http_message*>(ev_data);
         if (hm->uri.len == 3 && strncmp(hm->uri.buf, "/ws", 3) == 0) {
             mg_ws_upgrade(c, hm, nullptr);
+        } else if (hm->uri.len == 9 && strncmp(hm->uri.buf, "/snapshot", 9) == 0) {
+            if (!tracker->m_enableNvramSnapshots) {
+                mg_http_reply(c, 403, "Content-Type: application/json\r\n",
+                    "%s", "{\"error\":\"NVRAM snapshots are disabled\"}");
+                return;
+            }
+
+            char labelBuffer[128] = {};
+            mg_http_get_var(&hm->query, "label", labelBuffer, sizeof(labelBuffer));
+            std::string savedPath;
+            std::string error;
+            if (!tracker->CaptureNvramSnapshot(labelBuffer, savedPath, error)) {
+                nlohmann::json response = {{"error", error}};
+                const std::string body = response.dump();
+                mg_http_reply(c, 503, "Content-Type: application/json\r\n", "%s", body.c_str());
+                return;
+            }
+
+            nlohmann::json response = {
+                {"status", "saved"},
+                {"rom", tracker->m_gameId},
+                {"path", savedPath}
+            };
+            const std::string body = response.dump();
+            mg_http_reply(c, 200, "Content-Type: application/json\r\n", "%s", body.c_str());
         } else {
-            mg_http_reply(c, 200, "Content-Type: text/plain\r\n", "ScoreTracker WebSocket server is running. Connect to /ws.");
+            mg_http_reply(c, 200, "Content-Type: text/plain\r\n",
+                "ScoreTracker server is running. WebSocket: /ws. Diagnostic capture: /snapshot?label=NAME.");
         }
     } else if (ev == MG_EV_WS_OPEN) {
         std::lock_guard<std::mutex> lock(tracker->m_clientsMutex);
@@ -59,6 +88,44 @@ ScoreTracker::ScoreTracker(const MsgPluginAPI* api, unsigned int endpointId)
 ScoreTracker::~ScoreTracker()
 {
     Stop();
+}
+
+ScoreTracker::MapStatus ScoreTracker::ProbeMap(const std::string& gameId, const std::string& mapsPath, std::string& detail)
+{
+    detail.clear();
+    if (gameId.empty())
+        return MapStatus::NotFound;
+
+    const std::filesystem::path mapsRoot(mapsPath);
+    const std::filesystem::path indexPath = mapsRoot / "index.json";
+    std::ifstream indexFile(indexPath);
+    if (!indexFile.is_open()) {
+        detail = "could not open " + indexPath.string();
+        return MapStatus::Error;
+    }
+
+    try {
+        nlohmann::json indexJson;
+        indexFile >> indexJson;
+        if (!indexJson.contains(gameId)) {
+            detail = "ROM is not listed in index.json";
+            return MapStatus::NotFound;
+        }
+        if (!indexJson[gameId].is_string()) {
+            detail = "index.json entry is not a path string";
+            return MapStatus::Error;
+        }
+        const std::filesystem::path mapPath = mapsRoot / indexJson[gameId].get<std::string>();
+        if (!std::filesystem::is_regular_file(mapPath)) {
+            detail = "declared map file is missing: " + mapPath.string();
+            return MapStatus::Error;
+        }
+        detail = mapPath.string();
+        return MapStatus::Available;
+    } catch (const std::exception& e) {
+        detail = "failed to parse index.json: " + std::string(e.what());
+        return MapStatus::Error;
+    }
 }
 
 int ScoreTracker::ParseIntVal(const nlohmann::json& val, int defaultVal)
@@ -121,6 +188,8 @@ std::vector<int> ScoreTracker::ResolveAddresses(const nlohmann::json& desc)
 Descriptor ScoreTracker::ParseDescriptor(const nlohmann::json& desc)
 {
     Descriptor d;
+    if (m_platformData.contains("endian") && m_platformData["endian"].is_string())
+        d.endian = m_platformData["endian"].get<std::string>();
     if (desc.contains("label")) d.label = desc["label"].get<std::string>();
     if (desc.contains("encoding")) d.encoding = desc["encoding"].get<std::string>();
     if (desc.contains("nibble")) d.nibble = desc["nibble"].get<std::string>();
@@ -297,7 +366,9 @@ bool ScoreTracker::ReadUnits(const std::vector<uint8_t>& nvram, const Descriptor
         if (regionType == "ram") {
             // Read from emulator RAM
             uint8_t val = 0;
-            if (PinmameReadMainCPUByte(static_cast<uint32_t>(addr), &val) != PINMAME_STATUS_OK) {
+            // This legacy PinMAME API returns 1 on success and 0 on failure;
+            // it does not return a PINMAME_STATUS enum value.
+            if (PinmameReadMainCPUByte(static_cast<uint32_t>(addr), &val) == 0) {
                 return false;
             }
             units.push_back(desc.has_mask ? (val & desc.mask) : val);
@@ -409,23 +480,33 @@ int64_t ScoreTracker::Decode(const std::vector<uint8_t>& nvram, const Descriptor
     return static_cast<int64_t>(value * desc.scale + desc.offset);
 }
 
-bool ScoreTracker::Start(const std::string& gameId, const std::string& mapsPath, int port, const std::string& tablePath)
+bool ScoreTracker::Start(const std::string& gameId, const std::string& mapsPath, int port,
+    const std::string& tablePath, bool enableNvramSnapshots)
 {
     m_gameId = gameId;
     m_mapsPath = mapsPath;
     m_tablePath = tablePath;
+    m_enableNvramSnapshots = enableNvramSnapshots;
+    {
+        std::lock_guard<std::mutex> lock(m_nvramMutex);
+        m_lastNvram.clear();
+    }
     
     m_sessionStartRealTime = std::chrono::steady_clock::now();
     m_gameOverLast = false;
+    m_gameOverPending = false;
     m_summarySent = false;
     m_hasBeenInPlay = false;
     m_highestScores.clear();
     m_maxGameStateValues.clear();
+    m_monitoringStarted = false;
     
     if (!LoadMap(gameId)) {
         std::cerr << "[ScoreTracker] Failed to load JSON map. Disabling monitoring." << std::endl;
         return false;
     }
+
+    m_monitoringStarted = true;
 
     StartWebServer(port);
 
@@ -441,8 +522,9 @@ void ScoreTracker::Stop()
         m_thread.join();
     }
     
-    // Broadcast final summary payload on exit if not already sent
-    if (!m_summarySent && !m_gameId.empty()) {
+    // If VPX exits before a mapped game-over is confirmed, persist the played
+    // session as a fallback instead of only broadcasting an ephemeral summary.
+    if (m_monitoringStarted && !m_summarySent && !m_gameId.empty()) {
         std::vector<int64_t> finalScores;
         try {
             if (!m_lastJsonState.empty()) {
@@ -455,11 +537,18 @@ void ScoreTracker::Stop()
             }
         } catch (...) {}
         
-        SendSummaryPayload(finalScores, false);
+        const bool hasScore = std::any_of(finalScores.begin(), finalScores.end(),
+            [](int64_t value) { return value > 0; });
+        const bool writeExitFallback = m_hasBeenInPlay && hasScore;
+        if (writeExitFallback) {
+            LPI_LOGI_CPP("[INFO] - No confirmed game-over before VPX exit; writing the active NVRAM session as an exit fallback");
+        }
+        SendSummaryPayload(finalScores, writeExitFallback);
         m_summarySent = true;
     }
     
     StopWebServer();
+    m_monitoringStarted = false;
 }
 
 void ScoreTracker::Loop()
@@ -478,8 +567,14 @@ void ScoreTracker::Loop()
         if (nvramSize > 0) {
             std::vector<PinmameNVRAMState> nvramBuffer(nvramSize);
             int count = PinmameGetNVRAM(nvramBuffer.data());
+            if (count < 0) count = 0;
+            if (count < nvramSize) nvram.resize(count);
             for (int i = 0; i < count; ++i) {
                 nvram[i] = nvramBuffer[i].currStat;
+            }
+            {
+                std::lock_guard<std::mutex> lock(m_nvramMutex);
+                m_lastNvram = nvram;
             }
         }
         
@@ -531,37 +626,47 @@ void ScoreTracker::Loop()
             }
         }
         
-        // 4. Update session statistics
-        if (m_highestScores.size() < playerScores.size()) {
-            m_highestScores.resize(playerScores.size(), 0);
-        }
-        for (size_t i = 0; i < playerScores.size(); ++i) {
-            if (playerScores[i] > m_highestScores[i]) {
-                m_highestScores[i] = playerScores[i];
-            }
-        }
-        for (const auto& [key, val] : decodedValues) {
-            if (!m_maxGameStateValues.count(key) || val > m_maxGameStateValues[key]) {
-                m_maxGameStateValues[key] = val;
-            }
-        }
-
-        // A new game starting after a finished one: reset per-game session
-        // statistics so a second game on the same table gets its own summary.
-        if (!isGameOver && m_gameOverLast && m_summarySent) {
-            m_summarySent = false;
-            m_highestScores.clear();
-            m_maxGameStateValues.clear();
-            m_sessionStartRealTime = std::chrono::steady_clock::now();
-        }
-
-        // Set m_hasBeenInPlay flag when game is active
+        // Raw lifecycle flags can briefly toggle during display and ball-state
+        // transitions. Only confirm game-over after it remains asserted for two
+        // seconds; a transient must never finalize or reset a session.
         if (!isGameOver) {
+            m_gameOverPending = false;
+            if (!m_hasBeenInPlay) {
+                m_summarySent = false;
+                m_highestScores.clear();
+                m_maxGameStateValues.clear();
+                m_sessionStartRealTime = std::chrono::steady_clock::now();
+            }
+            m_gameOverLast = false;
             m_hasBeenInPlay = true;
+        } else if (!m_gameOverPending) {
+            m_gameOverPending = true;
+            m_gameOverSince = std::chrono::steady_clock::now();
         }
 
-        // 5. Handle game over logging and summary
-        if (isGameOver && m_hasBeenInPlay && !m_gameOverLast) {
+        // 4. Update statistics only after a game has actually entered play.
+        // Scores retained in NVRAM during attract mode belong to the previous
+        // game and must not become the next session's highest score.
+        if (m_hasBeenInPlay) {
+            if (m_highestScores.size() < playerScores.size()) {
+                m_highestScores.resize(playerScores.size(), 0);
+            }
+            for (size_t i = 0; i < playerScores.size(); ++i) {
+                if (playerScores[i] > m_highestScores[i]) {
+                    m_highestScores[i] = playerScores[i];
+                }
+            }
+            for (const auto& [key, val] : decodedValues) {
+                if (!m_maxGameStateValues.count(key) || val > m_maxGameStateValues[key]) {
+                    m_maxGameStateValues[key] = val;
+                }
+            }
+        }
+
+        // 5. Handle confirmed game over logging and summary
+        const bool gameOverConfirmed = isGameOver && m_gameOverPending
+            && std::chrono::steady_clock::now() - m_gameOverSince >= std::chrono::seconds(2);
+        if (gameOverConfirmed && m_hasBeenInPlay && !m_gameOverLast) {
             std::string tableName = m_tablePath.empty() ? "unknown" : std::filesystem::path(m_tablePath).filename().string();
             LPI_LOGI_CPP(std::string("[INFO] - Game play for table ") + tableName + " with rom " + m_gameId + " is over");
             std::cout << "[INFO] - Game play for table " << tableName << " with rom " << m_gameId << " is over" << std::endl;
@@ -570,8 +675,9 @@ void ScoreTracker::Loop()
                 SendSummaryPayload(playerScores, true);
                 m_summarySent = true;
             }
+            m_gameOverLast = true;
+            m_hasBeenInPlay = false;
         }
-        m_gameOverLast = isGameOver;
         
         // 6. Populate top level standard payload fields
         state["rom"] = m_gameId;
@@ -636,6 +742,118 @@ void ScoreTracker::StopWebServer()
     if (m_webThread.joinable()) {
         m_webThread.join();
     }
+}
+
+bool ScoreTracker::CaptureNvramSnapshot(const std::string& requestedLabel, std::string& savedPath, std::string& error)
+{
+    std::vector<uint8_t> nvram;
+    {
+        std::lock_guard<std::mutex> lock(m_nvramMutex);
+        nvram = m_lastNvram;
+    }
+    if (nvram.empty()) {
+        error = "No live PinMAME NVRAM has been received yet";
+        return false;
+    }
+
+    std::string label;
+    label.reserve(requestedLabel.size());
+    for (unsigned char ch : requestedLabel) {
+        if (std::isalnum(ch) || ch == '-' || ch == '_')
+            label.push_back(static_cast<char>(ch));
+        else if (!label.empty() && label.back() != '_')
+            label.push_back('_');
+        if (label.size() == 64)
+            break;
+    }
+    while (!label.empty() && label.back() == '_')
+        label.pop_back();
+    if (label.empty())
+        label = "snapshot";
+
+    const auto now = std::chrono::system_clock::now();
+    const auto millis = std::chrono::duration_cast<std::chrono::milliseconds>(now.time_since_epoch()) % 1000;
+    const std::time_t nowTime = std::chrono::system_clock::to_time_t(now);
+    std::tm localTime{};
+#ifdef _WIN32
+    localtime_s(&localTime, &nowTime);
+#else
+    localtime_r(&nowTime, &localTime);
+#endif
+    std::ostringstream timestamp;
+    timestamp << std::put_time(&localTime, "%Y%m%d-%H%M%S")
+              << '-' << std::setfill('0') << std::setw(3) << millis.count();
+
+    std::filesystem::path tableFolder = m_tablePath.empty()
+        ? std::filesystem::current_path()
+        : std::filesystem::path(m_tablePath).parent_path();
+    const std::filesystem::path captureFolder = tableFolder / "scoretracker-captures" / m_gameId;
+    const std::filesystem::path capturePath = captureFolder /
+        (timestamp.str() + "-" + label + ".nv");
+    std::vector<std::pair<std::filesystem::path, size_t>> ramCaptures;
+
+    try {
+        std::filesystem::create_directories(captureFolder);
+        std::ofstream output(capturePath, std::ios::binary | std::ios::trunc);
+        if (!output.is_open()) {
+            error = "Could not create " + capturePath.string();
+            return false;
+        }
+        output.write(reinterpret_cast<const char*>(nvram.data()), static_cast<std::streamsize>(nvram.size()));
+        if (!output.good()) {
+            error = "Failed while writing " + capturePath.string();
+            return false;
+        }
+
+        for (const auto& entry : m_layout) {
+            std::string type = entry.type;
+            std::transform(type.begin(), type.end(), type.begin(), ::tolower);
+            if (type != "ram" || entry.size <= 0)
+                continue;
+
+            std::vector<uint8_t> ram(static_cast<size_t>(entry.size));
+            for (int offset = 0; offset < entry.size; ++offset) {
+                if (PinmameReadMainCPUByte(static_cast<uint32_t>(entry.address + offset), &ram[offset]) == 0) {
+                    std::ostringstream address;
+                    address << "0x" << std::hex << std::uppercase << entry.address + offset;
+                    error = "Could not read main CPU RAM at " + address.str();
+                    return false;
+                }
+            }
+
+            std::ostringstream regionAddress;
+            regionAddress << std::hex << std::setfill('0') << std::setw(8) << entry.address;
+            const std::filesystem::path ramPath = captureFolder /
+                (timestamp.str() + "-" + label + "-ram-" + regionAddress.str() + ".bin");
+            std::ofstream ramOutput(ramPath, std::ios::binary | std::ios::trunc);
+            if (!ramOutput.is_open()) {
+                error = "Could not create " + ramPath.string();
+                return false;
+            }
+            ramOutput.write(reinterpret_cast<const char*>(ram.data()), static_cast<std::streamsize>(ram.size()));
+            if (!ramOutput.good()) {
+                error = "Failed while writing " + ramPath.string();
+                return false;
+            }
+            ramCaptures.push_back({ramPath, ram.size()});
+        }
+    } catch (const std::exception& e) {
+        error = e.what();
+        return false;
+    }
+
+    savedPath = capturePath.string();
+    const std::string message = "[INFO] - Captured live NVRAM snapshot: " + savedPath
+        + " (" + std::to_string(nvram.size()) + " bytes)";
+    std::cout << "[ScoreTracker] " << message << std::endl;
+    LPI_LOGI_CPP(message);
+    for (const auto& [ramPath, ramSize] : ramCaptures) {
+        const std::string ramMessage = "[INFO] - Captured live CPU RAM snapshot: " + ramPath.string()
+            + " (" + std::to_string(ramSize) + " bytes)";
+        std::cout << "[ScoreTracker] " << ramMessage << std::endl;
+        LPI_LOGI_CPP(ramMessage);
+    }
+    return true;
 }
 
 nlohmann::json ScoreTracker::BuildCompletedGameState() const
