@@ -104,7 +104,9 @@ void B2STracker::BuildProxy(const ScriptClassDef* baseDef)
     ScriptClassDef* proxy = static_cast<ScriptClassDef*>(malloc(size));
     memcpy(proxy, baseDef, size);
     proxy->name.name = "ScoreTracker_B2SServer";
-    proxy->name.id = 0;
+    // Keep the registered base type ID. DynamicDispatch resolves member names
+    // through this ID; assigning 0 makes every copied B2S member invisible.
+    proxy->name.id = baseDef->name.id;
     proxy->CreateObject = CreateProxiedObject;
 
     m_memberOps.assign(baseDef->nMembers, MemberOp{});
@@ -178,6 +180,11 @@ void MSGPIAPI B2STracker::InterceptCall(void* me, int memberIndex, ScriptVariant
 
 void B2STracker::Capture(const MemberOp& mop, unsigned int nArgs, ScriptVariant* pArgs)
 {
+    // The proxy must still forward every B2S call, but it must not inspect or
+    // retain fallback data while an NVRAM map is authoritative.
+    if (m_pinmameActive.load())
+        return;
+
     // Convenience setters have 1-arg (value) and 2-arg (custom id, value)
     // variants; the value is always the last argument.
     const int lastArg = (nArgs >= 1) ? pArgs[nArgs - 1].vInt : 0;
@@ -258,7 +265,13 @@ void B2STracker::SetScore(int player, int64_t value)
 
 void B2STracker::SetPinmameActive(bool active)
 {
-    m_pinmameActive = active;
+    const bool previous = m_pinmameActive.exchange(active);
+    if (previous == active)
+        return;
+    if (active)
+        LPI_LOGI_CPP("[INFO] - B2S fallback disabled; NVRAM map is authoritative. B2S calls will only be forwarded."s);
+    else
+        LPI_LOGI_CPP("[INFO] - B2S fallback armed because no NVRAM map is active."s);
 }
 
 void B2STracker::OnGameStart(const std::string& gameId, int wsPort, const std::string& tablePath)
@@ -272,6 +285,17 @@ void B2STracker::OnGameStart(const std::string& gameId, int wsPort, const std::s
 
 void B2STracker::OnGameEnd()
 {
+    ResetSession(true);
+}
+
+void B2STracker::DiscardSession()
+{
+    LPI_LOGI_CPP("[INFO] - Discarding provisional B2S fallback state; switching to authoritative NVRAM map"s);
+    ResetSession(false);
+}
+
+void B2STracker::ResetSession(bool emitSummary)
+{
     if (m_running)
     {
         m_running = false;
@@ -280,7 +304,7 @@ void B2STracker::OnGameEnd()
 
         {
             std::lock_guard<std::mutex> lock(m_stateMutex);
-            if (!m_summarySent && m_hasBeenInPlay)
+            if (emitSummary && !m_summarySent && m_hasBeenInPlay)
             {
                 SendSummaryLocked(false);
                 m_summarySent = true;

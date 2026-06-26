@@ -49,6 +49,9 @@ public:
     // B2SName as gameId once the backglass registers its first state).
     void OnGameStart(const std::string& gameId, int wsPort, const std::string& tablePath);
     void OnGameEnd();
+    // Stop and clear a provisional fallback without emitting a result. Used
+    // when a higher-priority NVRAM map becomes available for the table.
+    void DiscardSession();
 
 private:
     enum class Op {
@@ -78,6 +81,7 @@ private:
     void Capture(const MemberOp& mop, unsigned int nArgs, ScriptVariant* pArgs);
     void SetScore(int player, int64_t value);
     void EnsureStarted();
+    void ResetSession(bool emitSummary);
 
     void Loop();
     void StartWebServer(int port);

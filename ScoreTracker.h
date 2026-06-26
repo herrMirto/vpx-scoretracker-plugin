@@ -47,17 +47,29 @@ struct Descriptor {
 
 class ScoreTracker {
 public:
+    enum class MapStatus {
+        Available,
+        NotFound,
+        Error,
+    };
+
     ScoreTracker(const MsgPluginAPI* api, unsigned int endpointId);
     ~ScoreTracker();
 
+    // Lightweight capability check used to choose one authoritative source
+    // before either NVRAM or a fallback tracker is activated.
+    static MapStatus ProbeMap(const std::string& gameId, const std::string& mapsPath, std::string& detail);
+
     // Returns true when monitoring started (a JSON map exists for the gameId).
-    bool Start(const std::string& gameId, const std::string& mapsPath, int port, const std::string& tablePath);
+    bool Start(const std::string& gameId, const std::string& mapsPath, int port, const std::string& tablePath,
+        bool enableNvramSnapshots = false);
     void Stop();
 
 private:
     void Loop();
     void StartWebServer(int port);
     void StopWebServer();
+    bool CaptureNvramSnapshot(const std::string& requestedLabel, std::string& savedPath, std::string& error);
 
     // Mapping and parsing helpers
     bool LoadMap(const std::string& gameId);
@@ -112,14 +124,20 @@ private:
     // Last state
     std::mutex m_stateMutex;
     std::string m_lastJsonState;
+    std::mutex m_nvramMutex;
+    std::vector<uint8_t> m_lastNvram;
+    bool m_enableNvramSnapshots = false;
 
     // Summary/Session tracking
     std::chrono::steady_clock::time_point m_sessionStartRealTime;
     std::vector<int64_t> m_highestScores;
     std::unordered_map<std::string, int64_t> m_maxGameStateValues;
     bool m_gameOverLast = false;
+    bool m_gameOverPending = false;
+    std::chrono::steady_clock::time_point m_gameOverSince;
     bool m_summarySent = false;
     bool m_hasBeenInPlay = false;
+    bool m_monitoringStarted = false;
 
     friend void WebEventHandler(struct mg_connection* c, int ev, void* ev_data);
 };
