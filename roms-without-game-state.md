@@ -2,8 +2,8 @@
 
 Generated from the validated scoretracker-maps index on 2026-06-27.
 
-- **44 map files** need game-state captures.
-- **100 indexed ROM identifiers** are covered, including aliases and revisions.
+- **42 map files** need game-state captures.
+- **90 indexed ROM identifiers** are covered, including aliases and revisions.
 - Every listed map already contains high-score definitions.
 - Prototype/FreeWPC-only ROM identifiers are excluded from this workload.
 - One representative ROM per map is normally enough; aliases share the same map.
@@ -22,7 +22,7 @@ Generated from the validated scoretracker-maps index on 2026-06-27.
 | `whitestar` | 2 | 6 |
 | `williams-system4` | 3 | 4 |
 | `williams-wpc-12K` | 4 | 10 |
-| `williams-wpc-8K` | 5 | 21 |
+| `williams-wpc-8K` | 3 | 11 |
 
 ## Capture checklist
 
@@ -157,12 +157,6 @@ Generated from the validated scoretracker-maps index on 2026-06-27.
   - ROMs/aliases: `afm_10` (Attack From Mars (1.0 / S1.0)), `afm_11pfx` (Attack From Mars (1.1 Pinball FX / S1.1)), `afm_11u` (Attack From Mars (1.1 Ultrapin / S1.1))
 - [ ] **`ss_12` — Scared Stiff (1.2)**
   - Map: `maps/williams/wpc/ss_12.map.json`
-- [ ] **`t2_l2` — Terminator 2: Judgment Day (L-2)**
-  - Map: `maps/williams/wpc/t2_l6.map.json`
-  - ROMs/aliases: `t2_l2` (Terminator 2: Judgment Day (L-2)), `t2_l3` (Terminator 2: Judgment Day (L-3)), `t2_l4` (Terminator 2: Judgment Day (L-4)), `t2_l6` (Terminator 2: Judgment Day (L-6)), `t2_p2f` (Terminator 2: Judgment Day (P-2F Profanity))
-- [ ] **`taf_l1` — Addams Family, The (L-1)**
-  - Map: `maps/williams/wpc/taf_l1.map.json`
-  - ROMs/aliases: `taf_l1` (Addams Family, The (L-1)), `taf_l2` (Addams Family, The (L-2)), `taf_l3` (Addams Family, The (L-3)), `taf_l4` (Addams Family, The (L-4)), `taf_p2` (Addams Family, The (P-2 Prototype))
 - [ ] **`tz_ifpa` — Twilight Zone (IFPA rules)**
   - Map: `maps/williams/wpc/tz_l1.map.json`
   - ROMs/aliases: `tz_ifpa` (Twilight Zone (IFPA rules)), `tz_l1` (Twilight Zone (L-1)), `tz_l2` (Twilight Zone (L-2)), `tz_l3` (Twilight Zone (L-3)), `tz_l4` (Twilight Zone (L-4)), `tz_p3` (Twilight Zone (P-3 Prototype)), `tz_p4` (Twilight Zone (P-4 Prototype))
