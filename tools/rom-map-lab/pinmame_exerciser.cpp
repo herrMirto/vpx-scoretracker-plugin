@@ -63,6 +63,10 @@ struct Options {
 
 static std::atomic<int> g_state{0};
 static bool g_quietLogs = false;
+static bool g_dumpRam = false;
+static bool g_ramRegionsListed = false;
+static std::vector<std::pair<size_t, size_t>> g_ramWindows;  // (start, length) within a region
+static std::vector<std::pair<size_t, size_t>> g_cpuWindows;  // (cpu_address, length) via CPU map
 static std::set<PINMAME_KEYCODE> g_pressedKeys;
 
 static std::string JsonEscape(const std::string& s) {
@@ -204,11 +208,81 @@ static void WriteBytes(const fs::path& path, const std::vector<uint8_t>& bytes) 
   file.write(reinterpret_cast<const char*>(bytes.data()), static_cast<std::streamsize>(bytes.size()));
 }
 
+// Dump raw CPU/RAM memory regions for each snapshot. NVRAM-only snapshots miss
+// volatile state (e.g. SAM's game-in-play flag lives in CPU RAM, not the
+// battery NVRAM). Regions larger than kMaxRamRegionBytes (ROM banks) are
+// skipped so 100+ snapshots stay small. Region index/length is stable for a
+// given ROM, so the per-region files line up positionally across snapshots.
+static void DumpMemoryRegions(const fs::path& outDir, const std::string& label) {
+  constexpr size_t kMaxRamRegionBytes = 0x40000;  // 256 KiB; keeps RAM/NVRAM, drops ROM
+  constexpr int kMaxRegions = 32;
+  std::ostringstream regions;
+  bool first = true;
+  for (int region = 0; region < kMaxRegions; ++region) {
+    const uint8_t* data = PinmameGetRawMemoryRegion(region);
+    const size_t len = PinmameGetRawMemoryRegionLength(region);
+    if (data == nullptr || len == 0)
+      continue;
+    if (!g_ramRegionsListed) {
+      if (!first)
+        regions << ",";
+      regions << "{\"region\":" << region << ",\"length\":" << len << "}";
+      first = false;
+    }
+    // With explicit --ram-window slices, carve them out of this region (some
+    // platforms, e.g. SAM, expose one huge flat region with RAM at fixed
+    // addresses). Otherwise dump whole small regions (gts3-style).
+    if (!g_ramWindows.empty()) {
+      for (const auto& w : g_ramWindows) {
+        const size_t start = w.first;
+        const size_t wlen = w.second;
+        if (start + wlen > len)
+          continue;
+        std::ostringstream name;
+        name << label << ".region" << region << "_0x" << std::hex << start << ".bin";
+        WriteBytes(outDir / name.str(),
+                   std::vector<uint8_t>(data + start, data + start + wlen));
+      }
+      continue;
+    }
+    if (len > kMaxRamRegionBytes)
+      continue;
+    std::ostringstream name;
+    name << label << ".region" << region << ".bin";
+    WriteBytes(outDir / name.str(), std::vector<uint8_t>(data, data + len));
+  }
+  if (!g_ramRegionsListed) {
+    g_ramRegionsListed = true;
+    PrintEvent("{\"event\":\"ram_regions\",\"regions\":[" + regions.str() + "]}");
+  }
+}
+
+// Dump CPU-address windows via PinmameReadMainCPUByte. Unlike raw memory
+// regions, this honours the CPU memory map, so addresses match map offsets
+// (e.g. SAM NVRAM at 0x02100000, work RAM at 0x0 / 0x300000).
+static void DumpCpuWindows(const fs::path& outDir, const std::string& label) {
+  for (const auto& w : g_cpuWindows) {
+    std::vector<uint8_t> buf(w.second);
+    for (size_t i = 0; i < w.second; ++i) {
+      uint8_t v = 0;
+      PinmameReadMainCPUByte(static_cast<uint32_t>(w.first + i), &v);
+      buf[i] = v;
+    }
+    std::ostringstream name;
+    name << label << ".cpu_0x" << std::hex << w.first << ".bin";
+    WriteBytes(outDir / name.str(), buf);
+  }
+}
+
 static std::vector<uint8_t> Snapshot(const fs::path& outDir, const std::string& label, const std::vector<uint8_t>* previous = nullptr) {
   std::vector<uint8_t> bytes = ReadNvram();
   fs::path file = outDir / (label + ".nv");
   if (!bytes.empty())
     WriteBytes(file, bytes);
+  if (g_dumpRam)
+    DumpMemoryRegions(outDir, label);
+  if (!g_cpuWindows.empty())
+    DumpCpuWindows(outDir, label);
 
   std::ostringstream out;
   out << "{\"event\":\"snapshot\",\"label\":\"" << JsonEscape(label)
@@ -271,7 +345,10 @@ static void Usage(const char* argv0) {
       << "  --key-pulse-ms N      Key active duration, default 120\n"
       << "  --fuzz-switches A-B   Pulse all switches in range, e.g. 1-128\n"
       << "  --active-state 0|1    Active switch state, default 1\n"
-      << "  --quiet-logs          Suppress libpinmame info logs\n";
+      << "  --quiet-logs          Suppress libpinmame info logs\n"
+      << "  --dump-ram            Also dump CPU/RAM regions per snapshot (<label>.regionN.bin)\n"
+      << "  --ram-window S:L      Dump raw-region slice [S,S+L) (hex ok); repeatable; implies --dump-ram\n"
+      << "  --cpu-window A:L      Dump CPU-address window [A,A+L) via PinmameReadMainCPUByte; repeatable\n";
 }
 
 static bool ParseRange(const std::string& s, int& lo, int& hi) {
@@ -436,6 +513,30 @@ static Options ParseArgs(int argc, char** argv) {
       opt.activeState = std::stoi(requireValue("--active-state")) ? 1 : 0;
     } else if (arg == "--quiet-logs") {
       g_quietLogs = true;
+    } else if (arg == "--dump-ram") {
+      g_dumpRam = true;
+    } else if (arg == "--ram-window") {
+      g_dumpRam = true;
+      std::string spec = requireValue("--ram-window");
+      auto colon = spec.find(':');
+      if (colon == std::string::npos) {
+        std::cerr << "Bad --ram-window (want START:LEN)\n";
+        std::exit(2);
+      }
+      size_t start = std::stoul(spec.substr(0, colon), nullptr, 0);
+      size_t len = std::stoul(spec.substr(colon + 1), nullptr, 0);
+      g_ramWindows.emplace_back(start, len);
+    } else if (arg == "--cpu-window") {
+      g_dumpRam = true;
+      std::string spec = requireValue("--cpu-window");
+      auto colon = spec.find(':');
+      if (colon == std::string::npos) {
+        std::cerr << "Bad --cpu-window (want ADDR:LEN)\n";
+        std::exit(2);
+      }
+      size_t start = std::stoul(spec.substr(0, colon), nullptr, 0);
+      size_t len = std::stoul(spec.substr(colon + 1), nullptr, 0);
+      g_cpuWindows.emplace_back(start, len);
     } else if (arg == "--help" || arg == "-h") {
       Usage(argv[0]);
       std::exit(0);

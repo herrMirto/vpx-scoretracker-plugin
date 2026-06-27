@@ -835,6 +835,8 @@ def run_case(
     ball_save_wait_ms: int,
     drain_pulse_ms: int,
     drain_settle_ms: int,
+    dump_ram: bool = False,
+    ram_windows: list[str] | None = None,
 ) -> dict[str, Any]:
     case_dir = out_dir / rom
     case_dir.mkdir(parents=True, exist_ok=True)
@@ -862,6 +864,10 @@ def run_case(
         "--out-dir",
         str(case_dir),
     ]
+    if dump_ram:
+        cmd.append("--dump-ram")
+    for window in ram_windows or []:
+        cmd.extend(["--ram-window", window])
     for sw in recipe.holds:
         cmd.extend(["--hold-switch", str(sw)])
     for sw, state in recipe.post_start_sets:
@@ -1018,6 +1024,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--hold-delay-ms", type=int, default=500)
     parser.add_argument("--settle-ms", type=int, default=500)
     parser.add_argument("--keep-root", action="store_true", help="Reuse existing per-ROM output roots")
+    parser.add_argument("--dump-ram", action="store_true", help="Also dump CPU/RAM regions per snapshot (for game_over discovery)")
+    parser.add_argument("--ram-window", action="append", default=[], help="START:LEN region slice to dump (hex ok); repeatable. Implies --dump-ram")
     return parser
 
 
@@ -1094,6 +1102,8 @@ def main() -> None:
             ball_save_wait_ms=args.ball_save_wait_ms,
             drain_pulse_ms=args.drain_pulse_ms,
             drain_settle_ms=args.drain_settle_ms,
+            dump_ram=args.dump_ram,
+            ram_windows=args.ram_window,
         )
         results.append(result)
         print(json.dumps(result), flush=True)
