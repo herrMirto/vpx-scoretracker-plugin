@@ -1,0 +1,14 @@
+{
+  "roms": {
+    "bdk_300": {
+      "status": "recipe_failed",
+      "note": "Batman 2.94 seed and standard trough recipe did not start a live scoring game on the Home/Costco firmware.",
+      "tier_penalty": 1
+    },
+    "beav_butt": {
+      "status": "recipe_failed",
+      "note": "The current VBS-derived recipe booted and changed NVRAM but produced no donor-decoded live score.",
+      "tier_penalty": 1
+    }
+  }
+}

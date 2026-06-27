@@ -61,7 +61,8 @@ public:
     static MapStatus ProbeMap(const std::string& gameId, const std::string& mapsPath, std::string& detail);
 
     // Returns true when monitoring started (a JSON map exists for the gameId).
-    bool Start(const std::string& gameId, const std::string& mapsPath, int port, const std::string& tablePath,
+    bool Start(const std::string& gameId, const std::string& mapsPath, int port, int pollIntervalMs, bool enableWebSocket,
+        const std::string& tablePath,
         bool enableNvramSnapshots = false);
     void Stop();
 
@@ -126,7 +127,9 @@ private:
     std::string m_lastJsonState;
     std::mutex m_nvramMutex;
     std::vector<uint8_t> m_lastNvram;
+    bool m_enableWebSocket = false;
     bool m_enableNvramSnapshots = false;
+    int m_pollIntervalMs = 250;
 
     // Summary/Session tracking
     std::chrono::steady_clock::time_point m_sessionStartRealTime;
