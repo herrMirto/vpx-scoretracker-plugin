@@ -15,8 +15,10 @@ map JSON files.
 from __future__ import annotations
 
 import argparse
+import contextlib
 import copy
 import difflib
+import io
 import json
 import math
 import re
@@ -1067,6 +1069,7 @@ def build_parser() -> argparse.ArgumentParser:
         help="Persistent ROM exercise evidence used to demote failed recipes",
     )
     p_priority.add_argument("--json", action="store_true")
+    p_priority.add_argument("--output", help="Write the rendered queue to a file")
     p_priority.set_defaults(func=cmd_prioritize_missing)
 
     return parser
@@ -1075,7 +1078,13 @@ def build_parser() -> argparse.ArgumentParser:
 def main() -> None:
     parser = build_parser()
     args = parser.parse_args()
-    args.func(args)
+    if getattr(args, "output", None):
+        buffer = io.StringIO()
+        with contextlib.redirect_stdout(buffer):
+            args.func(args)
+        Path(args.output).write_text(buffer.getvalue())
+    else:
+        args.func(args)
 
 
 if __name__ == "__main__":

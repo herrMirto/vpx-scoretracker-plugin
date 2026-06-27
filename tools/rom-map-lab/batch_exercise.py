@@ -28,11 +28,11 @@ from typing import Any
 import map_lab
 
 
-SWITCH_RE = re.compile(r"Controller\.Switch\((\d+)\)\s*=\s*([01])", re.IGNORECASE)
+SWITCH_RE = re.compile(r"(?:Controller)?\.Switch\((\d+)\)\s*=\s*([01])", re.IGNORECASE)
 PULSE_RE = re.compile(r"(?:vpmTimer\.)?PulseSw\s*\(?\s*(\d+)", re.IGNORECASE)
 HIT_RE = re.compile(r"^\s*Sub\s+[A-Za-z_]*sw(\d+)[A-Za-z0-9_]*_?Hit\b", re.IGNORECASE)
 SUB_RE = re.compile(r"^\s*Sub\s+([A-Za-z_][A-Za-z0-9_]*)", re.IGNORECASE)
-END_SUB_RE = re.compile(r"^\s*End\s+Sub\b", re.IGNORECASE)
+END_SUB_RE = re.compile(r"\bEnd\s+Sub\b", re.IGNORECASE)
 CREATED_BALL_RE = re.compile(
     r"\b(?:sw)?(\d+)\.CreateSizedball(?:WithMass)?\b", re.IGNORECASE
 )
@@ -40,12 +40,22 @@ WITH_RE = re.compile(r"^\s*With\s+([A-Za-z_][A-Za-z0-9_]*)", re.IGNORECASE)
 END_WITH_RE = re.compile(r"^\s*End\s+With\b", re.IGNORECASE)
 INIT_SWITCHES_RE = re.compile(r"\.InitSwitches\s+Array\(([^)]*)\)", re.IGNORECASE)
 INIT_SW_RE = re.compile(r"\.InitSw\s+([^']+)", re.IGNORECASE)
+INIT_SAUCER_RE = re.compile(r"\.InitSaucer\s+(?:sw)?(\d+)", re.IGNORECASE)
+TROUGH_SHIFT_RE = re.compile(
+    r"if\s+sw(\d+)\.BallCntOver\s*=\s*0\s+then\s+sw(\d+)\.kick",
+    re.IGNORECASE,
+)
+SWITCH_KICK_RE = re.compile(r"\bsw(\d+)\.kick\b", re.IGNORECASE)
+SWITCH_SUB_RE = re.compile(r"^sw(\d+)_?(?:un)?hit$", re.IGNORECASE)
 HOLD_CONTEXT_WORDS = (
     "trough",
     "drain",
     "outhole",
     "ballrelease",
     "ball release",
+    "coin door",
+    "coindoor",
+    "keep it close",
 )
 
 
@@ -128,8 +138,12 @@ def mine_recipe(script: Path, pulse_limit: int) -> Recipe:
     hits: set[int] = set()
     context_holds: set[int] = set()
     post_start_releases: set[int] = set()
+    drain_event_switches: set[int] = set()
+    release_exit_switches: set[int] = set()
+    trough_shifts: dict[int, int] = {}
     launch_pulses: set[int] = set()
     launch_context_switches: set[int] = set()
+    explicit_launch_switches: set[int] = set()
     current_sub = ""
     current_sub_context = ""
     current_with = ""
@@ -144,11 +158,33 @@ def mine_recipe(script: Path, pulse_limit: int) -> Recipe:
             current_sub = sub_match.group(1).lower()
             current_sub_context = lower
         semantic_context = f"{current_sub} {current_sub_context} {lower}"
+        shift_match = TROUGH_SHIFT_RE.search(line)
+        if shift_match:
+            trough_shifts[int(shift_match.group(1))] = int(shift_match.group(2))
+        if current_sub.startswith(("solrelease", "ballkick", "ballrelease")):
+            for kick_match in SWITCH_KICK_RE.finditer(line):
+                release_exit_switches.add(int(kick_match.group(1)))
+        if "randomsounddrain" in lower:
+            switch_sub = SWITCH_SUB_RE.match(current_sub)
+            if switch_sub:
+                drain_event_switches.add(int(switch_sub.group(1)))
         trough_context = "trough" in f"{current_with} {lower}"
-        init_match = INIT_SWITCHES_RE.search(line) or INIT_SW_RE.search(line)
+        saucer_match = INIT_SAUCER_RE.search(line)
+        if saucer_match and any(
+            word in f"{current_with} {lower}" for word in ("shooter", "plunger", "launch")
+        ):
+            explicit_launch_switches.add(int(saucer_match.group(1)))
+        array_init_match = INIT_SWITCHES_RE.search(line)
+        stack_init_match = INIT_SW_RE.search(line)
+        init_match = array_init_match or stack_init_match
         if trough_context and init_match and not lower.lstrip().startswith("'"):
-            switches = [int(value) for value in re.findall(r"\b\d+\b", init_match.group(1))]
-            switches = [sw for sw in switches if 1 <= sw <= 128]
+            raw_switches = [int(value) for value in re.findall(r"\b\d+\b", init_match.group(1))]
+            if stack_init_match:
+                entry_switch = raw_switches[0] if raw_switches else 0
+                if 1 <= entry_switch <= 128:
+                    drain_event_switches.add(entry_switch)
+                raw_switches = raw_switches[1:]
+            switches = [sw for sw in raw_switches if 1 <= sw <= 128]
             context_holds.update(switches)
             if switches:
                 # cvpmTrough arrays run from exit toward entry. After the first
@@ -163,7 +199,29 @@ def mine_recipe(script: Path, pulse_limit: int) -> Recipe:
             sw = int(match.group(1))
             value = int(match.group(2))
             direct.setdefault(sw, {0: 0, 1: 0})[value] += 1
-            if value == 1 and any(word in semantic_context for word in HOLD_CONTEXT_WORDS):
+            physical_trough_context = any(
+                word in semantic_context for word in ("trough", "ballrelease", "ball release")
+            )
+            drain_context = any(
+                word in semantic_context for word in ("drain", "outhole")
+            )
+            if value == 1 and physical_trough_context and not drain_context:
+                context_holds.add(sw)
+            if value == 1 and drain_context and "hit" in current_sub:
+                drain_event_switches.add(sw)
+            if value == 1 and current_sub.startswith(("solrelease", "ballkick")):
+                launch_context_switches.add(sw)
+            release_sub = current_sub.startswith("ballkick") or (
+                current_sub.startswith("ballrelease") and "hit" not in current_sub
+            )
+            if value == 0 and release_sub:
+                release_exit_switches.add(sw)
+                context_holds.add(sw)
+            if (
+                value == 1
+                and "hit" not in current_sub
+                and any(word in semantic_context for word in HOLD_CONTEXT_WORDS)
+            ):
                 context_holds.add(sw)
             if any(word in semantic_context for word in ("shooter", "plunger", "launch")):
                 launch_context_switches.add(sw)
@@ -188,8 +246,29 @@ def mine_recipe(script: Path, pulse_limit: int) -> Recipe:
     scoring_from_direct = {
         sw for sw, row in direct.items() if row.get(1, 0) > 0 and row.get(0, 0) > 0
     }
+    trough_entry_switch: int | None = None
     hold_list = sorted(sw for sw in context_holds if 1 <= sw <= 128)[:8]
     post_start_sets = sorted((sw, 0) for sw in post_start_releases & set(hold_list))
+    if not post_start_sets and release_exit_switches and not trough_shifts:
+        post_start_sets = sorted(
+            (sw, 0) for sw in release_exit_switches & set(hold_list)
+        )
+    if not post_start_sets and trough_shifts and release_exit_switches:
+        for exit_switch in sorted(release_exit_switches):
+            current = exit_switch
+            seen: set[int] = set()
+            shift_actions: list[tuple[int, int]] = [(exit_switch, 0)]
+            while current in trough_shifts and current not in seen:
+                seen.add(current)
+                source = trough_shifts[current]
+                if source not in hold_list:
+                    break
+                shift_actions.extend([(source, 0), (current, 1)])
+                current = source
+            if len(shift_actions) > 1:
+                post_start_sets = shift_actions
+                trough_entry_switch = current
+                break
     if not post_start_sets and len(hold_list) == 4 and hold_list == list(
         range(hold_list[0], hold_list[0] + 4)
     ):
@@ -199,8 +278,14 @@ def mine_recipe(script: Path, pulse_limit: int) -> Recipe:
         post_start_sets = [(hold_list[0], 0)]
     pulse_list = sorted((pulses | hits | scoring_from_direct) - set(hold_list))
     pulse_list = [sw for sw in pulse_list if 1 <= sw <= 128][:pulse_limit]
-    drain_switch = post_start_sets[0][0] if post_start_sets else None
-    launch_candidates = launch_pulses | launch_context_switches
+    drain_switch = (
+        min(drain_event_switches)
+        if drain_event_switches
+        else trough_entry_switch
+        if trough_entry_switch is not None
+        else post_start_sets[0][0] if post_start_sets else None
+    )
+    launch_candidates = explicit_launch_switches or (launch_pulses | launch_context_switches)
     launch_switch = min(launch_candidates) if launch_candidates else None
     score_switch = next(
         (sw for sw in pulse_list if sw not in {drain_switch, launch_switch}), None
@@ -298,6 +383,17 @@ def decode_snapshots(rom: str, exercise_dir: Path, maps_root: Path) -> tuple[lis
     return decoded, None
 
 
+def decode_score_field_strict(data: bytes, spec: dict[str, Any], base: int) -> Any:
+    """Decode a score, rejecting invalid packed-BCD nibbles used by transient RAM."""
+    if str(spec.get("encoding", "")).lower() == "bcd":
+        start = map_lab.normalized_addr(spec["start"], base)
+        length = int(spec.get("length", 1))
+        raw = data[start : start + length]
+        if len(raw) != length or any((byte >> 4) > 9 or (byte & 0x0F) > 9 for byte in raw):
+            return None
+    return map_lab.decode_field(data, spec, base)
+
+
 def evaluate_candidate_layouts(
     rom: str, exercise_dir: Path, maps_root: Path, limit: int = 5
 ) -> list[dict[str, Any]]:
@@ -312,12 +408,14 @@ def evaluate_candidate_layouts(
     files = sorted(exercise_dir.glob("*.nv"), key=lambda path: (path.stat().st_mtime_ns, path.name))
     evaluated: list[dict[str, Any]] = []
     for confidence, candidate in map_lab.ranked_suggestions(target, records, maps_root, limit):
+        score_specs = (candidate.data.get("game_state") or {}).get("scores") or []
         states = []
         for file in files:
-            decoded = map_lab.decode_game_state_snapshot(file.read_bytes(), candidate, base)
-            scores = decoded.get("scores")
-            if isinstance(scores, list):
-                states.append(scores)
+            data = file.read_bytes()
+            if score_specs:
+                states.append([
+                    decode_score_field_strict(data, spec, base) for spec in score_specs
+                ])
         unique = []
         for state in states:
             if state not in unique:
@@ -548,7 +646,9 @@ def collect_player_evidence(
     rows = []
     verified = []
     for player, spec in enumerate(proposed.get("scores", []), start=1):
-        values = [map_lab.decode_field(path.read_bytes(), spec, base) for path in files]
+        values = [
+            decode_score_field_strict(path.read_bytes(), spec, base) for path in files
+        ]
         values = [value for value in values if isinstance(value, int)]
         initial = values[0] if values else None
         changed_to_nonzero = bool(
@@ -724,7 +824,9 @@ def run_case(
     exerciser: Path,
     coins: int,
     starts: int,
+    start_gap_ms: int,
     boot_ms: int,
+    hold_delay_ms: int,
     settle_ms: int,
     maps_root: Path,
     seed_dir: Path | None,
@@ -745,6 +847,8 @@ def run_case(
         "--quiet-logs",
         "--boot-ms",
         str(boot_ms),
+        "--hold-delay-ms",
+        str(hold_delay_ms),
         "--settle-ms",
         str(settle_ms),
         "--key-pulse-ms",
@@ -753,6 +857,8 @@ def run_case(
         str(coins),
         "--starts",
         str(starts),
+        "--start-gap-ms",
+        str(start_gap_ms),
         "--out-dir",
         str(case_dir),
     ]
@@ -760,7 +866,13 @@ def run_case(
         cmd.extend(["--hold-switch", str(sw)])
     for sw, state in recipe.post_start_sets:
         cmd.extend(["--post-start-set-switch", f"{sw}={state}"])
-    for sw in recipe.pulses:
+    ordered_pulses = list(recipe.pulses)
+    if recipe.launch_switch is not None:
+        ordered_pulses = [
+            recipe.launch_switch,
+            *(sw for sw in ordered_pulses if sw != recipe.launch_switch),
+        ]
+    for sw in ordered_pulses:
         cmd.extend(["--pulse-switch", str(sw)])
     multiplayer_actions: list[str] = []
     if (
@@ -769,15 +881,67 @@ def run_case(
         and recipe.launch_switch is not None
         and recipe.score_switch is not None
     ):
+        # A drain pulse alone is not enough for ROMs backed by cvpmBallStack:
+        # the returned ball must also occupy the trough position that was
+        # cleared when the previous ball launched.  Refill every inferred
+        # post-start trough switch before waiting for the ROM to end the ball,
+        # then clear it again as the next ball is served.
+        released_trough_switches = [
+            sw for sw, state in recipe.post_start_sets if state == 0
+        ]
+        trough_switches = sorted(set(recipe.holds))
+        if len(released_trough_switches) == 1:
+            released = released_trough_switches[0]
+            contiguous = [released]
+            while contiguous[0] - 1 in trough_switches:
+                contiguous.insert(0, contiguous[0] - 1)
+            while contiguous[-1] + 1 in trough_switches:
+                contiguous.append(contiguous[-1] + 1)
+            trough_switches = contiguous
         for _ in range(player_cycles):
-            multiplayer_actions.extend(
-                [
-                    f"wait:{ball_save_wait_ms}",
-                    f"pulse:{recipe.drain_switch}:{drain_pulse_ms}:{drain_settle_ms}",
-                    f"pulse:{recipe.launch_switch}:200:{drain_settle_ms}",
-                    f"pulse:{recipe.score_switch}:200:{settle_ms}",
-                ]
-            )
+            drain_is_trough_slot = recipe.drain_switch in released_trough_switches
+            multiplayer_actions.extend([
+                f"wait:{ball_save_wait_ms}",
+                f"set:{recipe.drain_switch}=1:"
+                f"{drain_settle_ms if drain_is_trough_slot else drain_pulse_ms}",
+            ])
+            if not drain_is_trough_slot:
+                multiplayer_actions.extend(
+                    f"set:{sw}=1:{settle_ms}" for sw in released_trough_switches
+                )
+                multiplayer_actions.append(
+                    f"set:{recipe.drain_switch}=0:{drain_settle_ms}"
+                )
+            if len(released_trough_switches) == 1 and len(trough_switches) > 1:
+                # cvpmBallStack numbers these common linear troughs from the
+                # exit back toward the entry.  Simulate the release ripple so
+                # the ROM sees the exit switch open, the following balls roll
+                # forward, and the entry-side slot becomes empty.
+                released = released_trough_switches[0]
+                ordered = (
+                    list(reversed(trough_switches))
+                    if released == trough_switches[0]
+                    else trough_switches
+                )
+                multiplayer_actions.append(
+                    f"set:{ordered[0]}=0:{settle_ms}"
+                )
+                for source, destination in zip(
+                    ordered[1:],
+                    ordered[:-1],
+                ):
+                    multiplayer_actions.extend([
+                        f"set:{source}=0:250",
+                        f"set:{destination}=1:{settle_ms}",
+                    ])
+            else:
+                multiplayer_actions.extend(
+                    f"set:{sw}=0:{settle_ms}" for sw in released_trough_switches
+                )
+            multiplayer_actions.extend([
+                f"pulse:{recipe.launch_switch}:200:{drain_settle_ms}",
+                f"pulse:{recipe.score_switch}:200:{settle_ms}",
+            ])
     for action in multiplayer_actions:
         cmd.extend(["--action", action])
 
@@ -800,7 +964,7 @@ def run_case(
         "out": str(case_dir),
         "holds": recipe.holds,
         "post_start_sets": recipe.post_start_sets,
-        "pulses": recipe.pulses,
+        "pulses": ordered_pulses,
         "drain_switch": recipe.drain_switch,
         "launch_switch": recipe.launch_switch,
         "score_switch": recipe.score_switch,
@@ -840,6 +1004,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--pulse-limit", type=int, default=16)
     parser.add_argument("--coins", type=int, default=5)
     parser.add_argument("--starts", type=int, default=1)
+    parser.add_argument("--start-gap-ms", type=int, default=2500)
     parser.add_argument(
         "--verify-players",
         action="store_true",
@@ -850,6 +1015,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--drain-pulse-ms", type=int, default=1000)
     parser.add_argument("--drain-settle-ms", type=int, default=5000)
     parser.add_argument("--boot-ms", type=int, default=3500)
+    parser.add_argument("--hold-delay-ms", type=int, default=500)
     parser.add_argument("--settle-ms", type=int, default=500)
     parser.add_argument("--keep-root", action="store_true", help="Reuse existing per-ROM output roots")
     return parser
@@ -917,7 +1083,9 @@ def main() -> None:
             exerciser=Path(args.exerciser),
             coins=args.coins,
             starts=args.starts,
+            start_gap_ms=args.start_gap_ms,
             boot_ms=args.boot_ms,
+            hold_delay_ms=args.hold_delay_ms,
             settle_ms=args.settle_ms,
             maps_root=Path(args.maps_root),
             seed_dir=seed_dir,

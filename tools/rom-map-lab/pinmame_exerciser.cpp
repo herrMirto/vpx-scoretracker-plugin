@@ -41,11 +41,13 @@ struct Options {
   std::string outDir;
   int bootMs = 5000;
   int settleMs = 250;
+  int holdDelayMs = 500;
   int pulseMs = 100;
   int switchMin = 1;
   int switchMax = 128;
   int activeState = 1;
   int keyPulseMs = 120;
+  int startGapMs = 2500;
   int coins = 0;
   int starts = 0;
   bool fuzz = false;
@@ -251,6 +253,7 @@ static void Usage(const char* argv0) {
       << "  --out-dir PATH        Output directory, default /tmp/pinmame-exercise-ROM\n"
       << "  --boot-ms N           Wait after boot, default 5000\n"
       << "  --settle-ms N         Wait after switch release, default 250\n"
+      << "  --hold-delay-ms N      Delay initial held switches, default 500\n"
       << "  --pulse-ms N          Switch active duration, default 100\n"
       << "  --pulse-switch N      Pulse one switch; can be repeated\n"
       << "  --hold-switch N       Hold one switch active for the whole run; can be repeated\n"
@@ -263,6 +266,7 @@ static void Usage(const char* argv0) {
       << "  --coin-start          Press COIN/5 then START/1 before switch pulses\n"
       << "  --coins N             Press COIN/5 N times before starts\n"
       << "  --starts N            Press START/1 N times after coins\n"
+      << "  --start-gap-ms N      Extra wait between Start presses, default 2500\n"
       << "  --recipe NAME         Apply a preset, currently stern-sam-trough-launch\n"
       << "  --key-pulse-ms N      Key active duration, default 120\n"
       << "  --fuzz-switches A-B   Pulse all switches in range, e.g. 1-128\n"
@@ -366,6 +370,8 @@ static Options ParseArgs(int argc, char** argv) {
       opt.bootMs = std::stoi(requireValue("--boot-ms"));
     else if (arg == "--settle-ms")
       opt.settleMs = std::stoi(requireValue("--settle-ms"));
+    else if (arg == "--hold-delay-ms")
+      opt.holdDelayMs = std::stoi(requireValue("--hold-delay-ms"));
     else if (arg == "--pulse-ms")
       opt.pulseMs = std::stoi(requireValue("--pulse-ms"));
     else if (arg == "--key-pulse-ms")
@@ -374,6 +380,8 @@ static Options ParseArgs(int argc, char** argv) {
       opt.coins = std::stoi(requireValue("--coins"));
     else if (arg == "--starts")
       opt.starts = std::stoi(requireValue("--starts"));
+    else if (arg == "--start-gap-ms")
+      opt.startGapMs = std::stoi(requireValue("--start-gap-ms"));
     else if (arg == "--recipe")
       opt.recipe = requireValue("--recipe");
     else if (arg == "--pulse-switch")
@@ -518,11 +526,22 @@ int main(int argc, char** argv) {
     return 4;
   }
 
-  SleepMs(opt.bootMs);
+  if (!opt.holdSwitches.empty())
+    SleepMs(opt.holdDelayMs);
   for (int sw : opt.holdSwitches) {
     PinmameSetSwitch(sw, opt.activeState);
     std::ostringstream out;
     out << "{\"event\":\"hold_switch\",\"switch\":" << sw << ",\"active_state\":" << opt.activeState << "}";
+    PrintEvent(out.str());
+  }
+  if (!opt.holdSwitches.empty())
+    SleepMs(opt.settleMs);
+  SleepMs(opt.bootMs);
+  for (int sw : opt.holdSwitches) {
+    PinmameSetSwitch(sw, opt.activeState);
+    std::ostringstream out;
+    out << "{\"event\":\"hold_switch_reassert\",\"switch\":" << sw
+        << ",\"active_state\":" << opt.activeState << "}";
     PrintEvent(out.str());
   }
   if (!opt.holdSwitches.empty())
@@ -564,17 +583,6 @@ int main(int argc, char** argv) {
     baseline = after;
   };
 
-  int keySeq = 0;
-  for (int i = 0; i < opt.coins; ++i) {
-    pressAndSnapshot(PINMAME_KEYCODE_NUMBER_5, "coin" + std::to_string(i + 1) + "_" + std::to_string(++keySeq));
-  }
-  for (int i = 0; i < opt.starts; ++i) {
-    pressAndSnapshot(PINMAME_KEYCODE_NUMBER_1, "start" + std::to_string(i + 1) + "_" + std::to_string(++keySeq));
-  }
-  for (PINMAME_KEYCODE key : opt.keyPulses) {
-    pressAndSnapshot(key, "manualkey" + std::to_string(++keySeq));
-  }
-
   auto setSwitchAndSnapshot = [&](int sw, int state, const std::string& prefix) {
     std::ostringstream beforeLabel;
     beforeLabel << prefix << "_sw" << sw << "_set_before";
@@ -596,11 +604,33 @@ int main(int argc, char** argv) {
   };
 
   int setSeq = 0;
-  for (const auto& item : opt.postStartSwitchSets) {
-    std::ostringstream prefix;
-    prefix << "poststart" << (++setSeq);
-    setSwitchAndSnapshot(item.first, item.second, prefix.str());
+  bool postStartApplied = false;
+  auto applyPostStartSets = [&]() {
+    for (const auto& item : opt.postStartSwitchSets) {
+      std::ostringstream prefix;
+      prefix << "poststart" << (++setSeq);
+      setSwitchAndSnapshot(item.first, item.second, prefix.str());
+    }
+    postStartApplied = true;
+  };
+
+  int keySeq = 0;
+  for (int i = 0; i < opt.coins; ++i) {
+    pressAndSnapshot(PINMAME_KEYCODE_NUMBER_5, "coin" + std::to_string(i + 1) + "_" + std::to_string(++keySeq));
   }
+  for (int i = 0; i < opt.starts; ++i) {
+    pressAndSnapshot(PINMAME_KEYCODE_NUMBER_1, "start" + std::to_string(i + 1) + "_" + std::to_string(++keySeq));
+    if (i == 0 && opt.starts > 1)
+      applyPostStartSets();
+    if (i + 1 < opt.starts)
+      SleepMs(opt.startGapMs);
+  }
+  for (PINMAME_KEYCODE key : opt.keyPulses) {
+    pressAndSnapshot(key, "manualkey" + std::to_string(++keySeq));
+  }
+
+  if (!postStartApplied)
+    applyPostStartSets();
 
   auto pulseAndSnapshot = [&](int sw, const std::string& prefix) {
     std::ostringstream beforeLabel;

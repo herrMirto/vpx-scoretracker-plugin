@@ -265,8 +265,8 @@ PYTHONDONTWRITEBYTECODE=1 python3 tools/rom-map-lab/batch_exercise.py \
 This is isolated and never renames or modifies the source files.
 
 The miner understands direct `Controller.Switch` assignments, physical balls
-created on switches, consecutive physical troughs, and the common
-`cvpmTrough.InitSwitches`/`InitSw` forms. For an unresolved integer-score map, a strong live score hit also creates a
+created on switches, coin-door interlocks, bidirectional trough shifts, and the
+common `cvpmTrough.InitSwitches`/`InitSw` forms. For an unresolved integer-score map, a strong live score hit also creates a
 review-only `candidate_game_state.json` with the inferred Player 1 address and
 a four-player layout borrowed only from a solved structural donor with that same
 Player 1 address. Player 2-4 remain explicitly marked as requiring multiplayer
@@ -283,6 +283,9 @@ PYTHONDONTWRITEBYTECODE=1 python3 tools/rom-map-lab/batch_exercise.py \
 This emits ordered, timed wait/drain/launch/score actions. The lower-level
 exerciser also accepts repeatable `--action` values (`wait:ms`,
 `pulse:switch:pulse_ms:settle_ms`, and `set:switch=state:settle_ms`).
+Use `--hold-delay-ms` to tune initial cabinet-switch timing and
+`--start-gap-ms` to tune multiplayer Start presses. Held switches are asserted
+both shortly after PinMAME starts and again after ROM boot.
 
 Two regression cases currently prove the full path:
 
@@ -352,7 +355,8 @@ Generate the ordered work queue with:
 
 ```bash
 PYTHONDONTWRITEBYTECODE=1 python3 tools/rom-map-lab/map_lab.py prioritize-missing \
-  --maps-root /Users/andremichi/workspace/scoretracker-maps
+  --maps-root /Users/andremichi/workspace/scoretracker-maps \
+  --output /Users/andremichi/workspace/scoretracker-maps/game_state-priority.md
 ```
 
 This sorts by donor-confidence tier first and expected ROM IDs resolved second,
