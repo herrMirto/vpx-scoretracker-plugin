@@ -837,6 +837,7 @@ def run_case(
     drain_settle_ms: int,
     dump_ram: bool = False,
     ram_windows: list[str] | None = None,
+    cpu_windows: list[str] | None = None,
 ) -> dict[str, Any]:
     case_dir = out_dir / rom
     case_dir.mkdir(parents=True, exist_ok=True)
@@ -868,6 +869,8 @@ def run_case(
         cmd.append("--dump-ram")
     for window in ram_windows or []:
         cmd.extend(["--ram-window", window])
+    for window in cpu_windows or []:
+        cmd.extend(["--cpu-window", window])
     for sw in recipe.holds:
         cmd.extend(["--hold-switch", str(sw)])
     for sw, state in recipe.post_start_sets:
@@ -1026,6 +1029,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--keep-root", action="store_true", help="Reuse existing per-ROM output roots")
     parser.add_argument("--dump-ram", action="store_true", help="Also dump CPU/RAM regions per snapshot (for game_over discovery)")
     parser.add_argument("--ram-window", action="append", default=[], help="START:LEN region slice to dump (hex ok); repeatable. Implies --dump-ram")
+    parser.add_argument("--cpu-window", action="append", default=[], help="ADDR:LEN CPU-address window via PinmameReadMainCPUByte (hex ok); repeatable")
     return parser
 
 
@@ -1104,6 +1108,7 @@ def main() -> None:
             drain_settle_ms=args.drain_settle_ms,
             dump_ram=args.dump_ram,
             ram_windows=args.ram_window,
+            cpu_windows=args.cpu_window,
         )
         results.append(result)
         print(json.dumps(result), flush=True)
