@@ -274,13 +274,16 @@ void B2STracker::SetPinmameActive(bool active)
         LPI_LOGI_CPP("[INFO] - B2S fallback armed because no NVRAM map is active."s);
 }
 
-void B2STracker::OnGameStart(const std::string& gameId, int wsPort, const std::string& tablePath)
+void B2STracker::OnGameStart(const std::string& gameId, int wsPort, int pollIntervalMs, bool enableWebSocket,
+    const std::string& tablePath)
 {
     std::lock_guard<std::mutex> lock(m_stateMutex);
     m_gameId = gameId;
     m_tablePath = tablePath;
     if (wsPort > 0)
         m_wsPort = wsPort;
+    m_pollIntervalMs = std::clamp(pollIntervalMs, 50, 5000);
+    m_enableWebSocket = enableWebSocket;
 }
 
 void B2STracker::OnGameEnd()
@@ -350,7 +353,11 @@ void B2STracker::EnsureStarted()
     LPI_LOGI_CPP(std::string("[INFO] - EM (B2S) score tracking started for ") + (m_tableName.empty() ? m_gameId : m_tableName));
     std::cout << "[ScoreTracker] EM (B2S) score tracking started" << std::endl;
 
-    StartWebServer(m_wsPort);
+    if (m_enableWebSocket) {
+        StartWebServer(m_wsPort);
+    } else {
+        LPI_LOGI_CPP("[INFO] - EM WebSocket output disabled; no local web server started"s);
+    }
     m_thread = std::thread(&B2STracker::Loop, this);
 }
 
@@ -413,7 +420,7 @@ void B2STracker::Loop()
                     mg_ws_send(conn, evt.c_str(), evt.length(), WEBSOCKET_OP_TEXT);
         }
 
-        std::this_thread::sleep_for(std::chrono::milliseconds(100));
+        std::this_thread::sleep_for(std::chrono::milliseconds(m_pollIntervalMs));
     }
 }
 

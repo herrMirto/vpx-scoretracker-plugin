@@ -31,6 +31,11 @@ void WebEventHandler(struct mg_connection* c, int ev, void* ev_data) {
     if (ev == MG_EV_HTTP_MSG) {
         struct mg_http_message* hm = static_cast<struct mg_http_message*>(ev_data);
         if (hm->uri.len == 3 && strncmp(hm->uri.buf, "/ws", 3) == 0) {
+            if (!tracker->m_enableWebSocket) {
+                mg_http_reply(c, 403, "Content-Type: application/json\r\n",
+                    "%s", "{\"error\":\"WebSocket output is disabled\"}");
+                return;
+            }
             mg_ws_upgrade(c, hm, nullptr);
         } else if (hm->uri.len == 9 && strncmp(hm->uri.buf, "/snapshot", 9) == 0) {
             if (!tracker->m_enableNvramSnapshots) {
@@ -480,13 +485,16 @@ int64_t ScoreTracker::Decode(const std::vector<uint8_t>& nvram, const Descriptor
     return static_cast<int64_t>(value * desc.scale + desc.offset);
 }
 
-bool ScoreTracker::Start(const std::string& gameId, const std::string& mapsPath, int port,
+bool ScoreTracker::Start(const std::string& gameId, const std::string& mapsPath, int port, int pollIntervalMs,
+    bool enableWebSocket,
     const std::string& tablePath, bool enableNvramSnapshots)
 {
     m_gameId = gameId;
     m_mapsPath = mapsPath;
     m_tablePath = tablePath;
+    m_enableWebSocket = enableWebSocket;
     m_enableNvramSnapshots = enableNvramSnapshots;
+    m_pollIntervalMs = std::clamp(pollIntervalMs, 50, 5000);
     {
         std::lock_guard<std::mutex> lock(m_nvramMutex);
         m_lastNvram.clear();
@@ -508,7 +516,12 @@ bool ScoreTracker::Start(const std::string& gameId, const std::string& mapsPath,
 
     m_monitoringStarted = true;
 
-    StartWebServer(port);
+    if (m_enableWebSocket || m_enableNvramSnapshots) {
+        StartWebServer(port);
+    } else {
+        std::cout << "[ScoreTracker] WebSocket output disabled; no local web server started" << std::endl;
+        LPI_LOGI_CPP("[INFO] - WebSocket output disabled; no local web server started");
+    }
 
     m_running = true;
     m_thread = std::thread(&ScoreTracker::Loop, this);
@@ -554,18 +567,21 @@ void ScoreTracker::Stop()
 void ScoreTracker::Loop()
 {
     bool hasLastState = false;
+    std::vector<uint8_t> nvram;
+    std::vector<PinmameNVRAMState> nvramBuffer;
 
     while (m_running) {
         if (!PinmameIsRunning()) {
-            std::this_thread::sleep_for(std::chrono::milliseconds(200));
+            std::this_thread::sleep_for(std::chrono::milliseconds(m_pollIntervalMs));
             continue;
         }
         
         int nvramSize = PinmameGetMaxNVRAM();
-        std::vector<uint8_t> nvram(nvramSize);
+        nvram.clear();
         
         if (nvramSize > 0) {
-            std::vector<PinmameNVRAMState> nvramBuffer(nvramSize);
+            nvram.resize(nvramSize);
+            nvramBuffer.resize(nvramSize);
             int count = PinmameGetNVRAM(nvramBuffer.data());
             if (count < 0) count = 0;
             if (count < nvramSize) nvram.resize(count);
@@ -705,7 +721,7 @@ void ScoreTracker::Loop()
             }
         }
         
-        std::this_thread::sleep_for(std::chrono::milliseconds(100));
+        std::this_thread::sleep_for(std::chrono::milliseconds(m_pollIntervalMs));
     }
 }
 
@@ -741,6 +757,10 @@ void ScoreTracker::StopWebServer()
     m_webRunning = false;
     if (m_webThread.joinable()) {
         m_webThread.join();
+    }
+    {
+        std::lock_guard<std::mutex> lock(m_clientsMutex);
+        m_clients.clear();
     }
 }
 

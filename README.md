@@ -10,7 +10,7 @@ The plugin watches VPX/PinMAME and B2S score state, then appends one completed-g
 - Keep the file human-readable and local-first.
 - Avoid table script modifications.
 - Use VPX plugin APIs, PinMAME APIs, and B2S script-object interception rather than memory hacks.
-- Keep WebSocket output optional for live UIs and companion apps.
+- Keep WebSocket output opt-in for live UIs and companion apps.
 
 ## scores.json
 
@@ -82,3 +82,13 @@ capture is recorded in the VPX log with its full path and byte count. Platforms
 that declare CPU RAM regions also produce a matching `-ram-ADDRESS.bin` file;
 this allows map authors to correlate volatile scores and lifecycle fields that
 are not persisted in NVRAM.
+
+## Runtime overhead settings
+
+ScoreTracker is optimized for completed-game persistence to `scores.json`.
+Live WebSocket output is disabled by default and no local web server is started
+unless either `EnableWebSocket` or `EnableNVRAMSnapshots` is enabled.
+
+`PollIntervalMs` controls how often score state is inspected. The default is
+`250`; higher values reduce VPX process overhead at the cost of less frequent
+live state updates.

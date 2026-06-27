@@ -47,7 +47,8 @@ public:
 
     // Controller game lifecycle (the b2s plugins broadcast these with the
     // B2SName as gameId once the backglass registers its first state).
-    void OnGameStart(const std::string& gameId, int wsPort, const std::string& tablePath);
+    void OnGameStart(const std::string& gameId, int wsPort, int pollIntervalMs, bool enableWebSocket,
+        const std::string& tablePath);
     void OnGameEnd();
     // Stop and clear a provisional fallback without emitting a result. Used
     // when a higher-priority NVRAM map becomes available for the table.
@@ -101,6 +102,8 @@ private:
 
     std::atomic<bool> m_pinmameActive{false};
     int m_wsPort = 8889;
+    int m_pollIntervalMs = 250;
+    bool m_enableWebSocket = false;
 
     // Captured EM game state
     std::mutex m_stateMutex;
