@@ -454,6 +454,83 @@ def score_states(decoded: list[dict[str, Any]]) -> list[list[Any]]:
     return states
 
 
+def discover_game_over_candidates(
+    exercise_dir: Path,
+    maps_root: Path,
+    rom: str,
+    limit: int = 40,
+) -> list[dict[str, Any]]:
+    """Rank NVRAM bits that are stable in attract and invert for a live game."""
+    try:
+        index, records = map_lab.load_records(maps_root)
+        target = map_lab.resolve_rom(index, records, rom)
+        base = map_lab.platform_nvram_base(maps_root, target.platform)
+    except SystemExit:
+        return []
+
+    files = sorted(
+        exercise_dir.glob("*.nv"), key=lambda path: (path.stat().st_mtime_ns, path.name)
+    )
+    attract_files = [
+        path
+        for path in files
+        if path.name == "boot.nv"
+        or path.name.startswith("coin")
+        or (path.name.startswith("start1_") and path.name.endswith("_before.nv"))
+        or "attract" in path.name.lower()
+        or "game_over" in path.name.lower()
+    ]
+    live_files = [
+        path
+        for path in files
+        if (path.name.startswith("start1_") and path.name.endswith("_after.nv"))
+        or path.name.startswith(("poststart", "manual"))
+        or any(
+            marker in path.name.lower()
+            for marker in ("game_started", "score_known", "last_ball")
+        )
+    ]
+    if len(attract_files) < 2 or len(live_files) < 3:
+        return []
+    attract = [path.read_bytes() for path in attract_files]
+    live = [path.read_bytes() for path in live_files]
+    size = min(*(len(data) for data in attract), *(len(data) for data in live))
+    candidates: list[dict[str, Any]] = []
+    for offset in range(size):
+        for mask in (1, 2, 4, 8, 16, 32, 64, 128):
+            attract_bits = [bool(data[offset] & mask) for data in attract]
+            live_bits = [bool(data[offset] & mask) for data in live]
+            attract_value = max(set(attract_bits), key=attract_bits.count)
+            live_value = max(set(live_bits), key=live_bits.count)
+            if attract_value == live_value:
+                continue
+            attract_consistency = attract_bits.count(attract_value) / len(attract_bits)
+            live_consistency = live_bits.count(live_value) / len(live_bits)
+            if attract_consistency < 0.98 or live_consistency < 0.98:
+                continue
+            candidates.append(
+                {
+                    "offset": f"0x{offset:X}",
+                    "start": map_lab.fmt_addr(base + offset),
+                    "mask": f"0x{mask:02X}",
+                    "attract": attract_value,
+                    "live": live_value,
+                    "invert": not attract_value,
+                    "attract_consistency": round(attract_consistency, 3),
+                    "live_consistency": round(live_consistency, 3),
+                    "samples": {"attract": len(attract), "live": len(live)},
+                }
+            )
+    candidates.sort(
+        key=lambda row: (
+            -(row["attract_consistency"] + row["live_consistency"]),
+            map_lab.parse_int(row["offset"]),
+            map_lab.parse_int(row["mask"]),
+        )
+    )
+    return candidates[:limit]
+
+
 def changed_count(before: bytes, after: bytes) -> int:
     n = min(len(before), len(after))
     count = abs(len(before) - len(after))
@@ -798,6 +875,9 @@ def analyze_case(rom: str, case_dir: Path, maps_root: Path) -> dict[str, Any]:
         proposed=proposed_game_state,
         evidence=player_evidence,
     )
+    game_over_candidates = discover_game_over_candidates(
+        case_dir, maps_root, rom
+    )
     return {
         "nv_files": len(list(case_dir.glob("*.nv"))),
         "decoded_snapshots": len(decoded),
@@ -811,6 +891,7 @@ def analyze_case(rom: str, case_dir: Path, maps_root: Path) -> dict[str, Any]:
         "proposed_game_state": proposed_game_state,
         "player_evidence": player_evidence,
         "candidate_report": candidate_report,
+        "game_over_candidates": game_over_candidates,
     }
 
 

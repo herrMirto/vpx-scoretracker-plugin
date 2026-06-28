@@ -39,6 +39,8 @@ class MapRecord:
     platform: str
     roms: tuple[str, ...]
     has_game_state: bool
+    has_scores: bool
+    has_game_over: bool
 
 
 def load_json(path: Path) -> dict[str, Any]:
@@ -81,6 +83,7 @@ def load_records(maps_root: Path) -> tuple[dict[str, Any], list[MapRecord]]:
             continue
         data = load_json(full)
         meta = data.get("_metadata", {})
+        game_state = data.get("game_state") or {}
         records.append(
             MapRecord(
                 path=rel,
@@ -88,7 +91,9 @@ def load_records(maps_root: Path) -> tuple[dict[str, Any], list[MapRecord]]:
                 data=data,
                 platform=str(meta.get("platform", "")),
                 roms=tuple(str(r) for r in meta.get("roms", [])),
-                has_game_state=bool(data.get("game_state")),
+                has_game_state=bool(game_state),
+                has_scores=bool(game_state.get("scores")),
+                has_game_over=bool(game_state.get("game_over")),
             )
         )
     return index, records
@@ -192,7 +197,8 @@ def decode_field(data: bytes, spec: dict[str, Any], base: int) -> Any:
     if encoding == "bcd":
         return decode_bcd(raw)
     if encoding == "bool":
-        value = raw[0] != 0
+        mask = spec.get("mask")
+        value = (raw[0] & parse_int(mask)) != 0 if mask is not None else raw[0] != 0
         if bool(spec.get("invert", False)):
             value = not value
         return value
@@ -277,7 +283,9 @@ def score_record(target: MapRecord, candidate: MapRecord, maps_root: Path) -> fl
 def cmd_missing(args: argparse.Namespace) -> None:
     maps_root = Path(args.maps_root)
     index, records = load_records(maps_root)
-    missing = [r for r in records if not r.has_game_state]
+    missing = [r for r in records if not r.has_scores]
+    missing_game_over = [r for r in records if r.has_scores and not r.has_game_over]
+    complete = [r for r in records if r.has_scores and r.has_game_over]
     roms_missing = [
         rom
         for rom, entry in index.items()
@@ -289,17 +297,19 @@ def cmd_missing(args: argparse.Namespace) -> None:
 
     print(f"Indexed ROM IDs: {len(index)}")
     print(f"Map files: {len(records)}")
-    print(f"Maps with game_state: {len(records) - len(missing)}")
-    print(f"Maps missing game_state: {len(missing)}")
-    print(f"ROM IDs missing game_state: {len(roms_missing)}")
+    print(f"Maps with live scores: {len(records) - len(missing)}")
+    print(f"Maps missing live scores: {len(missing)}")
+    print(f"ROM IDs missing live scores: {len(roms_missing)}")
+    print(f"Maps with scores but missing game_over: {len(missing_game_over)}")
+    print(f"Complete maps (scores + game_over): {len(complete)}")
     print()
-    print("Missing map files by platform:")
+    print("Maps missing live scores by platform:")
     for platform, count in sorted(by_platform.items(), key=lambda item: (-item[1], item[0])):
         print(f"  {platform or '(unknown)'}: {count}")
 
     if args.show:
         print()
-        print("Missing map files:")
+        print("Maps missing live scores:")
         for record in missing:
             roms = ", ".join(record.roms)
             print(f"  {record.path} [{record.platform}] {roms}")
@@ -344,12 +354,19 @@ def cmd_suggest(args: argparse.Namespace) -> None:
 
 
 def ranked_suggestions(
-    target: MapRecord, records: list[MapRecord], maps_root: Path, limit: int
+    target: MapRecord,
+    records: list[MapRecord],
+    maps_root: Path,
+    limit: int,
+    require_game_over: bool = False,
 ) -> list[tuple[float, MapRecord]]:
     solved = [
         r
         for r in records
-        if r.platform == target.platform and r.has_game_state and r.path != target.path
+        if r.platform == target.platform
+        and r.has_game_state
+        and (r.has_game_over or not require_game_over)
+        and r.path != target.path
     ]
     return sorted(
         ((score_record(target, candidate, maps_root), candidate) for candidate in solved),
@@ -836,7 +853,9 @@ def cmd_prioritize_missing(args: argparse.Namespace) -> None:
     }
     rows = []
     excluded = []
-    for target in (record for record in records if not record.has_game_state):
+    for target in (
+        record for record in records if not record.has_scores or not record.has_game_over
+    ):
         indexed_roms = sorted(
             rom
             for rom, entry in index.items()
@@ -853,7 +872,9 @@ def cmd_prioritize_missing(args: argparse.Namespace) -> None:
             excluded.append(target.path)
             continue
 
-        ranked = ranked_suggestions(target, records, maps_root, 3)
+        ranked = ranked_suggestions(
+            target, records, maps_root, 3, require_game_over=True
+        )
         confidence = ranked[0][0] if ranked else 0.0
         donor = ranked[0][1] if ranked else None
         base = platform_nvram_base(maps_root, target.platform)
@@ -929,6 +950,14 @@ def cmd_prioritize_missing(args: argparse.Namespace) -> None:
                 "local_status": local_status,
                 "local_matches": [{"rom": rom, "status": status} for rom, status in local],
                 "evidence_notes": evidence_notes,
+                "needs": [
+                    field
+                    for field, missing_field in (
+                        ("scores", not target.has_scores),
+                        ("game_over", not target.has_game_over),
+                    )
+                    if missing_field
+                ],
             }
         )
 
@@ -950,7 +979,7 @@ def cmd_prioritize_missing(args: argparse.Namespace) -> None:
         print(json.dumps({"queue": rows, "excluded_experimental": excluded}, indent=2))
         return
 
-    print("# Missing game_state priority queue")
+    print("# Incomplete game_state priority queue")
     print()
     print(
         "Sorted by donor-confidence tier first, then expected ROM IDs resolved. "
@@ -959,12 +988,13 @@ def cmd_prioritize_missing(args: argparse.Namespace) -> None:
     print()
     print(f"Active maps: {len(rows)}; excluded experimental maps: {len(excluded)}")
     print()
-    print("| # | Tier | Play ROM | ROMs | Donor | Confidence | Consensus | Local | Evidence | Map |")
-    print("|---:|:---:|---|---:|---|---:|:---:|---|---|---|")
+    print("| # | Tier | Play ROM | ROMs | Needs | Donor | Confidence | Consensus | Local | Evidence | Map |")
+    print("|---:|:---:|---|---:|---|---|---:|:---:|---|---|---|")
     for row in rows:
         donor_name = Path(row["donor_map"]).stem if row["donor_map"] else "—"
         print(
             f"| {row['rank']} | {row['tier']} | `{row['play_rom']}` | {row['rom_count']} | "
+            f"{'+'.join(row['needs'])} | "
             f"{donor_name} | {row['donor_confidence']:.3f} | "
             f"{'yes' if row['layout_consensus'] else 'no'} | {row['local_status']} | "
             f"{'prior failure' if row['evidence_notes'] else '—'} | "
@@ -990,7 +1020,9 @@ def build_parser() -> argparse.ArgumentParser:
         help="Path to scoretracker-maps/pinmame-nvram-maps style repository",
     )
 
-    p_missing = sub.add_parser("missing", parents=[common], help="List maps missing game_state")
+    p_missing = sub.add_parser(
+        "missing", parents=[common], help="Report maps missing live scores or game_over"
+    )
     p_missing.add_argument("--show", action="store_true", help="Print every missing map")
     p_missing.set_defaults(func=cmd_missing)
 

@@ -319,6 +319,11 @@ The top-level `summary.json` is the main artifact. The most important fields are
 - `proposed_game_state`: review-only integer score block when the evidence and a
   matching structural donor are strong enough.
 - `player_evidence`: addresses independently observed changing per player;
+- `game_over_candidates`: bit-level fields that remain stable in attract
+  snapshots and flip consistently during live play. Treat these as candidates
+  until a final drain or a proven structural donor confirms the return to the
+  attract value. The generic `final.nv` snapshot is deliberately ignored here
+  because the exerciser may stop while a game is still active;
 - `candidate_report`: evidence status and generated artifact paths.
 
 For an unresolved map, the batch writes a candidate map whenever Player 1 is
@@ -359,12 +364,14 @@ PYTHONDONTWRITEBYTECODE=1 python3 tools/rom-map-lab/map_lab.py prioritize-missin
   --output /Users/andremichi/workspace/scoretracker-maps/game_state-priority.md
 ```
 
-This sorts by donor-confidence tier first and expected ROM IDs resolved second,
-while also showing layout consensus and local readiness. Prototype/FreeWPC-only
-maps are excluded by default; pass `--include-experimental` to include them or
-`--json` for structured output. Known failed recipes in `evidence.json` demote a
-case automatically so attractive donor similarity cannot hide contrary runtime
-evidence.
+This treats a map as complete only when it has both live scores and a
+`game_over` field. It sorts by donor-confidence tier first and expected ROM IDs
+resolved second, while also showing whether each map needs scores,
+`game_over`, or both, plus layout consensus and local readiness.
+Prototype/FreeWPC-only maps are excluded by default; pass
+`--include-experimental` to include them or `--json` for structured output.
+Known failed recipes in `evidence.json` demote a case automatically so
+attractive donor similarity cannot hide contrary runtime evidence.
 
 ### Temporary donor-only candidate maps
 

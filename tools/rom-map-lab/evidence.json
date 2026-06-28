@@ -34,6 +34,11 @@
       "status": "seed_recipe_failed",
       "note": "The exact seed exposed credits, but the physical four-ball trough recipe (including a full release ripple) never left attract mode.",
       "tier_penalty": 1
+    },
+    "term3_2": {
+      "status": "partial_game_over_candidate",
+      "note": "0x0227 bit 0x08 is set in attract and clear from Start through inter-ball states, but automated drains did not reach a confirmed final game-over return.",
+      "tier_penalty": 1
     }
   }
 }
