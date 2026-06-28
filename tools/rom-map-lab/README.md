@@ -456,3 +456,27 @@ python3 tools/rom-map-lab/map_lab.py exercise-plan \
   --maps-root /Users/andremichi/workspace/scoretracker-maps \
   --rom mt_145
 ```
+
+### Finding volatile-RAM game-state flags (game_over, ball-in-play)
+
+`find_game_state.py` locates live flags that aren't in the `.nv` (Capcom DRAM,
+SAM/WPC work RAM, etc.). Capture CPU memory during a real game, then analyze:
+
+```bash
+# capture a full game with CPU-RAM snapshots (see batch_exercise --cpu-window):
+python3 batch_exercise.py --case 'bsv103=/tmp/bsb_extract.vbs' \
+  --seed 'bsv103=/path/to/Breakshot/pinmame' --starts 1 --player-cycles 3 \
+  --cpu-window 0x0:0x14000 --out-dir /tmp/bsb-batch
+
+# find game_over candidates (churn-filtered, 3-phase attract/play/over):
+python3 find_game_state.py --exercise-dir /tmp/bsb-batch/bsv103 --window cpu_0x0
+
+# intersect two ROMs to surface the platform-wide flag:
+python3 find_game_state.py --window cpu_0x0 \
+  --exercise-dir /tmp/bsb-batch/bsv103 --exercise-dir /tmp/bbb-batch/bbb109
+```
+
+This is how the Capcom `game_over` was found: `0x000012F2` bit `0x40` (set during
+a game, clear in attract / at game over), the single common candidate across
+Breakshot, Big Bang Bar and Pinball Magic. Pick the clean rectangular-pulse byte
+from the printed timeline and express it as `{encoding:"bool", mask, invert}`.
