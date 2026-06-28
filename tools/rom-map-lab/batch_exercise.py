@@ -131,6 +131,51 @@ def parse_rom_alias(raw: str) -> tuple[str, str]:
     return target.strip(), source.strip()
 
 
+def parse_watch(raw: str) -> tuple[str, dict[str, Any]]:
+    if "=" not in raw:
+        raise argparse.ArgumentTypeError(
+            "watch must be ROM=OFFSET:MASK:EXPECTED"
+        )
+    rom, spec = raw.split("=", 1)
+    parts = spec.split(":")
+    if not rom.strip() or len(parts) != 3:
+        raise argparse.ArgumentTypeError(
+            "watch must be ROM=OFFSET:MASK:EXPECTED"
+        )
+    try:
+        offset = int(parts[0], 0)
+        mask = int(parts[1], 0)
+        expected = 1 if int(parts[2], 0) else 0
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError(str(exc)) from exc
+    if offset < 0 or not 0 < mask <= 0xFF:
+        raise argparse.ArgumentTypeError("watch offset/mask is out of range")
+    return rom.strip(), {
+        "offset": offset,
+        "start": map_lab.fmt_addr(offset),
+        "mask": mask,
+        "mask_hex": f"0x{mask:02X}",
+        "expected": expected,
+        "source_map": None,
+        "confidence": 1.0,
+        "inherited": False,
+        "override": True,
+    }
+
+
+def parse_score_switch(raw: str) -> tuple[str, int]:
+    if "=" not in raw:
+        raise argparse.ArgumentTypeError("score switch must be ROM=SWITCH")
+    rom, value = raw.split("=", 1)
+    try:
+        switch = int(value, 0)
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError(str(exc)) from exc
+    if not rom.strip() or switch <= 0:
+        raise argparse.ArgumentTypeError("score switch must be ROM=SWITCH")
+    return rom.strip(), switch
+
+
 def mine_recipe(script: Path, pulse_limit: int) -> Recipe:
     text = script.read_text(errors="replace").splitlines()
     direct: dict[int, dict[int, int]] = {}
@@ -454,6 +499,35 @@ def score_states(decoded: list[dict[str, Any]]) -> list[list[Any]]:
     return states
 
 
+def effective_score_switches(
+    rom: str, exercise_dir: Path, maps_root: Path
+) -> list[dict[str, Any]]:
+    try:
+        index, records = map_lab.load_records(maps_root)
+        target = map_lab.resolve_rom(index, records, rom)
+        base = map_lab.platform_nvram_base(maps_root, target.platform)
+    except SystemExit:
+        return []
+    found: list[dict[str, Any]] = []
+    for before in sorted(exercise_dir.glob("manual*_sw*_before.nv")):
+        after = before.with_name(before.name.replace("_before.nv", "_after.nv"))
+        match = re.search(r"_sw(\d+)_", before.name)
+        if not after.exists() or not match:
+            continue
+        before_state = map_lab.decode_game_state_snapshot(before.read_bytes(), target, base)
+        after_state = map_lab.decode_game_state_snapshot(after.read_bytes(), target, base)
+        before_scores = before_state.get("scores") or []
+        after_scores = after_state.get("scores") or []
+        if not before_scores or not after_scores:
+            continue
+        old, new = before_scores[0], after_scores[0]
+        if isinstance(old, int) and isinstance(new, int) and new > old:
+            found.append(
+                {"switch": int(match.group(1)), "before": old, "after": new, "delta": new - old}
+            )
+    return found
+
+
 def discover_game_over_candidates(
     exercise_dir: Path,
     maps_root: Path,
@@ -484,7 +558,7 @@ def discover_game_over_candidates(
         path
         for path in files
         if (path.name.startswith("start1_") and path.name.endswith("_after.nv"))
-        or path.name.startswith(("poststart", "manual"))
+        or path.name.startswith(("poststart", "manual", "action"))
         or any(
             marker in path.name.lower()
             for marker in ("game_started", "score_known", "last_ball")
@@ -557,6 +631,8 @@ def discover_int_score_candidates(
         base = map_lab.platform_nvram_base(maps_root, target.platform)
     except SystemExit:
         base = 0
+        target = None
+        records = []
 
     files = sorted(
         exercise_dir.glob("manual*_sw*_after.nv"),
@@ -600,6 +676,190 @@ def discover_int_score_candidates(
     return [row for _, row in ranked[:limit]]
 
 
+def decode_bcd(raw: bytes) -> int | None:
+    digits: list[str] = []
+    for value in raw:
+        high, low = value >> 4, value & 0x0F
+        if high > 9 or low > 9:
+            return None
+        digits.extend((str(high), str(low)))
+    return int("".join(digits))
+
+
+def discover_bcd_score_candidates(
+    rom: str, exercise_dir: Path, maps_root: Path, limit: int = 12
+) -> list[dict[str, Any]]:
+    """Rank packed-BCD windows that rise monotonically during scoring pulses."""
+    try:
+        index, records = map_lab.load_records(maps_root)
+        target = map_lab.resolve_rom(index, records, rom)
+        base = map_lab.platform_nvram_base(maps_root, target.platform)
+    except SystemExit:
+        base = 0
+        target = None
+        records = []
+
+    files = sorted(
+        exercise_dir.glob("manual*_sw*_after.nv"),
+        key=lambda path: (path.stat().st_mtime_ns, path.name),
+    )
+    snapshots = [path.read_bytes() for path in files]
+    if len(snapshots) < 3:
+        return []
+
+    size = min(len(data) for data in snapshots)
+    projected_starts: dict[int, list[str]] = {}
+    target_high_specs = (
+        [
+            item.get("score")
+            for item in target.data.get("high_scores", [])
+            if isinstance(item, dict) and isinstance(item.get("score"), dict)
+        ]
+        if target is not None
+        else []
+    )
+    target_high_scores = (
+        map_lab.high_score_score_offsets(target, base)
+        if target is not None
+        and target_high_specs
+        and str(target_high_specs[0].get("encoding", "")).lower() == "bcd"
+        else []
+    )
+    if target_high_scores:
+        for donor in records:
+            if donor.platform != target.platform:
+                continue
+            donor_specs = (donor.data.get("game_state") or {}).get("scores") or []
+            if not donor_specs or str(donor_specs[0].get("encoding", "")).lower() != "bcd":
+                continue
+            donor_high_specs = [
+                item.get("score")
+                for item in donor.data.get("high_scores", [])
+                if isinstance(item, dict) and isinstance(item.get("score"), dict)
+            ]
+            if (
+                not donor_high_specs
+                or str(donor_high_specs[0].get("encoding", "")).lower() != "bcd"
+            ):
+                continue
+            donor_scores = map_lab.game_score_offsets(donor, base)
+            donor_high_scores = map_lab.high_score_score_offsets(donor, base)
+            if not donor_scores or not donor_high_scores:
+                continue
+            projected = donor_scores[0] + (target_high_scores[0] - donor_high_scores[0])
+            if 0 <= projected < size:
+                projected_starts.setdefault(projected, []).append(donor.path)
+
+    ranked: list[tuple[tuple[int, float, int, int, int], dict[str, Any]]] = []
+    for length in (6, 5, 4):
+        for offset in range(size - length + 1):
+            values = [decode_bcd(data[offset : offset + length]) for data in snapshots]
+            if any(value is None for value in values):
+                continue
+            decoded = [int(value) for value in values if value is not None]
+            transitions = sum(a != b for a, b in zip(decoded, decoded[1:]))
+            if transitions < 3 or max(decoded) == 0:
+                continue
+            nondecreasing = sum(a <= b for a, b in zip(decoded, decoded[1:]))
+            ratio = nondecreasing / (len(decoded) - 1)
+            if ratio < 0.95:
+                continue
+            unique: list[int] = []
+            for value in decoded:
+                if not unique or value != unique[-1]:
+                    unique.append(value)
+            largest_jump = max((b - a for a, b in zip(decoded, decoded[1:])), default=0)
+            row = {
+                "start": map_lab.fmt_addr(offset + base if base else offset),
+                "offset": map_lab.fmt_addr(offset),
+                "encoding": "bcd",
+                "length": length,
+                "transitions": transitions,
+                "monotonic_ratio": round(ratio, 3),
+                "values": unique,
+            }
+            donors = projected_starts.get(offset, [])
+            if donors:
+                row["structural_donors"] = donors[:5]
+            ranked.append(
+                ((1 if donors else 0, ratio, transitions, largest_jump, max(decoded)), row)
+            )
+    ranked.sort(key=lambda item: item[0], reverse=True)
+
+    selected: list[dict[str, Any]] = []
+    selected_offsets: list[int] = []
+    for _, row in ranked:
+        offset = map_lab.parse_int(row["offset"])
+        if any(abs(offset - existing) < 6 for existing in selected_offsets):
+            continue
+        selected.append(row)
+        selected_offsets.append(offset)
+        if len(selected) >= limit:
+            break
+    return selected
+
+
+def game_over_watch_spec(
+    rom: str, maps_root: Path
+) -> dict[str, Any] | None:
+    """Return a mapped or best-donor raw NVRAM bit to watch for game over."""
+    try:
+        index, records = map_lab.load_records(maps_root)
+        target = map_lab.resolve_rom(index, records, rom)
+    except SystemExit:
+        return None
+    base = map_lab.platform_nvram_base(maps_root, target.platform)
+    source = target
+    spec = (target.data.get("game_state") or {}).get("game_over")
+    inherited = False
+    if not isinstance(spec, dict):
+        ranked = map_lab.ranked_suggestions(
+            target, records, maps_root, limit=1, require_game_over=True
+        )
+        if not ranked:
+            return None
+        confidence, source = ranked[0]
+        spec = (source.data.get("game_state") or {}).get("game_over")
+        inherited = True
+    else:
+        confidence = 1.0
+    if not isinstance(spec, dict) or str(spec.get("encoding", "")).lower() != "bool":
+        return None
+    start = map_lab.parse_int(spec.get("start", 0))
+    offset = start - base
+    if offset < 0:
+        return None
+    mask = map_lab.parse_int(spec.get("mask", 0xFF))
+    return {
+        "offset": offset,
+        "start": map_lab.fmt_addr(start),
+        "mask": mask,
+        "mask_hex": f"0x{mask:02X}",
+        "expected": 0 if bool(spec.get("invert", False)) else 1,
+        "source_map": source.path,
+        "confidence": round(confidence, 3),
+        "inherited": inherited,
+    }
+
+
+def live_score_watch_spec(rom: str, maps_root: Path) -> dict[str, int] | None:
+    try:
+        index, records = map_lab.load_records(maps_root)
+        target = map_lab.resolve_rom(index, records, rom)
+    except SystemExit:
+        return None
+    scores = (target.data.get("game_state") or {}).get("scores") or []
+    if not scores or not isinstance(scores[0], dict):
+        return None
+    base = map_lab.platform_nvram_base(maps_root, target.platform)
+    start = map_lab.parse_int(scores[0].get("start", 0))
+    offset = start - base
+    length = map_lab.parse_int(scores[0].get("length", 1))
+    if offset < 0 or length <= 0:
+        return None
+    return {"offset": offset, "length": length}
+
+
 def propose_game_state(
     rom: str, discovered: list[dict[str, Any]], maps_root: Path
 ) -> dict[str, Any] | None:
@@ -611,18 +871,33 @@ def propose_game_state(
         target = map_lab.resolve_rom(index, records, rom)
     except SystemExit:
         return None
-    start = int(discovered[0]["start"], 16)
+    candidate = discovered[0]
+    start = int(candidate["start"], 16)
+    encoding = str(candidate.get("encoding", "int")).lower()
+    length = int(candidate.get("length", 4))
+    structural_donors = set(candidate.get("structural_donors") or [])
     target_high_score = map_lab.high_score_score_offsets(
         target, map_lab.platform_nvram_base(maps_root, target.platform)
     )
     donors: list[tuple[int, map_lab.MapRecord, list[int]]] = []
     base = map_lab.platform_nvram_base(maps_root, target.platform)
     for record in records:
+        if record.platform != target.platform:
+            continue
         donor_specs = (record.data.get("game_state") or {}).get("scores") or []
-        if not donor_specs or str(donor_specs[0].get("encoding", "")).lower() != "int":
+        if (
+            not donor_specs
+            or str(donor_specs[0].get("encoding", "")).lower() != encoding
+            or map_lab.parse_int(donor_specs[0].get("length", 1)) != length
+        ):
             continue
         addresses = map_lab.game_score_offsets(record, base)
-        if len(addresses) < 4 or addresses[0] + base != start:
+        if len(addresses) < 4:
+            continue
+        if structural_donors:
+            if record.path not in structural_donors:
+                continue
+        elif addresses[0] + base != start:
             continue
         donor_high_score = map_lab.high_score_score_offsets(record, base)
         distance = (
@@ -637,7 +912,8 @@ def propose_game_state(
         _, donor_record, donor_offsets = donor
         score_starts = [start + (offset - donor_offsets[0]) for offset in donor_offsets[:4]]
         review = (
-            f"Player 1 was proven live; Player 2-4 layout follows {donor_record.path} "
+            f"Player 1 was proven live as {encoding}; Player 2-4 layout follows "
+            f"{donor_record.path} "
             "and requires multiplayer review."
         )
     else:
@@ -649,8 +925,8 @@ def propose_game_state(
             {
                 "label": f"Player {player}",
                 "start": f"0x{address:08X}",
-                "encoding": "int",
-                "length": 4,
+                "encoding": encoding,
+                "length": length,
             }
             for player, address in enumerate(score_starts, start=1)
         ],
@@ -856,11 +1132,19 @@ def analyze_case(rom: str, case_dir: Path, maps_root: Path) -> dict[str, Any]:
     )
     candidate_layouts = evaluate_candidate_layouts(rom, case_dir, maps_root)
     discovered_int_scores = discover_int_score_candidates(rom, case_dir, maps_root)
+    discovered_bcd_scores = discover_bcd_score_candidates(rom, case_dir, maps_root)
     proposed_game_state = propose_live_donor_game_state(
         rom, candidate_layouts, maps_root
     )
     if proposed_game_state is None:
-        proposed_game_state = propose_game_state(rom, discovered_int_scores, maps_root)
+        structural_bcd = [
+            row for row in discovered_bcd_scores if row.get("structural_donors")
+        ]
+        proposed_game_state = propose_game_state(rom, structural_bcd, maps_root)
+        if proposed_game_state is None:
+            proposed_game_state = propose_game_state(
+                rom, discovered_int_scores, maps_root
+            )
     if proposed_game_state:
         (case_dir / "candidate_game_state.json").write_text(
             json.dumps(proposed_game_state, indent=2) + "\n"
@@ -868,6 +1152,7 @@ def analyze_case(rom: str, case_dir: Path, maps_root: Path) -> dict[str, Any]:
     player_evidence = collect_player_evidence(
         case_dir, proposed_game_state, discovered_int_scores, maps_root, rom
     )
+    score_switch_evidence = effective_score_switches(rom, case_dir, maps_root)
     candidate_report = emit_candidate_artifacts(
         rom=rom,
         case_dir=case_dir,
@@ -888,8 +1173,10 @@ def analyze_case(rom: str, case_dir: Path, maps_root: Path) -> dict[str, Any]:
         "max_switch_changed_bytes": max_pair_change(case_dir),
         "candidate_layouts": candidate_layouts,
         "discovered_int_scores": discovered_int_scores,
+        "discovered_bcd_scores": discovered_bcd_scores,
         "proposed_game_state": proposed_game_state,
         "player_evidence": player_evidence,
+        "effective_score_switches": score_switch_evidence,
         "candidate_report": candidate_report,
         "game_over_candidates": game_over_candidates,
     }
@@ -913,6 +1200,9 @@ def run_case(
     seed_dir: Path | None,
     seeded_files: list[str],
     player_cycles: int,
+    until_game_over: bool,
+    game_over_watch_override: dict[str, Any] | None,
+    score_switch_override: int | None,
     ball_save_wait_ms: int,
     drain_pulse_ms: int,
     drain_settle_ms: int,
@@ -965,11 +1255,16 @@ def run_case(
     for sw in ordered_pulses:
         cmd.extend(["--pulse-switch", str(sw)])
     multiplayer_actions: list[str] = []
+    game_over_watch = (
+        game_over_watch_override
+        or (game_over_watch_spec(rom, maps_root) if until_game_over else None)
+    )
+    score_watch = live_score_watch_spec(rom, maps_root) if game_over_watch else None
+    score_switch = score_switch_override or recipe.score_switch
     if (
         player_cycles > 0
         and recipe.drain_switch is not None
-        and recipe.launch_switch is not None
-        and recipe.score_switch is not None
+        and score_switch is not None
     ):
         # A drain pulse alone is not enough for ROMs backed by cvpmBallStack:
         # the returned ball must also occupy the trough position that was
@@ -995,6 +1290,20 @@ def run_case(
                 f"set:{recipe.drain_switch}=1:"
                 f"{drain_settle_ms if drain_is_trough_slot else drain_pulse_ms}",
             ])
+            if game_over_watch is not None:
+                multiplayer_actions.append(
+                    "stop-if-nv:"
+                    f"{game_over_watch['offset']}:"
+                    f"{game_over_watch['mask']}:"
+                    f"{game_over_watch['expected']}"
+                )
+                if score_watch is not None:
+                    multiplayer_actions.append(
+                        "stop-if-score-stable:"
+                        f"{score_watch['offset']}:"
+                        f"{score_watch['length']}:"
+                        f"{score_switch}:200:{settle_ms}"
+                    )
             if not drain_is_trough_slot:
                 multiplayer_actions.extend(
                     f"set:{sw}=1:{settle_ms}" for sw in released_trough_switches
@@ -1028,10 +1337,15 @@ def run_case(
                 multiplayer_actions.extend(
                     f"set:{sw}=0:{settle_ms}" for sw in released_trough_switches
                 )
-            multiplayer_actions.extend([
-                f"pulse:{recipe.launch_switch}:200:{drain_settle_ms}",
-                f"pulse:{recipe.score_switch}:200:{settle_ms}",
-            ])
+            if recipe.launch_switch is not None:
+                multiplayer_actions.append(
+                    f"pulse:{recipe.launch_switch}:200:{drain_settle_ms}"
+                )
+            else:
+                multiplayer_actions.append(f"wait:{drain_settle_ms}")
+            multiplayer_actions.append(
+                f"pulse:{score_switch}:200:{settle_ms}"
+            )
     for action in multiplayer_actions:
         cmd.extend(["--action", action])
 
@@ -1057,7 +1371,10 @@ def run_case(
         "pulses": ordered_pulses,
         "drain_switch": recipe.drain_switch,
         "launch_switch": recipe.launch_switch,
-        "score_switch": recipe.score_switch,
+        "score_switch": score_switch,
+        "game_over_watch": game_over_watch,
+        "score_watch": score_watch,
+        "game_over_watch_matched": '"event":"game_over_watch_matched"' in proc.stdout,
         "multiplayer_actions": multiplayer_actions,
         **analysis,
     }
@@ -1101,6 +1418,24 @@ def build_parser() -> argparse.ArgumentParser:
         help="Start four players and simulate three timed drain/launch/score cycles",
     )
     parser.add_argument("--player-cycles", type=int, default=0)
+    parser.add_argument(
+        "--until-game-over",
+        action="store_true",
+        help="Repeat drain cycles and stop once a mapped/donor game_over bit returns to attract",
+    )
+    parser.add_argument("--max-drain-cycles", type=int, default=20)
+    parser.add_argument(
+        "--watch",
+        action="append",
+        type=parse_watch,
+        help="Override a watcher as ROM=OFFSET:MASK:EXPECTED (hex accepted)",
+    )
+    parser.add_argument(
+        "--score-switch",
+        action="append",
+        type=parse_score_switch,
+        help="Override the confirmation/scoring switch as ROM=SWITCH",
+    )
     parser.add_argument("--ball-save-wait-ms", type=int, default=15000)
     parser.add_argument("--drain-pulse-ms", type=int, default=1000)
     parser.add_argument("--drain-settle-ms", type=int, default=5000)
@@ -1136,6 +1471,8 @@ def main() -> None:
     if args.verify_players:
         args.starts = max(args.starts, 4)
         args.player_cycles = max(args.player_cycles, 3)
+    if args.until_game_over:
+        args.player_cycles = max(args.player_cycles, args.max_drain_cycles)
     out_dir = Path(args.out_dir)
     if out_dir.exists() and not args.keep_root:
         shutil.rmtree(out_dir)
@@ -1145,6 +1482,8 @@ def main() -> None:
     if args.seed:
         seeds.update(dict(args.seed))
     seed_roms = dict(args.seed_rom or [])
+    watches = dict(args.watch or [])
+    score_switches = dict(args.score_switch or [])
     results = []
     for rom, script in cases:
         if not script.exists():
@@ -1184,6 +1523,9 @@ def main() -> None:
             seed_dir=seed_dir,
             seeded_files=seeded_files,
             player_cycles=args.player_cycles,
+            until_game_over=args.until_game_over,
+            game_over_watch_override=watches.get(rom),
+            score_switch_override=score_switches.get(rom),
             ball_save_wait_ms=args.ball_save_wait_ms,
             drain_pulse_ms=args.drain_pulse_ms,
             drain_settle_ms=args.drain_settle_ms,

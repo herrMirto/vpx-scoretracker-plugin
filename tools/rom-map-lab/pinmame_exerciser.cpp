@@ -25,12 +25,13 @@
 
 namespace fs = std::filesystem;
 
-enum class ActionType { Pulse, Set, Wait };
+enum class ActionType { Pulse, Set, Wait, StopIfNv, StopIfScoreStable };
 
 struct Action {
   ActionType type;
   int value1 = 0;
   int value2 = 0;
+  int value3 = 0;
   int pulseMs = -1;
   int settleMs = -1;
 };
@@ -334,7 +335,9 @@ static void Usage(const char* argv0) {
       << "  --post-start-set-switch N=0|1\n"
       << "                        Set a switch after coins/starts/keys, before pulses; can repeat\n"
       << "  --action SPEC         Ordered action after normal pulses; repeatable:\n"
-      << "                        pulse:N[:pulse_ms[:settle_ms]], set:N=0|1[:settle_ms], wait:ms\n"
+      << "                        pulse:N[:pulse_ms[:settle_ms]], set:N=0|1[:settle_ms], wait:ms,\n"
+      << "                        stop-if-nv:OFFSET:MASK:0|1,\n"
+      << "                        stop-if-score-stable:OFFSET:LENGTH:SWITCH[:pulse_ms[:settle_ms]]\n"
       << "  --press-key KEY       Press key; can be repeated. Supports 0-9, COIN, START\n"
       << "  --hold-key KEY        Hold key for the whole run; can be repeated\n"
       << "  --coin-start          Press COIN/5 then START/1 before switch pulses\n"
@@ -414,6 +417,24 @@ static bool ParseAction(const std::string& raw, Action& action) {
       if (parts.size() == 3)
         action.settleMs = std::stoi(parts[2]);
       return true;
+    }
+    if (parts.size() == 4 && parts[0] == "stop-if-nv") {
+      action.type = ActionType::StopIfNv;
+      action.value1 = static_cast<int>(std::stoul(parts[1], nullptr, 0));
+      action.value2 = static_cast<int>(std::stoul(parts[2], nullptr, 0));
+      action.pulseMs = std::stoi(parts[3]) ? 1 : 0;
+      return action.value1 >= 0 && action.value2 > 0 && action.value2 <= 0xff;
+    }
+    if (parts.size() >= 4 && parts.size() <= 6 && parts[0] == "stop-if-score-stable") {
+      action.type = ActionType::StopIfScoreStable;
+      action.value1 = static_cast<int>(std::stoul(parts[1], nullptr, 0));
+      action.value2 = std::stoi(parts[2]);
+      action.value3 = std::stoi(parts[3]);
+      if (parts.size() >= 5)
+        action.pulseMs = std::stoi(parts[4]);
+      if (parts.size() >= 6)
+        action.settleMs = std::stoi(parts[5]);
+      return action.value1 >= 0 && action.value2 > 0 && action.value3 > 0;
     }
   } catch (...) {
     return false;
@@ -761,6 +782,19 @@ int main(int argc, char** argv) {
   }
 
   int actionSeq = 0;
+  bool nvStopArmed = false;
+  for (const Action& action : opt.actions) {
+    if (action.type != ActionType::StopIfNv)
+      continue;
+    if (static_cast<size_t>(action.value1) >= baseline.size())
+      continue;
+    const bool current = (baseline[static_cast<size_t>(action.value1)] & action.value2) != 0;
+    const bool expected = action.pulseMs != 0;
+    if (current != expected)
+      nvStopArmed = true;
+  }
+  bool stoppedOnNv = false;
+  bool pendingNvMatch = false;
   for (const Action& action : opt.actions) {
     std::ostringstream prefix;
     prefix << "action" << (++actionSeq);
@@ -784,7 +818,7 @@ int main(int argc, char** argv) {
       std::ostringstream afterLabel;
       afterLabel << prefix.str() << "_sw" << action.value1 << "_set_after";
       baseline = Snapshot(opt.outDir, afterLabel.str(), &before);
-    } else {
+    } else if (action.type == ActionType::Pulse) {
       const int pulseMs = action.pulseMs >= 0 ? action.pulseMs : opt.pulseMs;
       const int settleMs = action.settleMs >= 0 ? action.settleMs : opt.settleMs;
       std::ostringstream beforeLabel;
@@ -799,8 +833,65 @@ int main(int argc, char** argv) {
       std::ostringstream afterLabel;
       afterLabel << prefix.str() << "_sw" << action.value1 << "_after";
       baseline = Snapshot(opt.outDir, afterLabel.str(), &before);
+    } else if (action.type == ActionType::StopIfNv) {
+      baseline = Snapshot(opt.outDir, prefix.str() + "_nv_check", &baseline);
+      const bool inRange = static_cast<size_t>(action.value1) < baseline.size();
+      const bool current = inRange &&
+          ((baseline[static_cast<size_t>(action.value1)] & action.value2) != 0);
+      const bool expected = action.pulseMs != 0;
+      if (inRange && current != expected)
+        nvStopArmed = true;
+      const bool matched = inRange && current == expected;
+      std::ostringstream event;
+      event << "{\"event\":\"stop_if_nv\",\"offset\":" << action.value1
+            << ",\"mask\":" << action.value2
+            << ",\"expected\":" << (expected ? 1 : 0)
+            << ",\"current\":" << (current ? 1 : 0)
+            << ",\"armed\":" << (nvStopArmed ? "true" : "false")
+            << ",\"matched\":" << (matched ? "true" : "false") << "}";
+      PrintEvent(event.str());
+      pendingNvMatch = nvStopArmed && matched;
+    } else {
+      if (!pendingNvMatch) {
+        std::ostringstream event;
+        event << "{\"event\":\"stop_if_score_stable\",\"offset\":" << action.value1
+              << ",\"length\":" << action.value2
+              << ",\"switch\":" << action.value3
+              << ",\"candidate_matched\":false,\"score_changed\":null}";
+        PrintEvent(event.str());
+        continue;
+      }
+      const int pulseMs = action.pulseMs >= 0 ? action.pulseMs : opt.pulseMs;
+      const int settleMs = action.settleMs >= 0 ? action.settleMs : opt.settleMs;
+      baseline = Snapshot(opt.outDir, prefix.str() + "_score_stable_before", &baseline);
+      const size_t offset = static_cast<size_t>(action.value1);
+      const size_t length = static_cast<size_t>(action.value2);
+      std::vector<uint8_t> scoreBefore;
+      if (offset + length <= baseline.size())
+        scoreBefore.assign(baseline.begin() + offset, baseline.begin() + offset + length);
+      PulseSwitch(action.value3, opt.activeState, pulseMs, settleMs);
+      baseline = Snapshot(opt.outDir, prefix.str() + "_score_stable_after", &baseline);
+      bool scoreChanged = true;
+      if (!scoreBefore.empty() && offset + length <= baseline.size()) {
+        scoreChanged = !std::equal(
+            scoreBefore.begin(), scoreBefore.end(), baseline.begin() + offset);
+      }
+      std::ostringstream event;
+      event << "{\"event\":\"stop_if_score_stable\",\"offset\":" << action.value1
+            << ",\"length\":" << action.value2
+            << ",\"switch\":" << action.value3
+            << ",\"candidate_matched\":" << (pendingNvMatch ? "true" : "false")
+            << ",\"score_changed\":" << (scoreChanged ? "true" : "false") << "}";
+      PrintEvent(event.str());
+      if (pendingNvMatch && !scoreChanged) {
+        stoppedOnNv = true;
+        break;
+      }
+      pendingNvMatch = false;
     }
   }
+  if (stoppedOnNv)
+    PrintEvent("{\"event\":\"game_over_watch_matched\"}");
 
   if (opt.fuzz) {
     for (int sw = opt.switchMin; sw <= opt.switchMax; ++sw) {

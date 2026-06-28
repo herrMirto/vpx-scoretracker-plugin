@@ -266,11 +266,12 @@ This is isolated and never renames or modifies the source files.
 
 The miner understands direct `Controller.Switch` assignments, physical balls
 created on switches, coin-door interlocks, bidirectional trough shifts, and the
-common `cvpmTrough.InitSwitches`/`InitSw` forms. For an unresolved integer-score map, a strong live score hit also creates a
-review-only `candidate_game_state.json` with the inferred Player 1 address and
-a four-player layout borrowed only from a solved structural donor with that same
-Player 1 address. Player 2-4 remain explicitly marked as requiring multiplayer
-review; layouts are not always contiguous.
+common `cvpmTrough.InitSwitches`/`InitSw` forms. Auto-launch games do not require
+a fabricated launch-switch pulse. For an unresolved map, strong live integer or
+BCD score evidence can create a review-only `candidate_game_state.json` with the
+inferred Player 1 address and a four-player layout borrowed only from a solved
+structural donor with that same Player 1 address. Player 2-4 remain explicitly
+marked as requiring multiplayer review; layouts are not always contiguous.
 
 Request automatic four-player verification with:
 
@@ -286,6 +287,26 @@ exerciser also accepts repeatable `--action` values (`wait:ms`,
 Use `--hold-delay-ms` to tune initial cabinet-switch timing and
 `--start-gap-ms` to tune multiplayer Start presses. Held switches are asserted
 both shortly after PinMAME starts and again after ROM boot.
+
+To drain until a candidate game-over bit returns to its attract value, add a
+watch and a scoring switch that has already been observed changing Player 1:
+
+```bash
+PYTHONDONTWRITEBYTECODE=1 python3 tools/rom-map-lab/batch_exercise.py \
+  --case 'ROM=/path/to/table.vbs' \
+  --until-game-over \
+  --max-drain-cycles 10 \
+  --watch 'ROM=0x10906:0x40:1' \
+  --score-switch 'ROM=4'
+```
+
+The watcher first has to observe the live, opposite value. When the candidate
+returns, the exerciser pulses the proven scoring switch and accepts game over
+only if the mapped score no longer changes. This rejects common inter-ball flags
+that briefly resemble attract mode. Every `action*` snapshot is also treated as
+live evidence when ranking candidates, so a bit that toggles during drain or
+ball launch is not promoted merely because it differs from the initial attract
+snapshot.
 
 Two regression cases currently prove the full path:
 
@@ -316,7 +337,11 @@ The top-level `summary.json` is the main artifact. The most important fields are
 - `max_switch_changed_bytes`: largest NVRAM diff caused by one scripted switch
   pulse, useful for missing maps that cannot decode scores yet.
 - `discovered_int_scores`: ranked live-score-like integer addresses;
-- `proposed_game_state`: review-only integer score block when the evidence and a
+- `discovered_bcd_scores`: ranked live-score-like packed-BCD addresses,
+  including structural projections from known high-score layouts;
+- `effective_score_switches`: switches independently observed increasing the
+  mapped Player 1 score, suitable for `--score-switch` confirmation;
+- `proposed_game_state`: review-only score block when the evidence and a
   matching structural donor are strong enough.
 - `player_evidence`: addresses independently observed changing per player;
 - `game_over_candidates`: bit-level fields that remain stable in attract
@@ -324,6 +349,8 @@ The top-level `summary.json` is the main artifact. The most important fields are
   until a final drain or a proven structural donor confirms the return to the
   attract value. The generic `final.nv` snapshot is deliberately ignored here
   because the exerciser may stop while a game is still active;
+- `game_over_watch_matched`: true only when the watched bit returned after live
+  play and the score-stability challenge also passed;
 - `candidate_report`: evidence status and generated artifact paths.
 
 For an unresolved map, the batch writes a candidate map whenever Player 1 is
