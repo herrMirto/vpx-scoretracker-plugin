@@ -431,12 +431,27 @@ def decode_snapshots(rom: str, exercise_dir: Path, maps_root: Path) -> tuple[lis
 def decode_score_field_strict(data: bytes, spec: dict[str, Any], base: int) -> Any:
     """Decode a score, rejecting invalid packed-BCD nibbles used by transient RAM."""
     if str(spec.get("encoding", "")).lower() == "bcd":
-        start = map_lab.normalized_addr(spec["start"], base)
-        length = int(spec.get("length", 1))
-        raw = data[start : start + length]
-        if len(raw) != length or any((byte >> 4) > 9 or (byte & 0x0F) > 9 for byte in raw):
-            return None
+        if "start" not in spec:
+            if "offsets" in spec:
+                try:
+                    raw = bytes(data[map_lab.normalized_addr(offset, base)] for offset in spec["offsets"])
+                    if any((byte >> 4) > 9 or (byte & 0x0F) > 9 for byte in raw):
+                        return None
+                except (IndexError, TypeError):
+                    return None
+            else:
+                return None
+        else:
+            try:
+                start = map_lab.normalized_addr(spec["start"], base)
+                length = int(spec.get("length", 1))
+                raw = data[start : start + length]
+                if len(raw) != length or any((byte >> 4) > 9 or (byte & 0x0F) > 9 for byte in raw):
+                    return None
+            except (IndexError, TypeError):
+                return None
     return map_lab.decode_field(data, spec, base)
+
 
 
 def evaluate_candidate_layouts(
