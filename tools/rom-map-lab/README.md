@@ -480,3 +480,24 @@ This is how the Capcom `game_over` was found: `0x000012F2` bit `0x40` (set durin
 a game, clear in attract / at game over), the single common candidate across
 Breakshot, Big Bang Bar and Pinball Magic. Pick the clean rectangular-pulse byte
 from the printed timeline and express it as `{encoding:"bool", mask, invert}`.
+
+### Regenerating bad/uninitialized NVRAM
+
+Many ROMs ship with bad `.nv` dumps (factory-blank, wrong size, garbage), which
+blocks high-score mapping AND makes PINemHi's output degenerate (it was generated
+from the same bad dumps). `regen_nvram.py` boots each ROM in an isolated root and
+saves the resulting NVRAM snapshot (it reuses pinmame_exerciser's `PinmameGetNVRAM`
+snapshot — no disk flush needed):
+
+```bash
+# write fresh nvram to /tmp/regen-nvram/ (originals untouched):
+python3 regen_nvram.py --rom agent777 --rom bushido --blank
+# overwrite ~/.pinmame/nvram/<rom>.nv, keeping a .bak:
+python3 regen_nvram.py --rom ngndshkm --apply
+```
+
+`--blank` starts from an empty nvram so the ROM writes factory defaults
+(recommended when the dump is garbage). Then re-run PINemHi on the fresh nvram
+to get a usable high-score reference, and map as usual. Caveat: a brief boot
+doesn't always fully initialize a game's high-score table — some need a longer
+`--boot-ms`, an actual played ball, or simply don't store defaults in NVRAM.
