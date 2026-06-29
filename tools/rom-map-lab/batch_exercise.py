@@ -1203,6 +1203,7 @@ def run_case(
     until_game_over: bool,
     game_over_watch_override: dict[str, Any] | None,
     score_switch_override: int | None,
+    trough_solenoid: int,
     ball_save_wait_ms: int,
     drain_pulse_ms: int,
     drain_settle_ms: int,
@@ -1271,8 +1272,16 @@ def run_case(
         # cleared when the previous ball launched.  Refill every inferred
         # post-start trough switch before waiting for the ROM to end the ball,
         # then clear it again as the next ball is served.
+        # The mined post-start sequence includes every intermediate trough
+        # ripple (for example 21=0, then later 21=1). Only the final state of
+        # each switch describes the physical trough after launch. Treating
+        # every historical zero as an empty slot clears the whole trough after
+        # the first drain and prevents the ROM from ever advancing balls.
+        final_post_start_states: dict[int, int] = {}
+        for sw, state in recipe.post_start_sets:
+            final_post_start_states[sw] = state
         released_trough_switches = [
-            sw for sw, state in recipe.post_start_sets if state == 0
+            sw for sw, state in final_post_start_states.items() if state == 0
         ]
         trough_switches = sorted(set(recipe.holds))
         if len(released_trough_switches) == 1:
@@ -1285,12 +1294,21 @@ def run_case(
             trough_switches = contiguous
         for _ in range(player_cycles):
             drain_is_trough_slot = recipe.drain_switch in released_trough_switches
+            drain_wait_ms = (
+                drain_pulse_ms
+                if game_over_watch is not None
+                else drain_settle_ms if drain_is_trough_slot else drain_pulse_ms
+            )
+            if game_over_watch is not None:
+                multiplayer_actions.append(f"arm-solenoid:{trough_solenoid}")
             multiplayer_actions.extend([
                 f"wait:{ball_save_wait_ms}",
-                f"set:{recipe.drain_switch}=1:"
-                f"{drain_settle_ms if drain_is_trough_slot else drain_pulse_ms}",
+                f"set:{recipe.drain_switch}=1:{drain_wait_ms}",
             ])
             if game_over_watch is not None:
+                multiplayer_actions.append(
+                    f"wait-for-solenoid:{trough_solenoid}:{drain_settle_ms}"
+                )
                 multiplayer_actions.append(
                     "stop-if-nv:"
                     f"{game_over_watch['offset']}:"
@@ -1338,11 +1356,21 @@ def run_case(
                     f"set:{sw}=0:{settle_ms}" for sw in released_trough_switches
                 )
             if recipe.launch_switch is not None:
+                launch_settle_ms = (
+                    settle_ms if game_over_watch is not None else drain_settle_ms
+                )
                 multiplayer_actions.append(
-                    f"pulse:{recipe.launch_switch}:200:{drain_settle_ms}"
+                    f"pulse:{recipe.launch_switch}:200:{launch_settle_ms}"
                 )
             else:
-                multiplayer_actions.append(f"wait:{drain_settle_ms}")
+                # A successful trough-solenoid wait already tells us the ROM
+                # requested the next ball. The following cycle's ball-save
+                # wait provides launch time; do not pay the full game-over
+                # timeout a second time here.
+                post_release_wait = (
+                    settle_ms if game_over_watch is not None else drain_settle_ms
+                )
+                multiplayer_actions.append(f"wait:{post_release_wait}")
             multiplayer_actions.append(
                 f"pulse:{score_switch}:200:{settle_ms}"
             )
@@ -1372,6 +1400,7 @@ def run_case(
         "drain_switch": recipe.drain_switch,
         "launch_switch": recipe.launch_switch,
         "score_switch": score_switch,
+        "trough_solenoid": trough_solenoid,
         "game_over_watch": game_over_watch,
         "score_watch": score_watch,
         "game_over_watch_matched": '"event":"game_over_watch_matched"' in proc.stdout,
@@ -1439,6 +1468,12 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--ball-save-wait-ms", type=int, default=15000)
     parser.add_argument("--drain-pulse-ms", type=int, default=1000)
     parser.add_argument("--drain-settle-ms", type=int, default=5000)
+    parser.add_argument(
+        "--trough-solenoid",
+        type=int,
+        default=1,
+        help="ROM trough-release solenoid to observe during game-over drains",
+    )
     parser.add_argument("--boot-ms", type=int, default=3500)
     parser.add_argument("--hold-delay-ms", type=int, default=500)
     parser.add_argument("--settle-ms", type=int, default=500)
@@ -1526,6 +1561,7 @@ def main() -> None:
             until_game_over=args.until_game_over,
             game_over_watch_override=watches.get(rom),
             score_switch_override=score_switches.get(rom),
+            trough_solenoid=args.trough_solenoid,
             ball_save_wait_ms=args.ball_save_wait_ms,
             drain_pulse_ms=args.drain_pulse_ms,
             drain_settle_ms=args.drain_settle_ms,

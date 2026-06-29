@@ -7,6 +7,7 @@
 #include "libpinmame.h"
 
 #include <algorithm>
+#include <array>
 #include <atomic>
 #include <chrono>
 #include <cstdarg>
@@ -25,7 +26,15 @@
 
 namespace fs = std::filesystem;
 
-enum class ActionType { Pulse, Set, Wait, StopIfNv, StopIfScoreStable };
+enum class ActionType {
+  Pulse,
+  Set,
+  Wait,
+  StopIfNv,
+  StopIfScoreStable,
+  ArmSolenoid,
+  WaitForSolenoid,
+};
 
 struct Action {
   ActionType type;
@@ -69,6 +78,7 @@ static bool g_ramRegionsListed = false;
 static std::vector<std::pair<size_t, size_t>> g_ramWindows;  // (start, length) within a region
 static std::vector<std::pair<size_t, size_t>> g_cpuWindows;  // (cpu_address, length) via CPU map
 static std::set<PINMAME_KEYCODE> g_pressedKeys;
+static std::array<std::atomic<int>, 256> g_solenoidPulses{};
 
 static std::string JsonEscape(const std::string& s) {
   std::ostringstream out;
@@ -108,6 +118,18 @@ static int PINMAMECALLBACK OnAudioAvailable(PinmameAudioInfo* info, void*) {
 
 static int PINMAMECALLBACK OnAudioUpdated(void*, int samples, void*) {
   return samples;
+}
+
+static void PINMAMECALLBACK OnSolenoidUpdated(
+    PinmameSolenoidState* state, void*) {
+  if (!state)
+    return;
+  if (state->state && state->solNo >= 0 && state->solNo < 256)
+    g_solenoidPulses[static_cast<size_t>(state->solNo)].fetch_add(1);
+  std::ostringstream out;
+  out << "{\"event\":\"solenoid\",\"number\":" << state->solNo
+      << ",\"state\":" << state->state << "}";
+  PrintEvent(out.str());
 }
 
 static int PINMAMECALLBACK IsKeyPressed(PINMAME_KEYCODE keycode, void*) {
@@ -337,7 +359,8 @@ static void Usage(const char* argv0) {
       << "  --action SPEC         Ordered action after normal pulses; repeatable:\n"
       << "                        pulse:N[:pulse_ms[:settle_ms]], set:N=0|1[:settle_ms], wait:ms,\n"
       << "                        stop-if-nv:OFFSET:MASK:0|1,\n"
-      << "                        stop-if-score-stable:OFFSET:LENGTH:SWITCH[:pulse_ms[:settle_ms]]\n"
+      << "                        stop-if-score-stable:OFFSET:LENGTH:SWITCH[:pulse_ms[:settle_ms]],\n"
+      << "                        arm-solenoid:N, wait-for-solenoid:N:timeout_ms\n"
       << "  --press-key KEY       Press key; can be repeated. Supports 0-9, COIN, START\n"
       << "  --hold-key KEY        Hold key for the whole run; can be repeated\n"
       << "  --coin-start          Press COIN/5 then START/1 before switch pulses\n"
@@ -435,6 +458,17 @@ static bool ParseAction(const std::string& raw, Action& action) {
       if (parts.size() >= 6)
         action.settleMs = std::stoi(parts[5]);
       return action.value1 >= 0 && action.value2 > 0 && action.value3 > 0;
+    }
+    if (parts.size() == 2 && parts[0] == "arm-solenoid") {
+      action.type = ActionType::ArmSolenoid;
+      action.value1 = std::stoi(parts[1]);
+      return action.value1 >= 0 && action.value1 < 256;
+    }
+    if (parts.size() == 3 && parts[0] == "wait-for-solenoid") {
+      action.type = ActionType::WaitForSolenoid;
+      action.value1 = std::stoi(parts[1]);
+      action.value2 = std::stoi(parts[2]);
+      return action.value1 >= 0 && action.value1 < 256 && action.value2 >= 0;
     }
   } catch (...) {
     return false;
@@ -615,7 +649,7 @@ int main(int argc, char** argv) {
       &OnAudioUpdated,
       nullptr,
       nullptr,
-      nullptr,
+      &OnSolenoidUpdated,
       nullptr,
       &IsKeyPressed,
       &OnLogMessage,
@@ -795,6 +829,8 @@ int main(int argc, char** argv) {
   }
   bool stoppedOnNv = false;
   bool pendingNvMatch = false;
+  std::array<int, 256> solenoidArmedAt{};
+  solenoidArmedAt.fill(-1);
   for (const Action& action : opt.actions) {
     std::ostringstream prefix;
     prefix << "action" << (++actionSeq);
@@ -833,6 +869,40 @@ int main(int argc, char** argv) {
       std::ostringstream afterLabel;
       afterLabel << prefix.str() << "_sw" << action.value1 << "_after";
       baseline = Snapshot(opt.outDir, afterLabel.str(), &before);
+    } else if (action.type == ActionType::ArmSolenoid) {
+      const size_t solenoid = static_cast<size_t>(action.value1);
+      solenoidArmedAt[solenoid] = PinmameGetSolenoid(action.value1) ? 1 : 0;
+      std::ostringstream event;
+      event << "{\"event\":\"arm_solenoid\",\"number\":" << action.value1
+            << ",\"state\":" << solenoidArmedAt[solenoid] << "}";
+      PrintEvent(event.str());
+    } else if (action.type == ActionType::WaitForSolenoid) {
+      const size_t solenoid = static_cast<size_t>(action.value1);
+      const int armedState = solenoidArmedAt[solenoid] >= 0
+          ? solenoidArmedAt[solenoid]
+          : (PinmameGetSolenoid(action.value1) ? 1 : 0);
+      bool sawInactive = armedState == 0;
+      bool observed = false;
+      const auto deadline = std::chrono::steady_clock::now()
+          + std::chrono::milliseconds(action.value2);
+      while (std::chrono::steady_clock::now() < deadline) {
+        const bool active = PinmameGetSolenoid(action.value1) != 0;
+        if (!active)
+          sawInactive = true;
+        else if (sawInactive) {
+          observed = true;
+          break;
+        }
+        SleepMs(10);
+      }
+      const int state = PinmameGetSolenoid(action.value1) ? 1 : 0;
+      std::ostringstream event;
+      event << "{\"event\":\"wait_for_solenoid\",\"number\":" << action.value1
+            << ",\"timeout_ms\":" << action.value2
+            << ",\"observed\":" << (observed ? "true" : "false")
+            << ",\"state\":" << state << "}";
+      PrintEvent(event.str());
+      solenoidArmedAt[solenoid] = state;
     } else if (action.type == ActionType::StopIfNv) {
       baseline = Snapshot(opt.outDir, prefix.str() + "_nv_check", &baseline);
       const bool inRange = static_cast<size_t>(action.value1) < baseline.size();
