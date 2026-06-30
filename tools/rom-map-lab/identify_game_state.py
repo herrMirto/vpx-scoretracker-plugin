@@ -127,10 +127,27 @@ def report(field, per_rom):
     return common
 
 
+def triangulate(labeled):
+    """Find the byte(s) matching a set of REAL dumps with KNOWN values.
+
+    `labeled` = list of (path, expected_value). This is the most reliable method:
+    it cracked player_count from 2/3/4-player Metallica dumps (only 0x02110900
+    reads exactly 2,3,4). Generalises to current_player / current_ball (label each
+    dump with the player up / ball number) and any field whose value you can read
+    off the machine. Length 1 only.
+    """
+    dumps = [(int(v), open(p, "rb").read()) for p, v in labeled]
+    ln = min(len(b) for _, b in dumps)
+    hits = [off for off in range(ln) if all(b[off] == v for v, b in dumps)]
+    return hits
+
+
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--rom", action="append", required=True, help="ROM id; repeatable")
-    ap.add_argument("--field", required=True, choices=["credits", "player_count"])
+    ap.add_argument("--rom", action="append", help="ROM id; repeatable")
+    ap.add_argument("--field", choices=["credits", "player_count"])
+    ap.add_argument("--known", help="triangulate from labeled real dumps: "
+                    "'path:value,path:value,...' (e.g. 2players.nv:2,3players.nv:3,4players.nv:4)")
     ap.add_argument("--players", type=int, default=1)
     ap.add_argument("--coins", type=int, default=12)
     ap.add_argument("--boot-ms", type=int, default=14000)
@@ -141,6 +158,17 @@ def main():
     ap.add_argument("--holds", default=",".join(map(str, SAM_TROUGH_HOLDS)))
     args = ap.parse_args()
 
+    if args.known:
+        labeled = [(p.rsplit(":", 1)[0], p.rsplit(":", 1)[1]) for p in args.known.split(",")]
+        hits = triangulate(labeled)
+        print(f"=== triangulate from {len(labeled)} labeled dumps ===")
+        for off in hits:
+            print(f"  0x{BASE+off:08X} matches values {[v for _, v in labeled]}")
+        print(f"  {len(hits)} byte(s) match all dumps")
+        return
+
+    if not args.rom or not args.field:
+        ap.error("give --rom and --field, or --known")
     roms_dirs = list(args.roms_dir) + glob.glob(os.path.join(args.extra_roms, "*", "pinmame", "roms"))
     root = setup_root(roms_dirs)
     holds = [int(x) for x in args.holds.split(",") if x.strip()]
