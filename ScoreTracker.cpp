@@ -14,6 +14,7 @@
 #include <cctype>
 #include <iomanip>
 #include <sstream>
+#include <cstdlib>
 
 #include "plugins/LoggingPlugin.h"
 #include "mongoose/mongoose.h"
@@ -777,7 +778,38 @@ void ScoreTracker::Loop()
          std::this_thread::sleep_for(std::chrono::milliseconds(m_pollIntervalMs));
          continue;
       }
-      
+
+      // Optional CPU-RAM window dump for reverse-engineering live fields that are
+      // NOT in the .nv (e.g. Capcom's live in-play score, which lives in volatile
+      // CPU RAM next to game_over). Enable by setting SCORETRACKER_CPUDUMP_DIR to a
+      // writable folder; the plugin then writes cpu-<rom>-<epoch_ms>.bin (0x0..0x10000)
+      // every ~500ms. Leave it unset for normal operation.
+      static const char* cpuDumpDir = std::getenv("SCORETRACKER_CPUDUMP_DIR");
+      if (cpuDumpDir && *cpuDumpDir)
+      {
+         static auto lastCpuDump = std::chrono::steady_clock::time_point{};
+         auto nowCpu = std::chrono::steady_clock::now();
+         if (nowCpu - lastCpuDump >= std::chrono::milliseconds(500))
+         {
+            lastCpuDump = nowCpu;
+            constexpr uint32_t kDumpLen = 0x10000;
+            std::vector<uint8_t> win(kDumpLen, 0);
+            for (uint32_t a = 0; a < kDumpLen; ++a)
+            {
+               uint8_t v = 0;
+               if (PinmameReadMainCPUByte(a, &v) != 0)
+                  win[a] = v;
+            }
+            auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+                         std::chrono::system_clock::now().time_since_epoch()).count();
+            std::string path = std::string(cpuDumpDir) + "/cpu-" + m_gameId + "-" +
+                               std::to_string(ms) + ".bin";
+            std::ofstream ofs(path, std::ios::binary);
+            if (ofs)
+               ofs.write(reinterpret_cast<const char*>(win.data()), win.size());
+         }
+      }
+
       int nvramSize = PinmameGetMaxNVRAM();
       bool nvramChanged = false;
       
