@@ -14,7 +14,6 @@
 #include <cctype>
 #include <iomanip>
 #include <sstream>
-#include <cstdlib>
 
 #include "plugins/LoggingPlugin.h"
 #include "mongoose/mongoose.h"
@@ -466,9 +465,10 @@ bool ScoreTracker::LoadMap(const std::string& gameId)
    
    // Parse game_state descriptors
    m_scoresDesc.clear();
+   m_finalScoresDesc.clear();
    m_gameStateDescriptors.clear();
    m_hasRamFields = false;
-   
+
    if (m_mapData.contains("game_state"))
    {
       const auto& gs = m_mapData["game_state"];
@@ -487,6 +487,20 @@ bool ScoreTracker::LoadMap(const std::string& gameId)
                      m_hasRamFields = true;
                }
                m_scoresDesc.push_back(d);
+            }
+         }
+         else if (key == "final_scores" && it.value().is_array())
+         {
+            for (const auto& scoreJson : it.value())
+            {
+               Descriptor d = ParseDescriptor(scoreJson);
+               ResolveDescriptor(d);
+               for (const auto& ra : d.resolvedAddresses)
+               {
+                  if (ra.isRam)
+                     m_hasRamFields = true;
+               }
+               m_finalScoresDesc.push_back(d);
             }
          }
          else if (it.value().is_object())
@@ -669,6 +683,25 @@ int64_t ScoreTracker::Decode(const std::vector<uint8_t>& nvram, const Descriptor
    return static_cast<int64_t>(value * desc.scale + desc.offset);
 }
 
+std::vector<int64_t> ScoreTracker::BuildFinalScoresSnapshot(const std::vector<int64_t>& playerScores)
+{
+   std::vector<int64_t> snapshot = playerScores;
+   for (size_t i = 0; i < m_finalScoresDesc.size() && i < snapshot.size(); ++i)
+   {
+      snapshot[i] = Decode(m_loopNvram, m_finalScoresDesc[i]);
+   }
+   // Player indices beyond what game_state.final_scores covers have no
+   // authoritative source: repeated live testing showed the "scores" reading
+   // for those slots does not track real play (it moves around but never
+   // converges on the displayed score), so reporting it would just be a
+   // different wrong number instead of an honest "no data".
+   for (size_t i = m_finalScoresDesc.size(); i < snapshot.size(); ++i)
+   {
+      snapshot[i] = 0;
+   }
+   return snapshot;
+}
+
 bool ScoreTracker::Start(const std::string& gameId, const std::string& mapsPath, int port, int pollIntervalMs,
    bool enableWebSocket, const std::string& tablePath)
 {
@@ -690,7 +723,7 @@ bool ScoreTracker::Start(const std::string& gameId, const std::string& mapsPath,
    m_highestScores.clear();
    m_maxGameStateValues.clear();
    m_monitoringStarted = false;
-   
+
    if (!LoadMap(gameId))
    {
       std::cerr << "[ScoreTracker] Failed to load JSON map. Disabling monitoring." << std::endl;
@@ -743,6 +776,13 @@ void ScoreTracker::Stop()
       }
       catch (...) {}
       
+      // Same authoritative override as the confirmed-game-over path in Loop():
+      // game_state.final_scores is a ROM-frozen value, more reliable than the
+      // live "scores" snapshot parsed above from m_lastJsonState. m_loopNvram
+      // holds the last NVRAM read by Loop() before m_thread.join() above, so it
+      // is safe to decode here on this (now single) thread.
+      finalScores = BuildFinalScoresSnapshot(finalScores);
+
       const bool hasScore = std::any_of(finalScores.begin(), finalScores.end(),
          [](int64_t value) { return value > 0; });
       const bool writeExitFallback = m_hasBeenInPlay && hasScore;
@@ -750,7 +790,7 @@ void ScoreTracker::Stop()
       {
          LPI_LOGI_CPP("[INFO] - No confirmed game-over before VPX exit; writing the active NVRAM session as an exit fallback");
       }
-      SendSummaryPayload(finalScores, writeExitFallback);
+      SendSummaryPayload(finalScores, writeExitFallback, m_finalScoresDesc.size());
       m_summarySent = true;
    }
    
@@ -777,37 +817,6 @@ void ScoreTracker::Loop()
       {
          std::this_thread::sleep_for(std::chrono::milliseconds(m_pollIntervalMs));
          continue;
-      }
-
-      // Optional CPU-RAM window dump for reverse-engineering live fields that are
-      // NOT in the .nv (e.g. Capcom's live in-play score, which lives in volatile
-      // CPU RAM next to game_over). Enable by setting SCORETRACKER_CPUDUMP_DIR to a
-      // writable folder; the plugin then writes cpu-<rom>-<epoch_ms>.bin (0x0..0x10000)
-      // every ~500ms. Leave it unset for normal operation.
-      static const char* cpuDumpDir = std::getenv("SCORETRACKER_CPUDUMP_DIR");
-      if (cpuDumpDir && *cpuDumpDir)
-      {
-         static auto lastCpuDump = std::chrono::steady_clock::time_point{};
-         auto nowCpu = std::chrono::steady_clock::now();
-         if (nowCpu - lastCpuDump >= std::chrono::milliseconds(500))
-         {
-            lastCpuDump = nowCpu;
-            constexpr uint32_t kDumpLen = 0x10000;
-            std::vector<uint8_t> win(kDumpLen, 0);
-            for (uint32_t a = 0; a < kDumpLen; ++a)
-            {
-               uint8_t v = 0;
-               if (PinmameReadMainCPUByte(a, &v) != 0)
-                  win[a] = v;
-            }
-            auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(
-                         std::chrono::system_clock::now().time_since_epoch()).count();
-            std::string path = std::string(cpuDumpDir) + "/cpu-" + m_gameId + "-" +
-                               std::to_string(ms) + ".bin";
-            std::ofstream ofs(path, std::ios::binary);
-            if (ofs)
-               ofs.write(reinterpret_cast<const char*>(win.data()), win.size());
-         }
       }
 
       int nvramSize = PinmameGetMaxNVRAM();
@@ -873,7 +882,7 @@ void ScoreTracker::Loop()
                   {
                      playerScores.push_back(Decode(m_loopNvram, scoreDesc));
                   }
-                  SendSummaryPayload(playerScores, true);
+                  SendSummaryPayload(BuildFinalScoresSnapshot(playerScores), true, m_finalScoresDesc.size());
                   m_summarySent = true;
                }
                m_gameOverLast = true;
@@ -1005,13 +1014,13 @@ void ScoreTracker::Loop()
          
          if (!m_summarySent)
          {
-            SendSummaryPayload(playerScores, true);
+            SendSummaryPayload(BuildFinalScoresSnapshot(playerScores), true, m_finalScoresDesc.size());
             m_summarySent = true;
          }
          m_gameOverLast = true;
          m_hasBeenInPlay = false;
       }
-      
+
       // 6. Populate top level standard payload fields and serialize only if changed
       if (valuesChanged || !hasLastState)
       {
@@ -1126,7 +1135,7 @@ nlohmann::json ScoreTracker::BuildCompletedGameState() const
    return gameState;
 }
 
-void ScoreTracker::SendSummaryPayload(const std::vector<int64_t>& finalScores, bool writeScoresFile)
+void ScoreTracker::SendSummaryPayload(const std::vector<int64_t>& finalScores, bool writeScoresFile, size_t authoritativeCount)
 {
    nlohmann::json summary;
    summary["event"] = "game_summary";
@@ -1143,9 +1152,14 @@ void ScoreTracker::SendSummaryPayload(const std::vector<int64_t>& finalScores, b
 
    // Report the peak score per player. The instantaneous score at game-over can
    // lag the final bonus; the peak seen during the session is the robust value.
+   // Indices below authoritativeCount came from game_state.final_scores -- a
+   // frozen value the ROM itself writes at game-over -- so they are trusted as-is
+   // and skip the peak merge (the live "scores" source they'd be merged against
+   // may be unreliable on platforms where final_scores exists specifically to
+   // work around that).
    std::vector<int64_t> bestScores = finalScores;
    for (size_t i = 0; i < bestScores.size(); ++i)
-      if (i < m_highestScores.size() && m_highestScores[i] > bestScores[i])
+      if (i >= authoritativeCount && i < m_highestScores.size() && m_highestScores[i] > bestScores[i])
          bestScores[i] = m_highestScores[i];
 
    summary["final_scores"] = bestScores;
