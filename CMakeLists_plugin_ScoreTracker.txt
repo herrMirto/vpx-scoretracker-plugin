@@ -1,4 +1,7 @@
-# plugin CMake file to be included in the VPX main project CMakeLists
+# Optional in-tree build: copy this repo to <vpinball>/plugins/scoretracker, copy this file to
+# <vpinball>/make/CMakeLists_plugin_ScoreTracker.txt and add an include line for it to
+# <vpinball>/make/CMakeLists_plugins.txt. No vpinball source change is required; the usual way to
+# build the plugin is ./build-standalone.sh, which does not touch the vpinball checkout at all.
 
 # --- ScoreTracker plugin ---
 
@@ -6,12 +9,39 @@ set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_C_STANDARD 99)
 
 set(SCORETRACKER_PLUGIN_SOURCES
-   plugins/scoretracker/PluginMain.cpp
-   plugins/scoretracker/ScoreTracker.cpp
-   plugins/scoretracker/B2STracker.cpp
+   plugins/scoretracker/common.cpp
+   plugins/scoretracker/common.h
+   plugins/scoretracker/ScoreTrackerPlugin.cpp
+   plugins/scoretracker/NvramTracker.h
+   plugins/scoretracker/NvramTracker.cpp
+   plugins/scoretracker/ScoresFileWriter.h
    plugins/scoretracker/ScoresFileWriter.cpp
-   third-party/include/mongoose/mongoose.c
 )
+
+# The PinMAME NVRAM maps consumed by the plugin (https://github.com/tomlogic/pinmame-nvram-maps),
+# pinned to a known-good revision and installed alongside the plugin binary. Disable to build
+# offline; the plugin then relies on its nvram_maps_folder setting.
+option(SCORETRACKER_FETCH_MAPS "Download the PinMAME NVRAM maps shipped with the ScoreTracker plugin" ON)
+set(SCORETRACKER_MAPS_SHA "d8693b9ca59a1b871d2a473be3adb0392471a8e3")
+set(SCORETRACKER_MAPS_DIR "${CMAKE_BINARY_DIR}/external/pinmame-nvram-maps-${SCORETRACKER_MAPS_SHA}")
+
+if(BUILD_SHARED AND SCORETRACKER_FETCH_MAPS AND NOT EXISTS "${SCORETRACKER_MAPS_DIR}/index.json")
+   set(SCORETRACKER_MAPS_ARCHIVE "${CMAKE_BINARY_DIR}/external/pinmame-nvram-maps-${SCORETRACKER_MAPS_SHA}.tar.gz")
+   message(STATUS "Downloading PinMAME NVRAM maps (${SCORETRACKER_MAPS_SHA})")
+   file(DOWNLOAD
+      "https://github.com/tomlogic/pinmame-nvram-maps/archive/${SCORETRACKER_MAPS_SHA}.tar.gz"
+      "${SCORETRACKER_MAPS_ARCHIVE}"
+      STATUS SCORETRACKER_MAPS_DOWNLOAD_STATUS
+   )
+   list(GET SCORETRACKER_MAPS_DOWNLOAD_STATUS 0 SCORETRACKER_MAPS_DOWNLOAD_RESULT)
+   if(SCORETRACKER_MAPS_DOWNLOAD_RESULT EQUAL 0)
+      file(ARCHIVE_EXTRACT INPUT "${SCORETRACKER_MAPS_ARCHIVE}" DESTINATION "${CMAKE_BINARY_DIR}/external")
+      file(REMOVE "${SCORETRACKER_MAPS_ARCHIVE}")
+   else()
+      file(REMOVE "${SCORETRACKER_MAPS_ARCHIVE}")
+      message(WARNING "Could not download the PinMAME NVRAM maps; the ScoreTracker plugin will be installed without maps")
+   endif()
+endif()
 
 if(BUILD_SHARED)
    add_library(ScoreTrackerPlugin MODULE ${SCORETRACKER_PLUGIN_SOURCES})
@@ -22,44 +52,18 @@ if(BUILD_SHARED)
       plugins/scoretracker
    )
 
-   if(PluginPlatform STREQUAL "windows" OR PluginPlatform STREQUAL "windows-mingw")
+   if(PLATFORM STREQUAL "windows" OR PLATFORM STREQUAL "windows-mingw")
       if(MSVC)
-         add_compile_options(
-            $<$<CONFIG:RELEASE>:/Ob2>
-            $<$<CONFIG:RELEASE>:/O2>
-            $<$<CONFIG:RELEASE>:/Oi>
-            $<$<CONFIG:RELEASE>:/arch:SSE2>
-            $<$<CONFIG:RELEASE>:/fp:fast>
-            $<$<CONFIG:RELEASE>:/fp:except->
-            $<$<CONFIG:RELEASE>:/Ot>
-            $<$<CONFIG:RELEASE>:/GF>
-            $<$<CONFIG:RELEASE>:/GS->
-            $<$<CONFIG:RELEASE>:/Gy>
-            $<$<CONFIG:RELEASE>:/GR>
-            $<$<CONFIG:RELEASE>:/Oy>
-            $<$<CONFIG:RELEASE>:/GT>
-            $<$<CONFIG:RELEASE>:/GL>
-         )
          set_target_properties(ScoreTrackerPlugin PROPERTIES
-            MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:DEBUG>:Debug>"
-         )
-         target_compile_options(ScoreTrackerPlugin PUBLIC
-            $<$<CONFIG:RELEASE>:$<$<COMPILE_LANGUAGE:CXX>:${OPT_COMMON}>>
-            $<$<CONFIG:RELEASE>:$<$<COMPILE_LANGUAGE:C>:${OPT_COMMON}>>
-         )
-         target_link_options(ScoreTrackerPlugin PUBLIC
-            $<$<CONFIG:RELEASE>:/INCREMENTAL:NO>
-            $<$<CONFIG:RELEASE>:/OPT:REF>
-            $<$<CONFIG:RELEASE>:/OPT:ICF>
-            $<$<CONFIG:RELEASE>:/LTCG>
+            MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>"
          )
       endif()
-      target_link_directories(ScoreTrackerPlugin PUBLIC ${CMAKE_SOURCE_DIR}/third-party/build-libs/${PluginPlatform}-${PluginArch} ${CMAKE_SOURCE_DIR}/third-party/runtime-libs/${PluginPlatform}-${PluginArch})
+      target_link_directories(ScoreTrackerPlugin PUBLIC ${CMAKE_SOURCE_DIR}/third-party/build-libs/${PLATFORM}-${ARCH} ${CMAKE_SOURCE_DIR}/third-party/runtime-libs/${PLATFORM}-${ARCH})
       set_target_properties(ScoreTrackerPlugin PROPERTIES
          PREFIX ""
          OUTPUT_NAME "scoretracker-plugin"
       )
-      if (PluginArch STREQUAL "x64")
+      if(ARCH STREQUAL "x64")
          target_link_libraries(ScoreTrackerPlugin pinmame64)
       else()
          target_link_libraries(ScoreTrackerPlugin pinmame)
@@ -69,7 +73,7 @@ if(BUILD_SHARED)
          PREFIX ""
          OUTPUT_NAME "scoretracker-plugin"
       )
-      if(PluginPlatform STREQUAL "macos")
+      if(PLATFORM STREQUAL "macos")
          set_target_properties(ScoreTrackerPlugin PROPERTIES
             SUFFIX ".dylib"
          )
@@ -80,7 +84,7 @@ if(BUILD_SHARED)
          )
       endif()
       target_link_directories(ScoreTrackerPlugin PUBLIC
-         ${CMAKE_SOURCE_DIR}/third-party/runtime-libs/${PluginPlatform}-${PluginArch}
+         ${CMAKE_SOURCE_DIR}/third-party/runtime-libs/${PLATFORM}-${ARCH}
       )
       target_link_libraries(ScoreTrackerPlugin PUBLIC pinmame)
    endif()
@@ -91,10 +95,19 @@ if(BUILD_SHARED)
       COMMAND "${CMAKE_COMMAND}" -E rm "$<TARGET_FILE:ScoreTrackerPlugin>"
    )
 
-   if(POST_BUILD_COPY_EXT_LIBS AND PluginPlatform STREQUAL "windows-mingw")
+   if(EXISTS "${SCORETRACKER_MAPS_DIR}/index.json")
       add_custom_command(TARGET ScoreTrackerPlugin POST_BUILD
-         COMMAND "${CMAKE_COMMAND}" -E copy "${CMAKE_SOURCE_DIR}/third-party/runtime-libs/${PluginPlatform}-${PluginArch}/libgcc_s_seh-1.dll" "${PLUGINS_DIR}/scoretracker/libgcc_s_seh-1.dll"
-         COMMAND "${CMAKE_COMMAND}" -E copy "${CMAKE_SOURCE_DIR}/third-party/runtime-libs/${PluginPlatform}-${PluginArch}/libstdc++-6.dll" "${PLUGINS_DIR}/scoretracker/libstdc++-6.dll"
+         COMMAND "${CMAKE_COMMAND}" -E make_directory "${PLUGINS_DIR}/scoretracker/maps"
+         COMMAND "${CMAKE_COMMAND}" -E copy "${SCORETRACKER_MAPS_DIR}/index.json" "${SCORETRACKER_MAPS_DIR}/LICENSE" "${PLUGINS_DIR}/scoretracker/maps/"
+         COMMAND "${CMAKE_COMMAND}" -E copy_directory "${SCORETRACKER_MAPS_DIR}/maps" "${PLUGINS_DIR}/scoretracker/maps/maps"
+         COMMAND "${CMAKE_COMMAND}" -E copy_directory "${SCORETRACKER_MAPS_DIR}/platforms" "${PLUGINS_DIR}/scoretracker/maps/platforms"
+      )
+   endif()
+
+   if(POST_BUILD_COPY_EXT_LIBS AND PLATFORM STREQUAL "windows-mingw")
+      add_custom_command(TARGET ScoreTrackerPlugin POST_BUILD
+         COMMAND "${CMAKE_COMMAND}" -E copy "${CMAKE_SOURCE_DIR}/third-party/runtime-libs/${PLATFORM}-${ARCH}/libgcc_s_seh-1.dll" "${PLUGINS_DIR}/scoretracker/libgcc_s_seh-1.dll"
+         COMMAND "${CMAKE_COMMAND}" -E copy "${CMAKE_SOURCE_DIR}/third-party/runtime-libs/${PLATFORM}-${ARCH}/libstdc++-6.dll" "${PLUGINS_DIR}/scoretracker/libstdc++-6.dll"
       )
    endif()
 endif()
