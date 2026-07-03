@@ -1,72 +1,84 @@
-# ScoreTracker VPX Plugin
+# ScoreTracker Plugin
 
-ScoreTracker is a local-first Visual Pinball X plugin that records completed game scores.
+A third-party [Visual Pinball X](https://github.com/vpinball/vpinball) plugin that records the
+scores of played PinMAME games to a `scores.json` file. It is developed and distributed
+independently of the vpinball project: installation is dropping the `scoretracker` folder into
+VPX's `plugins` directory — no vpinball source change of any kind is required.
 
-The plugin watches VPX/PinMAME and B2S score state, then appends one completed-game entry to `scores.json` in the table folder when a game finishes. It also keeps the existing optional WebSocket stream for companion apps.
+While a game runs, the plugin periodically decodes the machine's NVRAM (and, on platforms that
+keep live game state in volatile memory, main CPU RAM) using the community-maintained
+[PinMAME NVRAM maps](https://github.com/tomlogic/pinmame-nvram-maps). When the game is over, the
+per-player scores, game duration and selected `game_state` values are appended to `scores.json`.
 
-## Goals
+The plugin has no effect for tables without a PinMAME controller or for ROMs without a
+`game_state` block in their map.
 
-- Write every completed game to the table's local `scores.json` file.
-- Keep the file human-readable and local-first.
-- Avoid table script modifications.
-- Use VPX plugin APIs, PinMAME APIs, and B2S script-object interception rather than memory hacks.
-- Keep WebSocket output opt-in for live UIs and companion apps.
+## How it works
 
-## scores.json
+- The plugin registers through VPX's public plugin API (`MsgPlugin`/`ControllerPlugin`/`VPXPlugin`
+  headers) and reads machine memory through the stable libpinmame API (`PinmameGetNVRAM`,
+  `PinmameReadMainCPUByte` — both read-only).
+- On `OnGameStart` (controller event), the ROM id is looked up in the maps `index.json`; if a map
+  exists, it is parsed once together with its platform description.
+- The machine state is polled on the main thread via `RunOnMainThread` at the configured interval
+  (250 ms by default) — no extra threads. When the NVRAM snapshot has not changed, no decoding
+  happens; nothing at all runs while no machine is active.
+- The map's `game_state.game_over` flag drives the session lifecycle. Since this flag can also be
+  raised between balls (end-of-ball bonus, ball search), a game-over is only confirmed after the
+  flag stays asserted for 25 s; games shorter than 30 s are considered table resumes and ignored.
+- The confirmed game is appended to `scores.json` with an atomic write (temporary file + rename).
+  An unreadable existing file is moved aside (`scores.json.broken.<timestamp>`), never deleted.
 
-Current v1 shape:
+## Settings (`[Plugin.ScoreTracker]` in VPinballX.ini)
+
+| Setting | Default | Description |
+|---|---|---|
+| `Enable` | `0` | Enable the plugin. |
+| `nvram_maps_folder` | *(empty)* | Folder with the NVRAM maps (`index.json`, `maps/`, `platforms/`). When empty, the maps installed with the plugin (`plugins/scoretracker/maps`) are used. |
+| `PollIntervalMs` | `250` | Interval used to inspect the machine state (50–5000 ms). |
+| `OutputFolder` | *(empty)* | Folder where `scores.json` is written. When empty, it is written next to the table file. |
+
+## scores.json format
 
 ```json
 {
   "version": 1,
   "games": [
     {
-      "date": "2026-06-19T18:30:12Z",
-      "rom": "afm_113b",
-      "scores": [123456789, 9876543],
-      "game_duration": 310
+      "date": "2026-07-03T18:30:12Z",
+      "rom": "taf_l7",
+      "scores": [12345678, 9876543],
+      "game_duration": 310,
+      "game_state": { "credits": 2, "player_count": 2 }
     }
   ]
 }
 ```
 
-`game_state` is included only when useful non-empty state is available.
+`scores` holds the best value seen per player during the session (the instantaneous score at
+game-over can lag the final bonus). On platforms providing `game_state.final_scores`, that
+ROM-frozen snapshot is used instead for the players it covers.
 
-Official release builds are intended to add a per-game `_signature` generated from signing material injected by the GitHub release workflow.
+## Building
 
-## Map Data
+The plugin builds against a vpinball checkout used purely as an SDK (headers +
+`third-party/runtime-libs` libpinmame); the checkout is never modified.
 
-PinMAME decoding depends on an external maps folder containing:
+- **Standalone (macOS)**: `./build-standalone.sh [vpinball-checkout] [nvram-maps-checkout]`
+  compiles the plugin and installs it (plus, optionally, the maps) straight into the
+  `VPinballX*.app` bundle found under the checkout's `build/` folder.
+- **In-tree (all platforms)**: see the header of `CMakeLists_plugin_ScoreTracker.txt` for
+  building as part of a vpinball CMake build without changing any vpinball source file.
 
-- `index.json`
-- `romnames.json`
-- `platforms/`
-- `maps/`
+## Maps
 
-The maps database should live in a separate repository and release cycle.
+Any checkout of [tomlogic/pinmame-nvram-maps](https://github.com/tomlogic/pinmame-nvram-maps) or
+a compatible fork works: point `nvram_maps_folder` at it, or install it as the plugin-default
+maps folder (`plugins/scoretracker/maps`). The in-tree CMake build downloads a pinned revision
+automatically; the maps are LGPL-3.0 (their LICENSE file is installed alongside).
 
-## Tracking Source Priority
+## Development tools
 
-ScoreTracker uses exactly one score source for a table:
-
-1. A valid PinMAME NVRAM map is always authoritative.
-2. B2S interception is armed only when the ROM is not listed in `index.json`.
-
-While a map is active, B2S calls are forwarded normally to the backglass but
-are not inspected or retained by ScoreTracker. Duplicate, empty, and
-lower-priority controller lifecycle events cannot replace a mapped session.
-
-If the map index is unreadable, malformed, or references a missing map file,
-ScoreTracker fails closed instead of silently selecting B2S. Source selection,
-fallback activation, ignored lifecycle events, and configuration failures are
-reported explicitly in the VPX log.
-
-## Runtime overhead settings
-
-ScoreTracker is optimized for completed-game persistence to `scores.json`.
-Live WebSocket output is disabled by default and no local web server is started
-unless `EnableWebSocket` is enabled.
-
-`PollIntervalMs` controls how often score state is inspected. The default is
-`250`; higher values reduce VPX process overhead at the cost of less frequent
-live state updates.
+`tools/rom-map-lab/` contains the reverse-engineering lab used to discover and validate
+`game_state` fields (headless PinMAME exerciser, NVRAM diffing, candidate-map generation). It is
+development tooling only and is not part of the plugin runtime.
