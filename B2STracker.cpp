@@ -363,32 +363,76 @@ void B2STracker::EnsureStarted()
 
 void B2STracker::Loop()
 {
-    bool gameOverLast = false;
+   bool gameOverLast = false;
+   std::string lastRom;
+   int lastPlayerCount = -1;
+   int lastCurrentPlayer = -1;
+   std::array<int64_t, 6> lastScores{};
+   int lastBallInPlay = -1;
+   bool lastGameOver = false;
+   int lastCredits = -1;
+   int lastTilt = -1;
+   int lastCanPlay = -1;
+   bool firstTick = true;
 
-    while (m_running)
-    {
-        std::string jsonStr;
-        std::vector<std::string> events;
-        {
-            std::lock_guard<std::mutex> lock(m_stateMutex);
+   while (m_running)
+   {
+      std::string jsonStr;
+      std::vector<std::string> events;
+      bool stateChanged = false;
+      {
+         std::lock_guard<std::mutex> lock(m_stateMutex);
 
-            const std::string rom = m_tableName.empty() ? (m_gameId.empty() ? "em_table" : m_gameId) : m_tableName;
-            const int playerCount = (std::max)(m_maxPlayerSeen, (std::min)(m_canPlay, 6));
-            std::vector<int64_t> scores(m_scores.begin(), m_scores.begin() + (std::max)(playerCount, 1));
+         const std::string rom = m_tableName.empty() ? (m_gameId.empty() ? "em_table" : m_gameId) : m_tableName;
+         const int playerCount = (std::max)(m_maxPlayerSeen, (std::min)(m_canPlay, 6));
+         std::vector<int64_t> scores(m_scores.begin(), m_scores.begin() + (std::max)(playerCount, 1));
+         const int currentPlayer = (m_playerUp >= 1 && m_playerUp <= static_cast<int>(scores.size())) ? m_playerUp : 1;
 
-            const int currentPlayer = (m_playerUp >= 1 && m_playerUp <= static_cast<int>(scores.size())) ? m_playerUp : 1;
+         if (!m_gameOver)
+            m_hasBeenInPlay = true;
 
-            if (!m_gameOver)
-                m_hasBeenInPlay = true;
+         if (m_gameOver && m_hasBeenInPlay && !gameOverLast && !m_summarySent)
+         {
+            SendSummaryLocked(true);
+            m_summarySent = true;
+            LPI_LOGI_CPP(std::string("[INFO] - Game play for EM table ") + rom + " is over");
+            std::cout << "[INFO] - Game play for EM table " << rom << " is over" << std::endl;
+         }
+         gameOverLast = m_gameOver;
 
-            if (m_gameOver && m_hasBeenInPlay && !gameOverLast && !m_summarySent)
+         // Check if any tracked variable has changed
+         bool romChanged = (rom != lastRom);
+         bool countChanged = (playerCount != lastPlayerCount);
+         bool playerChanged = (currentPlayer != lastCurrentPlayer);
+         bool ballChanged = (m_ballInPlay != lastBallInPlay);
+         bool overChanged = (m_gameOver != lastGameOver);
+         bool creditsChanged = (m_credits != lastCredits);
+         bool tiltChanged = (m_tilt != lastTilt);
+         bool canPlayChanged = (m_canPlay != lastCanPlay);
+         
+         bool scoresChanged = false;
+         for (int i = 0; i < 6; ++i)
+         {
+            if (m_scores[i] != lastScores[i])
             {
-                SendSummaryLocked(true);
-                m_summarySent = true;
-                LPI_LOGI_CPP(std::string("[INFO] - Game play for EM table ") + rom + " is over");
-                std::cout << "[INFO] - Game play for EM table " << rom << " is over" << std::endl;
+               scoresChanged = true;
+               break;
             }
-            gameOverLast = m_gameOver;
+         }
+
+         if (firstTick || romChanged || countChanged || playerChanged || ballChanged || overChanged || creditsChanged || tiltChanged || canPlayChanged || scoresChanged)
+         {
+            stateChanged = true;
+            firstTick = false;
+            lastRom = rom;
+            lastPlayerCount = playerCount;
+            lastCurrentPlayer = currentPlayer;
+            lastBallInPlay = m_ballInPlay;
+            lastGameOver = m_gameOver;
+            lastCredits = m_credits;
+            lastTilt = m_tilt;
+            lastCanPlay = m_canPlay;
+            lastScores = m_scores;
 
             nlohmann::json state;
             state["rom"] = rom;
@@ -401,27 +445,27 @@ void B2STracker::Loop()
             state["tilt"] = m_tilt != 0;
             state["can_play"] = m_canPlay;
             jsonStr = state.dump();
+         }
 
-            events.swap(m_pendingEvents);
-        }
+         events.swap(m_pendingEvents);
+      }
 
-        bool changed = (jsonStr != m_lastJsonState);
-        if (changed || !events.empty())
-        {
-            std::lock_guard<std::mutex> lock(m_clientsMutex);
-            if (changed)
-            {
-                m_lastJsonState = jsonStr;
-                for (struct mg_connection* conn : m_clients)
-                    mg_ws_send(conn, jsonStr.c_str(), jsonStr.length(), WEBSOCKET_OP_TEXT);
-            }
-            for (const std::string& evt : events)
-                for (struct mg_connection* conn : m_clients)
-                    mg_ws_send(conn, evt.c_str(), evt.length(), WEBSOCKET_OP_TEXT);
-        }
+      if (stateChanged || !events.empty())
+      {
+         std::lock_guard<std::mutex> lock(m_clientsMutex);
+         if (stateChanged)
+         {
+            m_lastJsonState = jsonStr;
+            for (struct mg_connection* conn : m_clients)
+               mg_ws_send(conn, jsonStr.c_str(), jsonStr.length(), WEBSOCKET_OP_TEXT);
+         }
+         for (const std::string& evt : events)
+            for (struct mg_connection* conn : m_clients)
+               mg_ws_send(conn, evt.c_str(), evt.length(), WEBSOCKET_OP_TEXT);
+      }
 
-        std::this_thread::sleep_for(std::chrono::milliseconds(m_pollIntervalMs));
-    }
+      std::this_thread::sleep_for(std::chrono::milliseconds(m_pollIntervalMs));
+   }
 }
 
 nlohmann::json B2STracker::BuildCompletedGameStateLocked() const

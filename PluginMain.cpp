@@ -56,7 +56,6 @@ MSGPI_STRING_VAL_SETTING(mapsFolderProp, "nvram_maps_folder", "JSON Maps Folder"
 MSGPI_INT_VAL_SETTING(wsPortProp, "Port", "WebSocket Port", "Port number for the WebSocket server", true, 1024, 65535, 8889);
 MSGPI_INT_VAL_SETTING(pollIntervalMsProp, "PollIntervalMs", "Polling Interval (ms)", "Interval used to inspect score state. Higher values reduce VPX process overhead.", true, 50, 5000, 250);
 MSGPI_BOOL_VAL_SETTING(enableWebSocketProp, "EnableWebSocket", "Enable WebSocket Output", "Enable live WebSocket/HTTP output. Leave disabled when only scores.json persistence is needed.", true, false);
-MSGPI_BOOL_VAL_SETTING(nvramSnapshotsProp, "EnableNVRAMSnapshots", "Enable NVRAM Snapshots", "Enable the local HTTP endpoint used to capture live PinMAME NVRAM for map diagnostics", true, false);
 
 static void OnControllerGameStart(const unsigned int eventId, void* userData, void* msgData)
 {
@@ -131,7 +130,7 @@ static void OnControllerGameStart(const unsigned int eventId, void* userData, vo
       std::cout << "[ScoreTracker] Using authoritative NVRAM map for " << gameId << std::endl;
 
       scoreTracker = new ScoreTracker(msgApi, endpointId);
-      if (!scoreTracker->Start(gameId, mapsFolderProp_Val, wsPortProp_Val, pollIntervalMsProp_Val, enableWebSocketProp_Val, tablePath, nvramSnapshotsProp_Val))
+      if (!scoreTracker->Start(gameId, mapsFolderProp_Val, wsPortProp_Val, pollIntervalMsProp_Val, enableWebSocketProp_Val, tablePath))
          LPI_LOGE_CPP("[ERROR] - NVRAM map exists but could not be loaded for "s + gameId + "; fallbacks remain disabled");
       return;
    }
@@ -208,7 +207,6 @@ MSGPI_EXPORT void MSGPIAPI ScoreTrackerPluginLoad(const uint32_t sessionId, cons
    msgApi->RegisterSetting(endpointId, &wsPortProp);
    msgApi->RegisterSetting(endpointId, &pollIntervalMsProp);
    msgApi->RegisterSetting(endpointId, &enableWebSocketProp);
-   msgApi->RegisterSetting(endpointId, &nvramSnapshotsProp);
 
    // Fetch VPX API
    msgApi->BroadcastMsg(endpointId, getVpxApiId = msgApi->GetMsgID(VPXPI_NAMESPACE, VPXPI_MSG_GET_API), &vpxApi);

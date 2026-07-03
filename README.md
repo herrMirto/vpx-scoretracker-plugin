@@ -61,33 +61,11 @@ ScoreTracker fails closed instead of silently selecting B2S. Source selection,
 fallback activation, ignored lifecycle events, and configuration failures are
 reported explicitly in the VPX log.
 
-## Live NVRAM diagnostic snapshots
-
-Map authors can capture the complete live PinMAME NVRAM at known gameplay
-moments. Enable `EnableNVRAMSnapshots` in the ScoreTracker plugin settings,
-restart the table, and request labeled snapshots from the same machine:
-
-```sh
-curl "http://127.0.0.1:8889/snapshot?label=attract"
-curl "http://127.0.0.1:8889/snapshot?label=ball_1"
-curl "http://127.0.0.1:8889/snapshot?label=game_over"
-```
-
-Replace `8889` if the plugin's `Port` setting differs. Captures are written to
-`scoretracker-captures/<rom>/` beside the active table. Labels are sanitized and
-filenames include millisecond timestamps, so the endpoint cannot choose an
-arbitrary output path. The endpoint returns HTTP 403 unless explicitly enabled
-and HTTP 503 until PinMAME has supplied a live NVRAM frame. Each successful
-capture is recorded in the VPX log with its full path and byte count. Platforms
-that declare CPU RAM regions also produce a matching `-ram-ADDRESS.bin` file;
-this allows map authors to correlate volatile scores and lifecycle fields that
-are not persisted in NVRAM.
-
 ## Runtime overhead settings
 
 ScoreTracker is optimized for completed-game persistence to `scores.json`.
 Live WebSocket output is disabled by default and no local web server is started
-unless either `EnableWebSocket` or `EnableNVRAMSnapshots` is enabled.
+unless `EnableWebSocket` is enabled.
 
 `PollIntervalMs` controls how often score state is inspected. The default is
 `250`; higher values reduce VPX process overhead at the cost of less frequent
