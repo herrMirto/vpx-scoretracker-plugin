@@ -158,6 +158,9 @@ private:
    std::chrono::steady_clock::time_point m_sessionStartRealTime;
    vector<int64_t> m_highestScores;
    std::unordered_map<string, int64_t> m_maxGameStateValues;
+   vector<int64_t> m_prevPlayerScores;
+   int m_gameOverAnomalies = 0;
+   bool m_ignoreGameOver = false;
    bool m_hasLastState = false;
    bool m_gameOverLast = false;
    bool m_gameOverPending = false;

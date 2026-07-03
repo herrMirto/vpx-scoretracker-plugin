@@ -20,6 +20,9 @@ static constexpr int kGameOverConfirmSeconds = 25;
 // Ignore "games" shorter than this. Resuming a table reloads the previous game's score from
 // NVRAM, which can briefly look like a live game; a real game always lasts longer.
 static constexpr int kMinGameDurationSeconds = 30;
+// Number of score increases observed while game_over claims to be asserted (before the session
+// ever entered play) after which the field is considered wrong and ignored for the session.
+static constexpr int kGameOverAnomalyLimit = 3;
 
 NvramTracker::~NvramTracker() { Stop(); }
 
@@ -502,7 +505,12 @@ int64_t NvramTracker::Decode(const Descriptor& desc)
 vector<int64_t> NvramTracker::BuildFinalScoresSnapshot(const vector<int64_t>& playerScores)
 {
    vector<int64_t> snapshot = playerScores;
-   for (size_t i = 0; i < m_finalScoresDesc.size() && i < snapshot.size(); ++i)
+   // Without an authoritative frozen copy the live snapshot is the best data available
+   if (m_finalScoresDesc.empty())
+      return snapshot;
+   if (snapshot.size() < m_finalScoresDesc.size())
+      snapshot.resize(m_finalScoresDesc.size(), 0);
+   for (size_t i = 0; i < m_finalScoresDesc.size(); ++i)
       snapshot[i] = Decode(m_finalScoresDesc[i]);
    // Player indices beyond what game_state.final_scores covers have no authoritative source:
    // repeated live testing showed the "scores" reading for those slots does not track real play
@@ -526,9 +534,12 @@ bool NvramTracker::Start(const string& gameId, const string& mapsPath, const str
    m_decodedValues.clear();
    m_highestScores.clear();
    m_maxGameStateValues.clear();
+   m_prevPlayerScores.clear();
    m_hasLastState = false;
    m_gameOverLast = false;
    m_gameOverPending = false;
+   m_gameOverAnomalies = 0;
+   m_ignoreGameOver = false;
    m_summarySent = false;
    m_hasBeenInPlay = false;
    m_monitoringStarted = false;
@@ -550,7 +561,10 @@ void NvramTracker::Stop()
    if (m_monitoringStarted && !m_summarySent && !m_gameId.empty())
    {
       const vector<int64_t> finalScores = BuildFinalScoresSnapshot(m_playerScores);
-      const bool hasScore = std::any_of(finalScores.begin(), finalScores.end(), [](int64_t value) { return value > 0; });
+      // The peak scores also count as evidence of a played game: the live reading can already be
+      // cleared or unreliable at exit while the recorded peaks hold the real values.
+      const bool hasScore = std::any_of(finalScores.begin(), finalScores.end(), [](int64_t value) { return value > 0; })
+         || std::any_of(m_highestScores.begin(), m_highestScores.end(), [](int64_t value) { return value > 0; });
       const bool writeExitFallback = m_hasBeenInPlay && hasScore;
       if (writeExitFallback)
          LOGI("No confirmed game-over before VPX exit; writing the active session as an exit fallback");
@@ -623,12 +637,32 @@ void NvramTracker::Poll()
       m_decodedValues[key] = Decode(desc);
 
    const auto gameOverIt = m_decodedValues.find("game_over");
-   const bool isGameOver = gameOverIt != m_decodedValues.end() && gameOverIt->second != 0;
+   bool isGameOver = gameOverIt != m_decodedValues.end() && gameOverIt->second != 0;
 
    // Decode the per-player scores
    m_playerScores.resize(m_scoresDesc.size());
    for (size_t i = 0; i < m_scoresDesc.size(); ++i)
       m_playerScores[i] = Decode(m_scoresDesc[i]);
+
+   // A game_over flag that stays asserted from boot while a score is visibly rising is wrong for
+   // this machine (observed on Spider-Man VE, where the SAM flag address holds other data). Stop
+   // trusting it for the rest of the session; the exit fallback then persists the played game.
+   // Scoped to sessions that never entered play so the between-balls bonus count-up of a valid
+   // flag (which also asserts it briefly) can never trip this.
+   if (isGameOver && !m_ignoreGameOver && !m_hasBeenInPlay && m_prevPlayerScores.size() == m_playerScores.size())
+   {
+      bool increased = false;
+      for (size_t i = 0; i < m_playerScores.size() && !increased; ++i)
+         increased = m_playerScores[i] > m_prevPlayerScores[i];
+      if (increased && ++m_gameOverAnomalies >= kGameOverAnomalyLimit)
+      {
+         LOGW("game_over reads as asserted while scores are rising; ignoring the game_over field for this session");
+         m_ignoreGameOver = true;
+      }
+   }
+   if (m_ignoreGameOver)
+      isGameOver = false;
+   m_prevPlayerScores = m_playerScores;
 
    // Raw lifecycle flags can briefly toggle during display and ball-state transitions. Only
    // confirm game-over after it remains asserted for the confirmation delay; a transient must
@@ -716,6 +750,12 @@ void NvramTracker::FinalizeSession(const vector<int64_t>& finalScores, bool writ
    // "scores" source they'd be merged against may be unreliable on platforms where
    // final_scores exists specifically to work around that).
    vector<int64_t> bestScores = finalScores;
+   // Only report the players who actually took part when the machine exposes a player count:
+   // unused player slots do not read 0 everywhere (SAM holds 0xFF filler there, other platforms
+   // keep stale data), so extra slots would record garbage.
+   const auto playerCount = m_maxGameStateValues.find("player_count");
+   if (playerCount != m_maxGameStateValues.end() && playerCount->second >= 1 && playerCount->second < static_cast<int64_t>(bestScores.size()))
+      bestScores.resize(static_cast<size_t>(playerCount->second));
    for (size_t i = authoritativeCount; i < bestScores.size(); ++i)
       if (i < m_highestScores.size() && m_highestScores[i] > bestScores[i])
          bestScores[i] = m_highestScores[i];
