@@ -82,3 +82,11 @@ automatically; the maps are LGPL-3.0 (their LICENSE file is installed alongside)
 `tools/rom-map-lab/` contains the reverse-engineering lab used to discover and validate
 `game_state` fields (headless PinMAME exerciser, NVRAM diffing, candidate-map generation). It is
 development tooling only and is not part of the plugin runtime.
+
+## Companion app
+
+`companion/` contains the cross-platform Tauri 2 desktop application for browsing the local game
+history produced by this plugin. The companion is versioned and released alongside the plugin but
+is operationally independent: score recording never requires the app to be installed or running.
+
+See [`companion/README.md`](companion/README.md) for development instructions and the v1 design.
