@@ -1,44 +1,49 @@
 {
-  "roms": {
-    "bdk_300": {
-      "status": "recipe_failed",
-      "note": "Batman 2.94 seed and standard trough recipe did not start a live scoring game on the Home/Costco firmware.",
-      "tier_penalty": 1
-    },
-    "beav_butt": {
-      "status": "recipe_failed",
-      "note": "The current VBS-derived recipe booted and changed NVRAM but produced no donor-decoded live score.",
-      "tier_penalty": 1
-    },
-    "tz_ifpa": {
-      "status": "seed_recipe_failed",
-      "note": "The tz_94h seed plus extracted table recipe did not start donor-decoded scoring on the IFPA rules ROM.",
-      "tier_penalty": 1
-    },
-    "tz_l1": {
-      "status": "seed_recipe_failed",
-      "note": "The tz_94h seed plus extracted table recipe also failed to produce a live score on retail L-1.",
-      "tier_penalty": 1
-    },
-    "t2_l2": {
-      "status": "partial_score_layout",
-      "note": "Player 1 score was verified at 0x1730, but repeated physical trough simulations could not establish a durable Player 2 turn; do not infer the remaining player offsets yet.",
-      "tier_penalty": 1
-    },
-    "taf_l1": {
-      "status": "seed_recipe_failed",
-      "note": "The extracted physical-trough recipe and both native L-1 and aliased L-7 seeds accepted input but never entered a live scoring game.",
-      "tier_penalty": 1
-    },
-    "rct400": {
-      "status": "seed_recipe_failed",
-      "note": "The exact seed exposed credits, but the physical four-ball trough recipe (including a full release ripple) never left attract mode.",
-      "tier_penalty": 1
-    },
-    "term3_2": {
-      "status": "partial_game_over_candidate",
-      "note": "0x0227 bit 0x08 is set in attract and clear from Start through inter-ball states, but automated drains did not reach a confirmed final game-over return.",
-      "tier_penalty": 1
-    }
+ "roms": {
+  "bdk_300": {
+   "status": "recipe_failed",
+   "note": "Batman 2.94 seed and standard trough recipe did not start a live scoring game on the Home/Costco firmware.",
+   "tier_penalty": 1
+  },
+  "beav_butt": {
+   "status": "recipe_failed",
+   "note": "The current VBS-derived recipe booted and changed NVRAM but produced no donor-decoded live score.",
+   "tier_penalty": 1
+  },
+  "tz_ifpa": {
+   "status": "seed_recipe_failed",
+   "note": "The tz_94h seed plus extracted table recipe did not start donor-decoded scoring on the IFPA rules ROM.",
+   "tier_penalty": 1
+  },
+  "tz_l1": {
+   "status": "seed_recipe_failed",
+   "note": "The tz_94h seed plus extracted table recipe also failed to produce a live score on retail L-1.",
+   "tier_penalty": 1
+  },
+  "t2_l2": {
+   "status": "partial_score_layout",
+   "note": "Player 1 score was verified at 0x1730, but repeated physical trough simulations could not establish a durable Player 2 turn; do not infer the remaining player offsets yet.",
+   "tier_penalty": 1
+  },
+  "taf_l1": {
+   "status": "seed_recipe_failed",
+   "note": "The extracted physical-trough recipe and both native L-1 and aliased L-7 seeds accepted input but never entered a live scoring game.",
+   "tier_penalty": 1
+  },
+  "rct400": {
+   "status": "seed_recipe_failed",
+   "note": "The exact seed exposed credits, but the physical four-ball trough recipe (including a full release ripple) never left attract mode.",
+   "tier_penalty": 1
+  },
+  "term3_2": {
+   "status": "partial_game_over_candidate",
+   "note": "0x0227 bit 0x08 is set in attract and clear from Start through inter-ball states, but automated drains did not reach a confirmed final game-over return.",
+   "tier_penalty": 1
+  },
+  "ffv104": {
+   "status": "no_battery_match_records",
+   "note": "Flipper Football does not persist match results: a real completed 5-player match (Visitors 19:17, 5 personal goals) wrote only audits and champion-style records to battery DRAM - the team score appears nowhere. The Capcom recent-games/final_scores mechanism cannot work; support would need live volatile-RAM fields captured during real play. Credits balance verified at 0x3000291E (not 0x10 like other titles); purchased-credits audit at 0x2FF6 (2 coins/credit factory pricing). Headless matches never start despite credits+START registering (starts even consume credits) - game-start gate unknown.",
+   "tier_penalty": 2
   }
+ }
 }

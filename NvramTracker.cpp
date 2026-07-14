@@ -346,6 +346,7 @@ bool NvramTracker::LoadMap(const string& gameId)
    // Parse game_state descriptors
    m_scoresDesc.clear();
    m_finalScoresDesc.clear();
+   m_finalScoresMostRecentFirst = false;
    m_gameStateDescriptors.clear();
    m_hasRamFields = false;
 
@@ -370,6 +371,10 @@ bool NvramTracker::LoadMap(const string& gameId)
                ResolveDescriptor(d);
                m_finalScoresDesc.push_back(d);
             }
+         }
+         else if (key == "final_scores_order" && value.is_string())
+         {
+            m_finalScoresMostRecentFirst = value.get<string>() == "most_recent_first";
          }
          else if (value.is_object())
          {
@@ -502,12 +507,60 @@ int64_t NvramTracker::Decode(const Descriptor& desc)
    return static_cast<int64_t>(value * desc.scale + desc.offset);
 }
 
-vector<int64_t> NvramTracker::BuildFinalScoresSnapshot(const vector<int64_t>& playerScores)
+vector<int64_t> NvramTracker::BuildFinalScoresSnapshot(const vector<int64_t>& playerScores, bool gameOverObserved, size_t& authoritativeCount)
 {
    vector<int64_t> snapshot = playerScores;
+   authoritativeCount = 0;
    // Without an authoritative frozen copy the live snapshot is the best data available
    if (m_finalScoresDesc.empty())
       return snapshot;
+
+   if (m_finalScoresMostRecentFirst)
+   {
+      // The buffer receives one push per player at game-over; until then it still holds the
+      // previous games, so an unfinished session must fall back to the live snapshot.
+      if (!gameOverObserved)
+         return snapshot;
+      const size_t total = m_finalScoresDesc.size();
+      vector<int64_t> current(total);
+      for (size_t i = 0; i < total; ++i)
+         current[i] = Decode(m_finalScoresDesc[i]);
+      // Player count sources, most to least trusted: the mapped (glitch-filtered) player_count
+      // byte; the number of entries pushed on top of the session-start baseline (the smallest
+      // shift k that turns the baseline into the current list -- k == total always matches, so
+      // a full-depth game terminates there); legacy single-player attribution. Verified on
+      // bbb109 (real 2P and 4P games) and bsv103 (real 4P game, which has no count byte).
+      size_t players = 0;
+      const auto playerCount = m_maxGameStateValues.find("player_count");
+      if (playerCount != m_maxGameStateValues.end() && playerCount->second >= 1)
+         players = std::min(static_cast<size_t>(playerCount->second), total);
+      else if (m_hasFinalScoresBaseline)
+      {
+         for (size_t k = 0; k <= total; ++k)
+         {
+            bool match = true;
+            for (size_t i = k; i < total && match; ++i)
+               match = current[i] == m_finalScoresBaseline[i - k];
+            if (match)
+            {
+               players = k;
+               break;
+            }
+         }
+         // Game-over without a push (the machine records nothing for aborted games):
+         // nothing can be attributed, keep the live snapshot.
+         if (players == 0)
+            return snapshot;
+      }
+      else
+         players = 1;
+      snapshot.assign(players, 0);
+      for (size_t i = 0; i < players; ++i)
+         snapshot[i] = current[players - 1 - i];
+      authoritativeCount = players;
+      return snapshot;
+   }
+
    if (snapshot.size() < m_finalScoresDesc.size())
       snapshot.resize(m_finalScoresDesc.size(), 0);
    for (size_t i = 0; i < m_finalScoresDesc.size(); ++i)
@@ -518,6 +571,7 @@ vector<int64_t> NvramTracker::BuildFinalScoresSnapshot(const vector<int64_t>& pl
    // be a different wrong number instead of an honest "no data".
    for (size_t i = m_finalScoresDesc.size(); i < snapshot.size(); ++i)
       snapshot[i] = 0;
+   authoritativeCount = m_finalScoresDesc.size();
    return snapshot;
 }
 
@@ -535,6 +589,9 @@ bool NvramTracker::Start(const string& gameId, const string& mapsPath, const str
    m_highestScores.clear();
    m_maxGameStateValues.clear();
    m_prevPlayerScores.clear();
+   m_lastPlayerCountRead = -1;
+   m_finalScoresBaseline.clear();
+   m_hasFinalScoresBaseline = false;
    m_hasLastState = false;
    m_gameOverLast = false;
    m_gameOverPending = false;
@@ -560,7 +617,10 @@ void NvramTracker::Stop()
    // fallback. m_playerScores/m_nvram hold the last state read by Poll().
    if (m_monitoringStarted && !m_summarySent && !m_gameId.empty())
    {
-      const vector<int64_t> finalScores = BuildFinalScoresSnapshot(m_playerScores);
+      // A pending (not yet debounce-confirmed) game-over still means the machine already
+      // archived the finished game, so final_scores may be trusted at exit.
+      size_t authoritativeCount = 0;
+      const vector<int64_t> finalScores = BuildFinalScoresSnapshot(m_playerScores, m_gameOverPending, authoritativeCount);
       // The peak scores also count as evidence of a played game: the live reading can already be
       // cleared or unreliable at exit while the recorded peaks hold the real values.
       const bool hasScore = std::any_of(finalScores.begin(), finalScores.end(), [](int64_t value) { return value > 0; })
@@ -568,7 +628,7 @@ void NvramTracker::Stop()
       const bool writeExitFallback = m_hasBeenInPlay && hasScore;
       if (writeExitFallback)
          LOGI("No confirmed game-over before VPX exit; writing the active session as an exit fallback");
-      FinalizeSession(finalScores, writeExitFallback, m_finalScoresDesc.size());
+      FinalizeSession(finalScores, writeExitFallback, authoritativeCount);
       m_summarySent = true;
    }
    m_monitoringStarted = false;
@@ -622,7 +682,9 @@ void NvramTracker::Poll()
             m_playerScores.resize(m_scoresDesc.size());
             for (size_t i = 0; i < m_scoresDesc.size(); ++i)
                m_playerScores[i] = Decode(m_scoresDesc[i]);
-            FinalizeSession(BuildFinalScoresSnapshot(m_playerScores), true, m_finalScoresDesc.size());
+            size_t authoritativeCount = 0;
+            const vector<int64_t> finalScores = BuildFinalScoresSnapshot(m_playerScores, true, authoritativeCount);
+            FinalizeSession(finalScores, true, authoritativeCount);
             m_summarySent = true;
          }
          m_gameOverLast = true;
@@ -676,6 +738,16 @@ void NvramTracker::Poll()
          m_highestScores.clear();
          m_maxGameStateValues.clear();
          m_sessionStartRealTime = std::chrono::steady_clock::now();
+         // Baseline of the most-recent-first buffer: it still holds only previous games until
+         // this game's game-over push, so whatever sits on top of it then was pushed by the
+         // current game -- one entry per player.
+         if (m_finalScoresMostRecentFirst)
+         {
+            m_finalScoresBaseline.resize(m_finalScoresDesc.size());
+            for (size_t i = 0; i < m_finalScoresDesc.size(); ++i)
+               m_finalScoresBaseline[i] = Decode(m_finalScoresDesc[i]);
+            m_hasFinalScoresBaseline = true;
+         }
       }
       m_gameOverLast = false;
       m_hasBeenInPlay = true;
@@ -697,6 +769,17 @@ void NvramTracker::Poll()
          m_highestScores[i] = std::max(m_highestScores[i], m_playerScores[i]);
       for (const auto& [key, val] : m_decodedValues)
       {
+         // player_count drives the final_scores attribution, so one corrupted read must not
+         // poison the session maximum (a real 4-player game recorded a transient 195): accept
+         // only plausible values confirmed by two consecutive polls, and none once game_over
+         // is asserted -- the game-over sequence can reuse that work RAM.
+         if (key == "player_count")
+         {
+            const bool confirmed = val == m_lastPlayerCountRead;
+            m_lastPlayerCountRead = val;
+            if (isGameOver || !confirmed || val < 1 || val > 8)
+               continue;
+         }
          auto it = m_maxGameStateValues.find(key);
          if (it == m_maxGameStateValues.end())
             m_maxGameStateValues[key] = val;
@@ -712,7 +795,9 @@ void NvramTracker::Poll()
       LOGI("Game play for rom %s is over", m_gameId.c_str());
       if (!m_summarySent)
       {
-         FinalizeSession(BuildFinalScoresSnapshot(m_playerScores), true, m_finalScoresDesc.size());
+         size_t authoritativeCount = 0;
+         const vector<int64_t> finalScores = BuildFinalScoresSnapshot(m_playerScores, true, authoritativeCount);
+         FinalizeSession(finalScores, true, authoritativeCount);
          m_summarySent = true;
       }
       m_gameOverLast = true;
