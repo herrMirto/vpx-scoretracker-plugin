@@ -1,0 +1,37 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "ScoreTracker Companion",
+  "version": "0.1.0",
+  "identifier": "com.antigravity.scoretracker.companion",
+  "build": {
+    "beforeDevCommand": "npm run dev",
+    "devUrl": "http://localhost:1420",
+    "beforeBuildCommand": "npm run build",
+    "frontendDist": "../dist"
+  },
+  "app": {
+    "windows": [
+      {
+        "label": "main",
+        "title": "ScoreTracker Companion",
+        "width": 1180,
+        "height": 780,
+        "minWidth": 360,
+        "minHeight": 560,
+        "resizable": true,
+        "fullscreen": false
+      }
+    ],
+    "security": {
+      "csp": "default-src 'self'; connect-src ipc: http://ipc.localhost https://api.vpinplay.com:8888; img-src 'self' data: https://raw.githubusercontent.com; style-src 'self'; font-src 'self'",
+      "devCsp": "default-src 'self' http://localhost:1420; connect-src ipc: http://ipc.localhost http://localhost:1420 ws://localhost:1421 https://api.vpinplay.com:8888; img-src 'self' data: https://raw.githubusercontent.com; style-src 'self'; font-src 'self'"
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": "all",
+    "category": "Entertainment",
+    "shortDescription": "Local game history for the ScoreTracker VPX plugin",
+    "longDescription": "Review personal bests and game history recorded by the ScoreTracker Visual Pinball X plugin."
+  }
+}
