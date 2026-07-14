@@ -13,8 +13,6 @@ env:
   VPINBALL_REPO: https://github.com/vpinball/vpinball.git
   VPINBALL_REF: master
   PINMAME_REPO: https://github.com/vbousquet/pinmame.git
-  # Keep this in sync with PINMAME_SHA in vpinball/platforms/config.sh.
-  PINMAME_SHA: 8b143198c4f07645db39a4cb4cf7f332702673d0
 
 jobs:
   build:
@@ -52,6 +50,19 @@ jobs:
         shell: bash
         run: |
           git clone --depth 1 --branch "${{ env.VPINBALL_REF }}" "${{ env.VPINBALL_REPO }}" vpinball-src
+
+      # Build against the exact libpinmame revision this VPX revision ships with
+      # (same source as platforms/*/external.sh).
+      - name: Determine PinMAME SHA from VPX
+        shell: bash
+        run: |
+          PINMAME_SHA=$(sed -n 's/^PINMAME_SHA=//p' vpinball-src/platforms/config.sh)
+          if [ -z "$PINMAME_SHA" ]; then
+            echo "error: PINMAME_SHA not found in vpinball-src/platforms/config.sh" >&2
+            exit 1
+          fi
+          echo "Using PINMAME_SHA=$PINMAME_SHA"
+          echo "PINMAME_SHA=$PINMAME_SHA" >> "$GITHUB_ENV"
 
       - name: Build PinMAME (Windows)
         if: matrix.platform == 'windows'
@@ -97,7 +108,7 @@ jobs:
         shell: bash
         run: |
           mkdir -p vpinball-src/plugins/scoretracker
-          cp PluginMain.cpp ScoreTracker.cpp ScoreTracker.h B2STracker.cpp B2STracker.h ScoresFileWriter.cpp ScoresFileWriter.h plugin.cfg vpinball-src/plugins/scoretracker/
+          cp ScoreTrackerPlugin.cpp NvramTracker.cpp NvramTracker.h ScoresFileWriter.cpp ScoresFileWriter.h common.cpp common.h plugin.cfg vpinball-src/plugins/scoretracker/
           cp CMakeLists_plugin_ScoreTracker.txt vpinball-src/make/
           cat > vpinball-src/CMakeLists.txt <<'EOF'
           cmake_minimum_required(VERSION 3.19)
@@ -105,8 +116,8 @@ jobs:
           set(CMAKE_CXX_STANDARD 20)
           set(CMAKE_CXX_STANDARD_REQUIRED ON)
           set(BUILD_SHARED ON)
-          set(PluginPlatform "${{ matrix.platform }}")
-          set(PluginArch "${{ matrix.arch }}")
+          set(PLATFORM "${{ matrix.platform }}")
+          set(ARCH "${{ matrix.arch }}")
           set(PLUGINS_DIR "${CMAKE_BINARY_DIR}/plugins_output")
           include("${CMAKE_SOURCE_DIR}/make/CMakeLists_plugin_ScoreTracker.txt")
           EOF
@@ -131,7 +142,7 @@ jobs:
         shell: bash
         run: |
           mkdir -p dist/scoretracker
-          cp vpinball-src/build/plugins_output/scoretracker/* dist/scoretracker/
+          cp -R vpinball-src/build/plugins_output/scoretracker/. dist/scoretracker/
           cd dist
           cmake -E tar cf "scoretracker-plugin-${{ matrix.package }}.zip" --format=zip scoretracker
 
