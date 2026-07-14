@@ -122,8 +122,11 @@ private:
    // Overlays game_state.final_scores onto the live "scores" snapshot (see FinalizeSession)
    // and zeroes out any player slot beyond what final_scores covers -- those live "scores"
    // readings have no authoritative source and don't track real play, so reporting 0 (no data)
-   // beats reporting a different wrong number.
-   vector<int64_t> BuildFinalScoresSnapshot(const vector<int64_t>& playerScores);
+   // beats reporting a different wrong number. Sets authoritativeCount to the number of leading
+   // entries that came from final_scores. gameOverObserved must say whether the machine actually
+   // reached game-over this session: a most-recent-first buffer still holds the previous games
+   // until then and would otherwise be reported for an unfinished session.
+   vector<int64_t> BuildFinalScoresSnapshot(const vector<int64_t>& playerScores, bool gameOverObserved, size_t& authoritativeCount);
    nlohmann::json BuildCompletedGameState() const;
 
    string m_gameId;
@@ -144,6 +147,16 @@ private:
    // Several platforms clear/reuse the live "scores" location as soon as the game ends,
    // so this frozen copy is the only reliable read once game-over is confirmed.
    vector<Descriptor> m_finalScoresDesc;
+   // game_state.final_scores_order == "most_recent_first": final_scores is the machine's
+   // recent-games buffer (Capcom), newest completed entry first, one push per player at
+   // game-over -- not a per-player array. Player i of an N-player game sits at entry N-1-i.
+   bool m_finalScoresMostRecentFirst = false;
+   // Decoded final_scores entries captured when the session enters play. For a
+   // most-recent-first buffer the number of entries pushed on top of this baseline at
+   // game-over IS the player count -- available even on titles with no usable
+   // player_count byte (Breakshot), and immune to count-byte read glitches.
+   vector<int64_t> m_finalScoresBaseline;
+   bool m_hasFinalScoresBaseline = false;
    vector<std::pair<string, Descriptor>> m_gameStateDescriptors;
    bool m_hasRamFields = false;
 
@@ -159,6 +172,9 @@ private:
    vector<int64_t> m_highestScores;
    std::unordered_map<string, int64_t> m_maxGameStateValues;
    vector<int64_t> m_prevPlayerScores;
+   // Last raw player_count reading; a value only enters m_maxGameStateValues after two
+   // consecutive identical reads (see Poll) so a single glitched byte can't stick.
+   int64_t m_lastPlayerCountRead = -1;
    int m_gameOverAnomalies = 0;
    bool m_ignoreGameOver = false;
    bool m_hasLastState = false;
