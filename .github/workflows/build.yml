@@ -16,7 +16,7 @@ env:
   VPINBALL_REF: master
   PINMAME_REPO: https://github.com/vbousquet/pinmame.git
   NVRAM_MAPS_REPO: https://github.com/herrMirto/pinmame-nvram-maps.git
-  NVRAM_MAPS_SHA: e3ec3e8a4c839e85afbdf6ba6538ca0ab46eff41
+  NVRAM_MAPS_SHA: 2d886188712fe434a94910dafeb0cea27d539448
 
 jobs:
   build:
