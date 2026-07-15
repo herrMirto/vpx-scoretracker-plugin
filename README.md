@@ -90,3 +90,12 @@ history produced by this plugin. The companion is versioned and released alongsi
 is operationally independent: score recording never requires the app to be installed or running.
 
 See [`companion/README.md`](companion/README.md) for development instructions and the v1 design.
+
+## Installation
+
+Download the ZIP for your platform from the releases page and run the bundled
+`scoretracker-installer` (a small terminal program; on Windows it is `scoretracker-installer.exe`).
+It asks for your VPinballX location and your tables folder, copies the plugin into VPX's `plugins`
+directory, enables it in `VPinballX.ini`, and records the tables folder so the companion app finds
+your scores on first launch. Manual installation (copying the `scoretracker` folder yourself)
+works exactly as before.

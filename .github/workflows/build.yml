@@ -138,13 +138,29 @@ jobs:
           cmake -S vpinball-src -B vpinball-src/build -DCMAKE_BUILD_TYPE=Release
           cmake --build vpinball-src/build --target ScoreTrackerPlugin --config Release
 
+      - name: Build installer
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Compile installer
+        shell: bash
+        run: cargo build --release --manifest-path installer/Cargo.toml
+
       - name: Create plugin ZIP
         shell: bash
         run: |
           mkdir -p dist/scoretracker
           cp -R vpinball-src/build/plugins_output/scoretracker/. dist/scoretracker/
+          if [ "${{ matrix.platform }}" = windows ]; then
+            cp installer/target/release/scoretracker-installer.exe dist/
+          else
+            cp installer/target/release/scoretracker-installer dist/
+          fi
           cd dist
-          cmake -E tar cf "scoretracker-plugin-${{ matrix.package }}.zip" --format=zip scoretracker
+          if [ "${{ matrix.platform }}" = windows ]; then
+            cmake -E tar cf "scoretracker-plugin-${{ matrix.package }}.zip" --format=zip scoretracker scoretracker-installer.exe
+          else
+            cmake -E tar cf "scoretracker-plugin-${{ matrix.package }}.zip" --format=zip scoretracker scoretracker-installer
+          fi
 
       - name: Upload plugin ZIP
         uses: actions/upload-artifact@v7
