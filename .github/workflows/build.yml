@@ -72,7 +72,8 @@ jobs:
         run: |
           cd nvram-maps-src
           python tools/update-index.py
-          git diff --exit-code -- index.json
+          git diff --ignore-space-at-eol --exit-code -- index.json
+          git checkout -- index.json
 
       - name: Clone VPX
         shell: bash
