@@ -1,8 +1,6 @@
 mod nvram;
 mod scores;
 
-use std::collections::HashMap;
-
 use serde_json::Value;
 
 #[tauri::command]
@@ -40,15 +38,33 @@ fn resolve_maps_root(path: String) -> Result<String, String> {
     nvram::resolve_maps_root(&path)
 }
 
+/// Folder defaults written by the plugin installer (seed.json in the app config dir).
+/// Consumed once on first run, when the user has not picked folders yet.
+#[derive(serde::Serialize)]
+pub struct SeedConfig {
+    #[serde(rename = "tablesRoot")]
+    tables_root: Option<String>,
+    #[serde(rename = "mapsRoot")]
+    maps_root: Option<String>,
+}
+
 #[tauri::command]
-fn save_nvram(
-    tables_root: String,
-    maps_root: String,
-    rom: String,
-    nvram_path: String,
-    changes: HashMap<String, Value>,
-) -> Result<nvram::SaveResult, String> {
-    nvram::save(&tables_root, &maps_root, &rom, &nvram_path, changes)
+fn read_seed_config(app: tauri::AppHandle) -> Option<SeedConfig> {
+    use tauri::Manager;
+    let path = app.path().app_config_dir().ok()?.join("seed.json");
+    let raw = std::fs::read_to_string(path).ok()?;
+    let value: Value = serde_json::from_str(&raw).ok()?;
+    let get = |key: &str| {
+        value
+            .get(key)
+            .and_then(Value::as_str)
+            .filter(|s| !s.is_empty())
+            .map(str::to_owned)
+    };
+    Some(SeedConfig {
+        tables_root: get("tablesRoot"),
+        maps_root: get("mapsRoot"),
+    })
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -59,8 +75,8 @@ pub fn run() {
             scan_scores,
             resolve_vpx_hash,
             resolve_maps_root,
-            load_nvram,
-            save_nvram
+            read_seed_config,
+            load_nvram
         ])
         .run(tauri::generate_context!())
         .expect("error while running ScoreTracker Companion");

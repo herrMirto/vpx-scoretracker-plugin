@@ -1,7 +1,7 @@
 import { invoke } from "@tauri-apps/api/core";
-import { confirm as confirmDialog, open } from "@tauri-apps/plugin-dialog";
+import { open } from "@tauri-apps/plugin-dialog";
 import "./styles.css";
-import type { GameRecord, NvramDocument, NvramField, SaveResult, ScanSnapshot } from "./types";
+import type { GameRecord, NvramDocument, ScanSnapshot } from "./types";
 
 const TABLES_ROOT_KEY = "scoretracker.tablesRoot";
 const MAPS_ROOT_KEY = "scoretracker.mapsRoot";
@@ -67,8 +67,6 @@ let nvram: NvramDocument | null = null;
 let nvramRom = "";
 let nvramBusy = false;
 let nvramError = "";
-let nvramMessage = "";
-let nvramChanges: Record<string, string | number | boolean> = {};
 const tableMedia = new Map<string, TableMedia>();
 let mediaGeneration = "";
 let foldersOpen = false;
@@ -179,8 +177,7 @@ function renderOverview(tableList: TableHistory[]): string {
   const games = snapshot?.games ?? [];
   const totalTime = games.reduce((sum, game) => sum + (game.gameDuration ?? 0), 0);
 
-  return `<section class="overview-title"><h1>VPX Score Tracker</h1></section>
-    <section class="stats" aria-label="History summary">
+  return `<section class="stats" aria-label="History summary">
       ${stat("Completed games", number(games.length), "Valid scores recorded")}
       ${stat("Played tables", number(tableList.length), "Unique ROMs")}
       ${stat("Tables found", number(snapshot?.vpxFilesFound ?? 0), "VPX files discovered")}
@@ -417,7 +414,6 @@ function renderTableDetail(table: TableHistory): string {
       <div class="panel-heading"><div><p class="eyebrow">Progress</p><h2>Score journey</h2></div><span>${targets.length} ${targets.length === 1 ? "threshold" : "high-score thresholds"}</span></div>
       <div class="progress-layout">${renderProgressChart(table, targets)}${renderChartLeaderboard(targets)}</div>
     </section>
-    ${renderNvramManager(table)}
     <section class="panel history-panel full-history"><div class="panel-heading"><div><p class="eyebrow">Every result</p><h2>Score history</h2></div><span>${table.entries.length} scores</span></div>${renderScoreHistory(table.entries)}</section>`;
 }
 
@@ -465,7 +461,8 @@ function renderProgressChart(table: TableHistory, targets: ChartTarget[]): strin
 function renderChartLeaderboard(targets: ChartTarget[]): string {
   const machineTargets = targets.filter((target) => target.rank > 0);
   if (!machineTargets.length) {
-    return `<aside class="chart-leaderboard chart-leaderboard-empty"><p class="eyebrow">Leaderboard</p><strong>Personal record</strong><span>Machine high scores appear here when mapped NVRAM is available.</span></aside>`;
+    const status = nvramBusy ? "Reading machine scores…" : nvramError ? "Machine scores are unavailable for this table." : "Machine high scores appear here when mapped NVRAM is available.";
+    return `<aside class="chart-leaderboard chart-leaderboard-empty"><p class="eyebrow">Leaderboard</p><strong>Personal record</strong><span>${esc(status)}</span></aside>`;
   }
   return `<aside class="chart-leaderboard" aria-label="Machine leaderboard">
     <div class="leaderboard-heading"><div><p class="eyebrow">Machine board</p><h3>High scores</h3></div><span>From NVRAM</span></div>
@@ -481,44 +478,6 @@ function trophyIcon(rank: number): string {
   return `<svg class="trophy trophy-${rank}" viewBox="0 0 24 24" role="img" aria-label="${rank === 1 ? "Gold" : rank === 2 ? "Silver" : "Bronze"} trophy">
     <path d="M7 2h10v3h3v4c0 3-1.8 5-5 5h-.2c-.7 1-1.7 1.7-2.8 2v2h4v2H8v-2h4v-2c-1.1-.3-2.1-1-2.8-2H9c-3.2 0-5-2-5-5V5h3V2Zm0 5H6v2c0 1.4.7 2.4 2.1 2.8A9.8 9.8 0 0 1 7 7Zm10 0a9.8 9.8 0 0 1-1.1 4.8C17.3 11.4 18 10.4 18 9V7h-1Z"></path>
   </svg>`;
-}
-
-function renderNvramManager(table: TableHistory): string {
-  if (nvramBusy || nvramRom !== table.rom) {
-    return `<section class="panel nvram-panel nvram-loading"><strong>Reading machine NVRAM…</strong><span>Matching ${esc(table.rom)} with the installed maps.</span></section>`;
-  }
-  if (nvramError) {
-    return `<section class="panel nvram-panel nvram-connect"><div class="nvram-connect-copy"><p class="eyebrow">Machine data unavailable</p><h2>NVRAM could not be loaded</h2><p>${esc(nvramError)} Folder configuration is available from <strong>Folders</strong> in the top bar.</p></div></section>`;
-  }
-  if (!nvram) {
-    return `<section class="panel nvram-panel nvram-connect"><div class="nvram-connect-copy"><p class="eyebrow">Machine data</p><h2>No matching NVRAM file</h2><p>The companion looked inside this table for <code>${esc(table.rom)}.nv</code>. Score history remains available.</p></div></section>`;
-  }
-
-  const changed = Object.keys(nvramChanges).length;
-  const checksum = nvram.checksumsValid === null ? "No checksum map" : nvram.checksumsValid ? "Checksums valid" : "Checksum mismatch";
-  return `<section class="panel nvram-panel">
-    <div class="panel-heading nvram-heading"><div><p class="eyebrow">Table NVRAM</p><h2>Table data & settings</h2></div><div class="nvram-meta"><span class="checksum ${nvram.checksumsValid === false ? "invalid" : ""}">${esc(checksum)}</span></div></div>
-    <div class="nvram-source"><span><small>File</small><code>${esc(nvram.path)}</code></span><span><small>Map</small><code>${esc(nvram.mapPath)}</code></span></div>
-    ${nvramMessage ? `<div class="nvram-message" role="status">${esc(nvramMessage)}</div>` : ""}
-    ${nvram.writeWarning ? `<div class="nvram-warning">${esc(nvram.writeWarning)}</div>` : ""}
-    <div class="nvram-body">
-      ${nvram.fields.length ? `<details class="machine-settings"><summary><span><strong>Table settings</strong><small>Credits, volume, free play, and other mapped values</small></span><span class="settings-disclosure"><span>View ${nvram.fields.length} fields</span><span class="disclosure-chevron" aria-hidden="true">⌄</span></span></summary><div class="settings-grid">${nvram.fields.map(renderNvramField).join("")}</div></details>` : `<div class="nvram-empty">This map does not expose editable table settings.</div>`}
-    </div>
-    ${nvram.writable ? `<div class="nvram-save ${changed ? "has-changes" : ""}"><span>${changed ? `${changed} unsaved change${changed === 1 ? "" : "s"}` : "Edit a mapped value to enable saving"}</span><div><button id="discard-nvram" class="button secondary" type="button" ${changed ? "" : "disabled"}>Discard</button><button id="save-nvram" class="button primary" type="button" ${changed ? "" : "disabled"}>Save NVRAM</button></div></div>` : ""}
-  </section>`;
-}
-
-function renderNvramField(field: NvramField): string {
-  const value = changedValue(field.id, field.value);
-  const limits = [field.min !== null ? `min ${field.min}` : "", field.max !== null ? `max ${field.max}` : ""].filter(Boolean).join(" · ");
-  const control = field.encoding === "bool"
-    ? `<input type="checkbox" data-nvram-field="${esc(field.id)}" ${Boolean(value) ? "checked" : ""} ${field.writable ? "" : "disabled"}>`
-    : `<input type="${field.encoding === "ch" ? "text" : "number"}" value="${esc(value)}" data-nvram-field="${esc(field.id)}" ${field.min !== null ? `min="${field.min}"` : ""} ${field.max !== null ? `max="${field.max}"` : ""} ${field.encoding === "ch" ? `maxlength="${field.length}"` : ""} ${field.writable ? "" : "disabled"}>`;
-  return `<label class="setting-field"><span><strong>${esc(field.label)}</strong><small>${esc(field.encoding)}${limits ? ` · ${esc(limits)}` : ""}</small></span>${control}</label>`;
-}
-
-function changedValue(id: string | null, fallback: string | number | boolean): string | number | boolean {
-  return id && Object.hasOwn(nvramChanges, id) ? nvramChanges[id] : fallback;
 }
 
 function renderScoreHistory(entries: ScoreEntry[]): string {
@@ -603,11 +562,6 @@ function wireEvents(): void {
   document.querySelector("#home")?.addEventListener("click", goHome);
   document.querySelector("#back")?.addEventListener("click", goHome);
   document.querySelectorAll("#choose-maps-root").forEach((element) => element.addEventListener("click", chooseMapsRoot));
-  document.querySelector("#discard-nvram")?.addEventListener("click", discardNvramChanges);
-  document.querySelector("#save-nvram")?.addEventListener("click", saveNvramChanges);
-  document.querySelectorAll<HTMLInputElement>("[data-nvram-field]").forEach((input) => {
-    input.addEventListener(input.type === "checkbox" ? "change" : "input", () => handleNvramInput(input));
-  });
   document.querySelectorAll<HTMLElement>("[data-rom]").forEach((element) => element.addEventListener("click", () => {
     location.hash = `#/table/${encodeURIComponent(element.dataset.rom ?? "")}`;
   }));
@@ -674,8 +628,6 @@ async function chooseMapsRoot(): Promise<void> {
   nvram = null;
   nvramRom = "";
   nvramError = "";
-  nvramMessage = "";
-  nvramChanges = {};
   if (localStorage.getItem(TABLES_ROOT_KEY)) await scanConfiguredRoot();
   else render();
 }
@@ -685,7 +637,6 @@ async function ensureNvram(table: TableHistory, tablesRoot: string, mapsRoot: st
   nvramRom = table.rom;
   nvram = null;
   nvramError = "";
-  nvramChanges = {};
   nvramBusy = true;
   render();
   try {
@@ -699,80 +650,6 @@ async function ensureNvram(table: TableHistory, tablesRoot: string, mapsRoot: st
     nvramError = error instanceof Error ? error.message : String(error);
   } finally {
     nvramBusy = false;
-    render();
-  }
-}
-
-function originalNvramValue(id: string): string | number | boolean | undefined {
-  if (!nvram) return undefined;
-  const field = nvram.fields.find((candidate) => candidate.id === id);
-  if (field) return field.value;
-  for (const entry of nvram.highScores) {
-    if (entry.initialsFieldId === id) return entry.initials;
-    if (entry.scoreFieldId === id) return entry.score;
-  }
-  return undefined;
-}
-
-function handleNvramInput(input: HTMLInputElement): void {
-  const id = input.dataset.nvramField;
-  if (!id) return;
-  let value: string | number | boolean = input.type === "checkbox" ? input.checked : input.value;
-  if (input.type === "text" && id.endsWith(".initials")) {
-    value = input.value.toUpperCase();
-    input.value = value;
-  }
-  const original = originalNvramValue(id);
-  const comparableOriginal = id.endsWith(".score") ? String(original).replaceAll(",", "") : String(original);
-  const comparableValue = id.endsWith(".score") ? String(value).replaceAll(",", "") : String(value);
-  if (comparableOriginal === comparableValue) delete nvramChanges[id];
-  else nvramChanges[id] = value;
-  updateSaveControls();
-}
-
-function updateSaveControls(): void {
-  const count = Object.keys(nvramChanges).length;
-  const save = document.querySelector<HTMLButtonElement>("#save-nvram");
-  const discard = document.querySelector<HTMLButtonElement>("#discard-nvram");
-  const bar = document.querySelector<HTMLElement>(".nvram-save");
-  if (!save || !discard || !bar) return;
-  save.disabled = count === 0;
-  discard.disabled = count === 0;
-  bar.classList.toggle("has-changes", count > 0);
-  const label = bar.querySelector("span");
-  if (label) label.textContent = count ? `${count} unsaved change${count === 1 ? "" : "s"}` : "Edit a mapped value to enable saving";
-}
-
-function discardNvramChanges(): void {
-  nvramChanges = {};
-  nvramMessage = "Changes discarded.";
-  render();
-}
-
-async function saveNvramChanges(): Promise<void> {
-  if (!nvram || !Object.keys(nvramChanges).length) return;
-  const tablesRoot = localStorage.getItem(TABLES_ROOT_KEY);
-  const mapsRoot = localStorage.getItem(MAPS_ROOT_KEY);
-  if (!tablesRoot || !mapsRoot) return;
-  const approved = await confirmDialog("Close this table in VPX before saving. ScoreTracker Companion will create a timestamped backup beside the NVRAM file before applying your changes.", {
-    title: "Save machine NVRAM?",
-    kind: "warning",
-  });
-  if (!approved) return;
-  try {
-    const result = await invoke<SaveResult>("save_nvram", {
-      tablesRoot,
-      mapsRoot,
-      rom: nvram.rom,
-      nvramPath: nvram.path,
-      changes: nvramChanges,
-    });
-    nvramMessage = `Saved successfully. Backup: ${result.backupPath}`;
-    nvramChanges = {};
-    nvramRom = "";
-    render();
-  } catch (error) {
-    nvramMessage = `Save failed: ${error instanceof Error ? error.message : String(error)}`;
     render();
   }
 }
@@ -810,6 +687,21 @@ window.addEventListener("keydown", (event) => {
   if (event.key === "Escape" && foldersOpen) closeFolders();
 });
 async function initialize(): Promise<void> {
+  // First run: adopt the folder defaults written by the plugin installer, if any.
+  if (!localStorage.getItem(TABLES_ROOT_KEY) || !localStorage.getItem(MAPS_ROOT_KEY)) {
+    try {
+      const seed = await invoke<{ tablesRoot: string | null; mapsRoot: string | null } | null>("read_seed_config");
+      if (seed?.tablesRoot && !localStorage.getItem(TABLES_ROOT_KEY)) {
+        localStorage.setItem(TABLES_ROOT_KEY, seed.tablesRoot);
+      }
+      if (seed?.mapsRoot && !localStorage.getItem(MAPS_ROOT_KEY)) {
+        localStorage.setItem(MAPS_ROOT_KEY, seed.mapsRoot);
+      }
+    } catch {
+      // no seed available; the setup screen will ask for folders
+    }
+  }
+
   const selectedMapsRoot = localStorage.getItem(MAPS_ROOT_KEY);
   if (selectedMapsRoot) {
     try {
