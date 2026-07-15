@@ -726,14 +726,52 @@ void NvramTracker::Poll()
       isGameOver = false;
    m_prevPlayerScores = m_playerScores;
 
+   // A new game zeroes the score area, and that is the only unambiguous session boundary
+   // available here: game_over also deasserts when a ball merely relaunches after the
+   // end-of-ball bonus, which is why confirming it needs kGameOverConfirmSeconds. Starting the
+   // next game inside that window -- routine between back-to-back games -- deasserts game_over
+   // and cancels the pending confirmation below, so the finished game is never confirmed, never
+   // written, and never resets the session: its peak scores and player_count then bleed into the
+   // new game. Observed on afm_113b, where two games were reported as one record and a 1-player
+   // game carried the previous 2-player game's player 2 score with player_count 2.
+   // Scoped to !isGameOver because several platforms clear the live "scores" as part of the
+   // game-over sequence (the reason final_scores exists); that clear is not a new game.
+   bool newGameStarted = false;
+   if (!isGameOver && m_hasBeenInPlay && !m_playerScores.empty())
+   {
+      const bool allZero = std::all_of(m_playerScores.begin(), m_playerScores.end(), [](int64_t value) { return value == 0; });
+      const bool hadScore = std::any_of(m_highestScores.begin(), m_highestScores.end(), [](int64_t value) { return value > 0; });
+      newGameStarted = allZero && hadScore;
+   }
+
+   if (newGameStarted)
+   {
+      // Persist the finished game before the new one overwrites its state. The ROM has already
+      // cleared the live scores, so the peaks in m_highestScores are the only copy left;
+      // FinalizeSession merges them in. A span too short to be a real game is still dropped by
+      // its minimum-duration guard.
+      if (!m_summarySent)
+      {
+         LOGI("New game started for rom %s before the previous game-over was confirmed; finalizing the previous game", m_gameId.c_str());
+         size_t authoritativeCount = 0;
+         const vector<int64_t> finalScores = BuildFinalScoresSnapshot(m_playerScores, m_gameOverPending, authoritativeCount);
+         FinalizeSession(finalScores, true, authoritativeCount);
+         m_summarySent = true;
+      }
+      // Re-arm so the reset below starts a clean session for the game that just began.
+      m_hasBeenInPlay = false;
+   }
+
    // Raw lifecycle flags can briefly toggle during display and ball-state transitions. Only
    // confirm game-over after it remains asserted for the confirmation delay; a transient must
    // never finalize or reset a session.
+   bool sessionReset = false;
    if (!isGameOver)
    {
       m_gameOverPending = false;
       if (!m_hasBeenInPlay)
       {
+         sessionReset = true;
          m_summarySent = false;
          m_highestScores.clear();
          m_maxGameStateValues.clear();
@@ -760,8 +798,12 @@ void NvramTracker::Poll()
 
    // Update statistics only after a game has actually entered play. Scores retained in NVRAM
    // during attract mode belong to the previous game and must not become the next session's
-   // highest score.
-   if (m_hasBeenInPlay)
+   // highest score. The poll that starts a session is skipped as well: its values were decoded
+   // at the top of this call, before the reset above, so they can still be the previous game's.
+   // On WPC the game_over byte clears on the start-button press, a moment before the ROM zeroes
+   // the score area and player_count -- folding that read back in would re-seed the accumulators
+   // the reset just cleared, and max() can never walk them back down.
+   if (m_hasBeenInPlay && !sessionReset)
    {
       if (m_highestScores.size() < m_playerScores.size())
          m_highestScores.resize(m_playerScores.size(), 0);
