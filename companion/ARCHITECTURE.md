@@ -19,7 +19,7 @@ VPX + ScoreTracker plugin
         v
 Configured tables directory
         |
-        | read history; explicitly confirmed NVRAM edits
+        | read history and machine high scores
         v
 Rust scanner and decoders
         |
@@ -40,7 +40,6 @@ Responsive desktop frontend
 - Let the user select one or more VPX tables roots without assuming platform-specific paths.
 - Discover and parse supported `scores.json` files without modifying them.
 - Decode supported NVRAM leaderboard data through a dedicated Rust module.
-- Let the user inspect and edit map-defined NVRAM values on supported platforms.
 - Derive history, personal bests, trends, play counts, play time, and target progress.
 - Resolve optional table metadata through VPinPlay and display wheel artwork from VPinMediaDB.
 - Present useful partial results when individual files or ROM maps are invalid or unsupported.
@@ -49,8 +48,7 @@ Responsive desktop frontend
 
 - Live score display or communication with a running VPX process.
 - Writing, repairing, or migrating plugin history automatically.
-- Editing NVRAM while VPX is running, or writing platforms whose mirrored storage rules are not yet
-  implemented safely.
+- Writing, repairing, or changing NVRAM files.
 - Accounts, cloud synchronization, social leaderboards, or score submission.
 - Multiple local player profiles or assigning multiplayer slots to people.
 - A LAN HTTP server. The frontend remains responsive so cabinet/browser mode can be added later.
@@ -74,19 +72,15 @@ NVRAM parsing is isolated from score history parsing. It consumes the same pinne
 with ScoreTracker, but map discovery must not depend on the plugin being installed in a particular
 directory. Release builds may embed or install one canonical map bundle for both products.
 
-The selected NVRAM file remains the source of truth for the machine leaderboard and mapped machine
-settings. A save updates only fields represented by the active ROM map, recalculates declared
-checksums, and creates a timestamped sibling backup before replacing any bytes.
+The selected NVRAM file remains the read-only source of truth for the machine leaderboard. The
+companion exposes no NVRAM write command and does not decode unrelated machine settings.
 
 ## Security model
 
 - Rust performs filesystem access; the webview does not receive unrestricted filesystem APIs.
 - The user explicitly chooses the tables root using a native directory picker.
 - Scan commands canonicalize the selected root, do not follow directory symlinks, and are read-only.
-- NVRAM writes require an explicit confirmation, are restricted to a file inside the selected
-  tables root, and always create a backup first.
-- Platforms with mirrored or platform-specific write semantics remain read-only until those rules
-  have focused test coverage.
+- NVRAM access is read-only and limited to decoding mapped machine high scores.
 - No network listener is started in v1.
 - Outbound access is restricted to the VPinPlay API and static wheel images hosted by VPinMediaDB
   on GitHub. No remote content is executed in the webview.

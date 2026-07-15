@@ -56,10 +56,9 @@ suitable for a future cabinet mode without requiring a separate frontend.
 - **COMP-034:** Unsupported or missing NVRAM maps do not hide ordinary game history.
 - **COMP-035:** The table detail view shows the machine's persisted high-score entries decoded from
   the matching `.nv` file rather than treating personal history as the machine leaderboard.
-- **COMP-036:** The user can inspect and edit map-defined NVRAM fields on supported platforms.
-- **COMP-037:** Saving NVRAM requires confirmation that VPX is closed, creates a timestamped backup,
-  updates declared checksums, and never modifies `scores.json`.
-- **COMP-038:** Unsupported write semantics produce a read-only view with a clear explanation.
+- **COMP-036:** NVRAM access is read-only and limited to mapped machine high scores.
+- **COMP-037:** The companion exposes no command or interface that modifies `.nv` files.
+- **COMP-038:** NVRAM decoding failures do not prevent personal score history from loading.
 - **COMP-039:** The table detail header uses the same resolved wheel and canonical table identity as
   the overview without allowing remote media failure to hide score history.
 
@@ -92,8 +91,7 @@ suitable for a future cabinet mode without requiring a separate frontend.
 - **COMP-063:** The layout remains usable at desktop and cabinet-oriented resolutions.
 - **COMP-064:** Accessibility basics include keyboard navigation, visible focus, semantic controls,
   sufficient contrast, and reduced-motion support.
-- **COMP-065:** NVRAM write commands reject files outside the configured tables root and fields not
-  registered by the selected ROM map.
+- **COMP-065:** NVRAM lookup remains restricted to files inside the configured tables root.
 
 ## Deferred features
 
@@ -103,8 +101,7 @@ suitable for a future cabinet mode without requiring a separate frontend.
 - LAN, phone, or remote-browser access.
 - Automatic updater activation; the architecture must allow signed updates later.
 - Editing, deleting, or annotating source game records.
-- Writing Gottlieb System 80 and System 3 NVRAM until mirrored storage rules are implemented and
-  covered by focused tests.
+- Editing NVRAM files.
 
 ## Initial scaffold acceptance
 

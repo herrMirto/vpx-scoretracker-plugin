@@ -203,48 +203,6 @@ h1 { margin: 0; font: 750 clamp(39px, 6vw, 68px)/.98 var(--display-font); letter
 .modal-close { width: 38px; height: 38px; display: grid; place-items: center; color: var(--text); background: var(--surface); border: 1px solid var(--border); border-radius: 3px; cursor: pointer; font-size: 25px; line-height: 1; }
 .modal-close:hover { background: var(--surface-raised); border-color: var(--faint); }
 
-.nvram-panel { margin-top: 18px; border-top: 3px solid var(--chrome); }
-.nvram-connect { padding: 28px; display: flex; align-items: center; justify-content: space-between; gap: 28px; }
-.nvram-connect-copy h2 { margin: 0 0 9px; font: 750 22px/1.1 var(--display-font); }
-.nvram-connect-copy > p:last-child { max-width: 700px; margin: 0; color: var(--muted); line-height: 1.55; }
-.nvram-loading { min-height: 130px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 7px; }
-.nvram-loading span { color: var(--muted); font-size: 12px; }
-.nvram-heading { gap: 20px; }
-.nvram-meta { display: flex; align-items: center; justify-content: flex-end; flex-wrap: wrap; gap: 14px; }
-.checksum { padding: 5px 9px; color: var(--green); background: #eef8f3; border: 1px solid #9bcbb3; border-radius: 2px; font-size: 9px; font-weight: 800; letter-spacing: .04em; }
-.checksum.invalid { color: #8a2b1f; background: #fff2ef; border-color: #d99a91; }
-.text-button { padding: 0; color: var(--accent); background: none; border: 0; cursor: pointer; font-size: 10px; font-weight: 800; letter-spacing: .035em; }
-.nvram-source { padding: 12px 22px; display: grid; grid-template-columns: 1fr 1fr; gap: 22px; background: var(--surface-soft); border-bottom: 1px solid var(--border); }
-.nvram-source > span { min-width: 0; display: flex; flex-direction: column; gap: 5px; }
-.nvram-source small { color: var(--muted); font-size: 9px; letter-spacing: .04em; }
-.nvram-source code { overflow: hidden; color: #5d666a; font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
-.nvram-message, .nvram-warning { margin: 14px 20px 0; padding: 11px 13px; border-radius: 2px; font-size: 11px; line-height: 1.5; }
-.nvram-message { color: #176943; background: #eef8f3; border: 1px solid #9bcbb3; }
-.nvram-warning { color: #674a08; background: #fff9e8; border: 1px solid #d8bd72; }
-.nvram-body { padding: 24px; }
-.setting-field input { min-width: 0; width: 100%; padding: 9px 10px; color: var(--text); background: #ffffff; border: 1px solid #aeb5b8; border-radius: 2px; font: 700 13px ui-monospace, SFMono-Regular, Menlo, monospace; }
-.setting-field input:disabled { opacity: .58; }
-.machine-settings { border: 1px solid var(--border); }
-.machine-settings summary { min-height: 66px; padding: 13px 16px; display: flex; align-items: center; justify-content: space-between; gap: 16px; cursor: pointer; list-style: none; transition: background .15s ease; }
-.machine-settings summary:hover { background: var(--surface-raised); }
-.machine-settings summary::-webkit-details-marker { display: none; }
-.machine-settings summary > span:first-child { display: flex; flex-direction: column; gap: 5px; }
-.machine-settings summary small, .machine-settings summary > span:last-child { color: var(--muted); font-size: 10px; }
-.settings-disclosure { display: flex; align-items: center; gap: 10px; font-weight: 800; letter-spacing: .035em; }
-.disclosure-chevron { width: 25px; height: 25px; display: grid; place-items: center; color: var(--text); background: var(--surface-raised); border: 1px solid var(--border); border-radius: 50%; font-size: 17px; line-height: 1; transition: transform .15s ease; }
-.machine-settings[open] .disclosure-chevron { transform: rotate(180deg); }
-.settings-grid { padding: 14px; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; border-top: 1px solid var(--border); }
-.setting-field { min-height: 62px; padding: 10px 12px; display: grid; grid-template-columns: minmax(120px, 1fr) 120px; align-items: center; gap: 12px; background: var(--surface-soft); border-left: 2px solid var(--border); }
-.setting-field > span { display: flex; flex-direction: column; gap: 4px; }
-.setting-field strong { font-size: 12px; }
-.setting-field small { color: var(--muted); font-size: 9px; }
-.setting-field input[type="checkbox"] { justify-self: end; width: 20px; height: 20px; accent-color: var(--chrome); }
-.nvram-save { min-height: 70px; padding: 13px 20px; display: flex; align-items: center; justify-content: space-between; gap: 18px; background: var(--surface-soft); border-top: 1px solid var(--border); }
-.nvram-save.has-changes { border-left: 4px solid var(--accent); }
-.nvram-save > span { color: var(--muted); font-size: 11px; }
-.nvram-save > div { display: flex; gap: 9px; }
-.nvram-empty { padding: 35px; color: var(--muted); border: 1px dashed var(--border); text-align: center; }
-
 @media (max-width: 900px) {
   .stats { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .stats article { border-bottom: 1px solid var(--border); }
@@ -256,7 +214,6 @@ h1 { margin: 0; font: 750 clamp(39px, 6vw, 68px)/.98 var(--display-font); letter
   .progress-layout { grid-template-columns: 1fr; }
   .chart-wrap { border-right: 0; border-bottom: 1px solid var(--border); }
   .chart-leaderboard ol { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); column-gap: 20px; }
-  .settings-grid { grid-template-columns: 1fr; }
 }
 
 @media (max-width: 600px) {
@@ -282,13 +239,8 @@ h1 { margin: 0; font: 750 clamp(39px, 6vw, 68px)/.98 var(--display-font); letter
   .folder-row { grid-template-columns: 36px minmax(0, 1fr); padding: 20px 16px; gap: 14px; }
   .folder-row .button { grid-column: 2; justify-self: start; }
   .setup-ready { align-items: flex-start; flex-direction: column; }
-  .nvram-connect, .nvram-save { align-items: flex-start; flex-direction: column; }
-  .nvram-source { grid-template-columns: 1fr; }
-  .nvram-body { padding: 14px; }
   .chart-leaderboard { padding: 16px; }
   .chart-leaderboard ol { grid-template-columns: 1fr; }
-  .nvram-save > div { width: 100%; }
-  .nvram-save .button { flex: 1; }
 }
 
 @media (prefers-reduced-motion: reduce) {
