@@ -24,7 +24,7 @@ set(SCORETRACKER_PLUGIN_SOURCES
 # offline; the plugin then relies on its nvram_maps_folder setting.
 option(SCORETRACKER_FETCH_MAPS "Download the PinMAME NVRAM maps shipped with the ScoreTracker plugin" ON)
 set(SCORETRACKER_MAPS_REPO "https://github.com/herrMirto/pinmame-nvram-maps")
-set(SCORETRACKER_MAPS_SHA "e3ec3e8a4c839e85afbdf6ba6538ca0ab46eff41")
+set(SCORETRACKER_MAPS_SHA "2d886188712fe434a94910dafeb0cea27d539448")
 set(SCORETRACKER_MAPS_DIR "${CMAKE_BINARY_DIR}/external/pinmame-nvram-maps-${SCORETRACKER_MAPS_SHA}")
 
 if(BUILD_SHARED AND SCORETRACKER_FETCH_MAPS AND NOT EXISTS "${SCORETRACKER_MAPS_DIR}/index.json")
