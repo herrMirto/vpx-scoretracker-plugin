@@ -8,30 +8,57 @@
     <link rel="stylesheet" href="styles.css">
   </head>
   <body>
-    <header class="topbar">
-      <a class="brand" href="#top" aria-label="VPX Score Tracker home">
-        <span class="brand-mark" aria-hidden="true"></span>
-        <span>VPX Score Tracker</span>
+    <aside class="sidebar">
+      <a class="brand" href="#overview" aria-label="VPX Score Tracker home">
+        <span class="brand-mark" aria-hidden="true"><i></i><i></i><i></i></span>
+        <span>VPX<br>Score Tracker</span>
       </a>
-      <a class="quiet-link" href="https://github.com/herrMirto/vpx-scoretracker-plugin">GitHub</a>
-    </header>
 
-    <main id="top">
-      <section class="hero">
-        <p class="eyebrow">Local scores. Your cabinet.</p>
-        <h1>Keep every pinball score.</h1>
-        <p class="intro">Score Tracker records completed PinMAME games and turns them into a clean, local history.</p>
-        <div class="hero-actions">
-          <a class="button primary" href="https://github.com/herrMirto/vpx-scoretracker-plugin/releases/latest">Download latest release</a>
-          <span>Windows · Linux · macOS</span>
+      <nav aria-label="Page navigation">
+        <p>Get started</p>
+        <a class="active" href="#overview"><span>01</span> Overview</a>
+        <a href="#install"><span>02</span> Installation</a>
+        <a href="#companion"><span>03</span> Companion</a>
+      </nav>
+
+      <div class="sidebar-footer">
+        <span class="status-dot" aria-hidden="true"></span>
+        <span>Windows · Linux · macOS</span>
+        <a href="https://github.com/herrMirto/vpx-scoretracker-plugin">View on GitHub ↗</a>
+      </div>
+    </aside>
+
+    <main>
+      <section class="hero" id="overview">
+        <div class="hero-copy">
+          <p class="eyebrow">The simple score history for VPX</p>
+          <h1>Every game.<br><span>Every score.</span></h1>
+          <p class="intro">Score Tracker records completed PinMAME games and turns them into a clean, local history.</p>
+          <a class="button" href="https://github.com/herrMirto/vpx-scoretracker-plugin/releases/latest">
+            Download latest release
+            <span aria-hidden="true">↓</span>
+          </a>
+        </div>
+
+        <div class="score-preview" aria-label="Example score history">
+          <div class="preview-top"><span>Recent scores</span><span>AFM</span></div>
+          <div class="preview-score"><small>Personal best</small><strong>4,810,760,200</strong></div>
+          <svg viewBox="0 0 520 170" role="img" aria-label="An example score chart rising over five games">
+            <path class="grid" d="M0 30H520M0 85H520M0 140H520"></path>
+            <path class="area" d="M0 136 L95 117 L198 128 L305 77 L410 92 L520 24 L520 170 L0 170 Z"></path>
+            <path class="line" d="M0 136 L95 117 L198 128 L305 77 L410 92 L520 24"></path>
+            <g class="points"><circle cx="0" cy="136" r="5"></circle><circle cx="95" cy="117" r="5"></circle><circle cx="198" cy="128" r="5"></circle><circle cx="305" cy="77" r="5"></circle><circle cx="410" cy="92" r="5"></circle><circle cx="520" cy="24" r="5"></circle></g>
+          </svg>
+          <div class="preview-bottom"><span>Game 01</span><span>Game 06</span></div>
         </div>
       </section>
 
-      <section class="install" aria-labelledby="install-title">
-        <div class="section-title">
-          <p class="eyebrow">TL;DR</p>
-          <h2 id="install-title">Install in three steps</h2>
+      <section class="install" id="install" aria-labelledby="install-title">
+        <div class="section-heading">
+          <div><p class="eyebrow">Quick setup</p><h2 id="install-title">Install in three steps</h2></div>
+          <p>No terminal commands.<br>No account required.</p>
         </div>
+
         <ol class="steps">
           <li>
             <span class="number">01</span>
@@ -43,23 +70,23 @@
           </li>
           <li>
             <span class="number">03</span>
-            <div><h3>Play</h3><p>Finish a supported PinMAME game. Your scores are recorded automatically.</p></div>
+            <div><h3>Play</h3><p>Finish a supported PinMAME game. Your score is recorded automatically.</p></div>
           </li>
         </ol>
       </section>
 
-      <section class="done">
+      <section class="companion" id="companion">
+        <p class="eyebrow">Companion app</p>
         <div>
-          <p class="eyebrow">That’s it</p>
-          <h2>Open the companion and follow your progress.</h2>
+          <h2>Your pinball history,<br>without the clutter.</h2>
+          <p>Browse tables, see every recorded game, and follow your best scores over time. Everything stays on your machine.</p>
         </div>
-        <p>Your history stays on your machine. No account, cloud, or score submission.</p>
       </section>
-    </main>
 
-    <footer>
-      <span>VPX Score Tracker</span>
-      <span>Independent third-party plugin for Visual Pinball X</span>
-    </footer>
+      <footer>
+        <span>VPX Score Tracker</span>
+        <span>Independent third-party plugin for Visual Pinball X</span>
+      </footer>
+    </main>
   </body>
 </html>
