@@ -173,6 +173,10 @@ jobs:
       - name: Build installer
         uses: dtolnay/rust-toolchain@stable
 
+      - name: Test installer
+        shell: bash
+        run: cargo test --manifest-path installer/Cargo.toml
+
       - name: Compile installer
         shell: bash
         run: cargo build --release --manifest-path installer/Cargo.toml
@@ -190,12 +194,22 @@ jobs:
             > dist/scoretracker/maps/source.json
           if [ "${{ matrix.platform }}" = windows ]; then
             cp installer/target/release/scoretracker-installer.exe dist/
+          elif [ "${{ matrix.platform }}" = macos ]; then
+            APP="dist/ScoreTracker Installer.app"
+            mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
+            cp installer/target/release/scoretracker-installer "$APP/Contents/MacOS/"
+            cp installer/macos/Info.plist "$APP/Contents/"
+            cp -R dist/scoretracker "$APP/Contents/Resources/"
+            chmod +x "$APP/Contents/MacOS/scoretracker-installer"
+            codesign --force --deep --sign - "$APP"
           else
             cp installer/target/release/scoretracker-installer dist/
           fi
           cd dist
           if [ "${{ matrix.platform }}" = windows ]; then
             cmake -E tar cf "scoretracker-plugin-${{ matrix.package }}.zip" --format=zip scoretracker scoretracker-installer.exe
+          elif [ "${{ matrix.platform }}" = macos ]; then
+            cmake -E tar cf "scoretracker-plugin-${{ matrix.package }}.zip" --format=zip "ScoreTracker Installer.app"
           else
             cmake -E tar cf "scoretracker-plugin-${{ matrix.package }}.zip" --format=zip scoretracker scoretracker-installer
           fi

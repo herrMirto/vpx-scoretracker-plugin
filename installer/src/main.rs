@@ -1,30 +1,69 @@
-// Interactive installer for the ScoreTracker VPX plugin.
+// Installer for the ScoreTracker VPX plugin.
 //
-// Ships in the release ZIP next to the scoretracker/ payload folder. Asks where
-// VPinballX lives and where the tables folder is, copies the plugin into VPX's
-// plugins directory, enables it in VPinballX.ini, and records the tables folder
-// so the companion app finds the scores on first launch.
+// Ships in the release ZIP with the scoretracker/ payload. Uses native dialogs
+// to locate VPinballX and the tables folder, copies the plugin into VPX's plugins
+// directory, enables it in VPinballX.ini, and prepares the companion app.
+
+#![cfg_attr(target_os = "windows", windows_subsystem = "windows")]
 
 use std::fs;
-use std::io::{self, BufRead, Write};
 use std::path::{Path, PathBuf};
 
 const COMPANION_ID: &str = "com.antigravity.scoretracker.companion";
 
 fn main() {
-    if let Err(message) = run() {
-        eprintln!("error: {message}");
-        pause_before_exit();
-        std::process::exit(1);
+    use rfd::{MessageButtons, MessageDialog, MessageLevel};
+
+    match run_gui() {
+        Ok(Some(result)) => {
+            MessageDialog::new()
+                .set_level(MessageLevel::Info)
+                .set_title("ScoreTracker installed")
+                .set_description(format!(
+                    "ScoreTracker was installed successfully.\n\nPlugin: {}\nTables: {}\n\nStart a PinMAME table in VPX, then open the companion app.",
+                    result.plugin_dir.display(),
+                    result.tables_dir.display()
+                ))
+                .set_buttons(MessageButtons::Ok)
+                .show();
+        }
+        Ok(None) => {}
+        Err(message) => {
+            MessageDialog::new()
+                .set_level(MessageLevel::Error)
+                .set_title("ScoreTracker could not be installed")
+                .set_description(&message)
+                .set_buttons(MessageButtons::Ok)
+                .show();
+        }
     }
-    pause_before_exit();
 }
 
-fn run() -> Result<(), String> {
-    let payload = exe_dir()?.join("scoretracker");
+#[derive(Debug)]
+struct InstallResult {
+    plugin_dir: PathBuf,
+    tables_dir: PathBuf,
+}
+
+fn payload_dir() -> Result<PathBuf, String> {
+    let exe = exe_dir()?;
+    let candidates = [
+        exe.join("scoretracker"),
+        exe.parent()
+            .unwrap_or(&exe)
+            .join("Resources")
+            .join("scoretracker"),
+    ];
+    candidates
+        .into_iter()
+        .find(|path| path.join("plugin.cfg").is_file())
+        .ok_or_else(|| "plugin payload is missing from the installer".into())
+}
+
+fn validate_payload(payload: &Path) -> Result<(), String> {
     if !payload.join("plugin.cfg").is_file() {
         return Err(format!(
-            "plugin payload not found next to the installer (expected {})",
+            "plugin payload not found (expected {})",
             payload.display()
         ));
     }
@@ -39,46 +78,37 @@ fn run() -> Result<(), String> {
         ));
     }
 
-    // ---- 1. locate VPX and its plugins folder -------------------------------
-    let vpx = prompt_path(vpx_question(), &default_vpx())?;
-    if vpx.as_os_str().is_empty() {
-        return Err("no VPinballX location given".into());
-    }
-    let plugins_dir = resolve_plugins_dir(&vpx)
-        .ok_or_else(|| format!("could not find a VPinballX install at: {}", vpx.display()))?;
+    Ok(())
+}
 
-    // ---- 2. tables folder (recorded for the companion app) ------------------
-    let tables = prompt_path(
-        "Path to your VPX tables folder (used by the companion app)",
-        &default_tables(),
-    )?;
-    if !tables.as_os_str().is_empty() && !tables.is_dir() {
-        println!("warning: {} does not exist; recording it anyway", tables.display());
-    }
+fn install(payload: &Path, vpx: &Path, tables: &Path) -> Result<InstallResult, String> {
+    let plugins_dir = resolve_plugins_dir(vpx).ok_or_else(|| {
+        format!(
+            "Could not find a VPinballX installation in {}",
+            vpx.display()
+        )
+    })?;
 
     // ---- 3. copy the plugin --------------------------------------------------
     let dest = plugins_dir.join("scoretracker");
     if dest.exists() {
-        fs::remove_dir_all(&dest).map_err(|e| format!("could not replace {}: {e}", dest.display()))?;
+        fs::remove_dir_all(&dest)
+            .map_err(|e| format!("could not replace {}: {e}", dest.display()))?;
     }
     copy_dir(&payload, &dest)?;
-    println!("Installed plugin to: {}", dest.display());
 
     // ---- 4. enable in VPinballX.ini ------------------------------------------
     match find_ini(&vpx) {
         Some(ini) => {
             enable_in_ini(&ini)?;
-            println!("Enabled plugin in: {}", ini.display());
         }
-        None => {
-            println!("note: no VPinballX.ini found yet.");
-            println!("      After launching VPX once, add to it:  [Plugin.ScoreTracker]  Enable = 1");
-        }
+        None => {}
     }
 
     // ---- 5. companion seed config --------------------------------------------
     let cfg_dir = companion_config_dir()?;
-    fs::create_dir_all(&cfg_dir).map_err(|e| format!("could not create {}: {e}", cfg_dir.display()))?;
+    fs::create_dir_all(&cfg_dir)
+        .map_err(|e| format!("could not create {}: {e}", cfg_dir.display()))?;
     let seed = cfg_dir.join("seed.json");
     let json = format!(
         "{{\n  \"tablesRoot\": \"{}\",\n  \"mapsRoot\": \"{}\"\n}}\n",
@@ -86,44 +116,146 @@ fn run() -> Result<(), String> {
         json_escape(&dest.join("maps").display().to_string())
     );
     fs::write(&seed, json).map_err(|e| format!("could not write {}: {e}", seed.display()))?;
-    println!("Companion seed written to: {}", seed.display());
+    Ok(InstallResult {
+        plugin_dir: dest,
+        tables_dir: tables.to_path_buf(),
+    })
+}
 
-    println!();
-    println!("Done. Start a PinMAME table in VPX and finished games will appear in scores.json");
-    println!("next to each table (and in the companion app).");
-    Ok(())
+fn run_gui() -> Result<Option<InstallResult>, String> {
+    use rfd::{FileDialog, MessageButtons, MessageDialog, MessageDialogResult, MessageLevel};
+
+    let payload = payload_dir()?;
+    validate_payload(&payload)?;
+
+    let mut selected_vpx = None;
+    if let Some(detected) = detect_vpx() {
+        let use_detected = MessageDialog::new()
+            .set_level(MessageLevel::Info)
+            .set_title("Install ScoreTracker")
+            .set_description(format!(
+                "VPinballX was found here:\n\n{}\n\nInstall ScoreTracker in this location?",
+                detected.display()
+            ))
+            .set_buttons(MessageButtons::YesNo)
+            .show();
+        if use_detected == MessageDialogResult::Yes {
+            selected_vpx = Some(detected);
+        }
+    }
+
+    let vpx = match selected_vpx {
+        Some(path) => path,
+        None => loop {
+            let mut picker = FileDialog::new().set_title("Choose the folder containing VPinballX");
+            if let Some(home) = home_dir() {
+                picker = picker.set_directory(home);
+            }
+            let Some(path) = picker.pick_folder() else {
+                return Ok(None);
+            };
+            if resolve_plugins_dir(&path).is_some() {
+                break path;
+            }
+            MessageDialog::new()
+                .set_level(MessageLevel::Error)
+                .set_title("VPinballX was not found")
+                .set_description(vpx_picker_help())
+                .set_buttons(MessageButtons::Ok)
+                .show();
+        },
+    };
+
+    let mut tables_picker = FileDialog::new().set_title("Choose your VPX Tables folder");
+    let default_tables = default_tables();
+    if default_tables.is_dir() {
+        tables_picker = tables_picker.set_directory(default_tables);
+    }
+    let Some(tables) = tables_picker.pick_folder() else {
+        return Ok(None);
+    };
+
+    let plugins_dir = resolve_plugins_dir(&vpx).ok_or_else(|| {
+        format!(
+            "Could not find a VPinballX installation in {}",
+            vpx.display()
+        )
+    })?;
+    let confirmed = MessageDialog::new()
+        .set_level(MessageLevel::Info)
+        .set_title("Ready to install")
+        .set_description(format!(
+            "Plugin location:\n{}\n\nTables folder:\n{}",
+            plugins_dir.join("scoretracker").display(),
+            tables.display()
+        ))
+        .set_buttons(MessageButtons::OkCancel)
+        .show();
+    if confirmed != MessageDialogResult::Ok {
+        return Ok(None);
+    }
+
+    install(&payload, &vpx, &tables).map(Some)
 }
 
 // ---------------------------------------------------------------------------
-// prompts and platform paths
+// platform paths
 
-fn vpx_question() -> &'static str {
-    if cfg!(target_os = "macos") {
-        "Path to your VPinballX app (the .app bundle) or the folder containing it"
-    } else if cfg!(windows) {
-        "Path to your VPinballX folder (the one containing VPinballX64.exe)"
-    } else {
-        "Path to your VPinballX folder (the one containing the VPinballX executable)"
-    }
-}
+fn detect_vpx() -> Option<PathBuf> {
+    let mut roots = Vec::new();
 
-fn default_vpx() -> PathBuf {
-    if cfg!(target_os = "macos") {
-        for candidate in [
-            PathBuf::from("/Applications/VPinballX_BGFX.app"),
-            PathBuf::from("/Applications/VPinballX.app"),
-        ] {
-            if candidate.is_dir() {
-                return candidate;
+    #[cfg(target_os = "macos")]
+    roots.push(PathBuf::from("/Applications"));
+
+    #[cfg(target_os = "windows")]
+    {
+        for variable in ["ProgramFiles", "ProgramFiles(x86)"] {
+            if let Some(folder) = std::env::var_os(variable) {
+                let folder = PathBuf::from(folder);
+                roots.extend([folder.join("VPinball"), folder.join("Visual Pinball")]);
             }
         }
+        roots.push(PathBuf::from(r"C:\Visual Pinball"));
     }
-    PathBuf::new()
+
+    #[cfg(target_os = "linux")]
+    roots.extend([
+        PathBuf::from("/opt/vpinball"),
+        PathBuf::from("/usr/local/share/vpinball"),
+    ]);
+
+    if let Some(home) = home_dir() {
+        #[cfg(target_os = "macos")]
+        roots.push(home.join("Applications"));
+
+        roots.extend([home.join("vpinball"), home.join("VPinballX")]);
+
+        #[cfg(target_os = "windows")]
+        roots.extend([
+            home.join("Visual Pinball"),
+            home.join("Documents/Visual Pinball"),
+        ]);
+
+        #[cfg(target_os = "linux")]
+        roots.push(home.join(".local/share/VPinballX"));
+    }
+    roots
+        .into_iter()
+        .find_map(|root| resolve_vpx_location(&root))
 }
 
 fn default_tables() -> PathBuf {
     if let Some(home) = home_dir() {
-        for candidate in [home.join("tables"), home.join(".vpinball").join("tables")] {
+        #[cfg(target_os = "windows")]
+        let candidates = vec![
+            home.join("tables"),
+            home.join(".vpinball/tables"),
+            home.join("Visual Pinball/Tables"),
+            home.join("Documents/Visual Pinball/Tables"),
+        ];
+        #[cfg(not(target_os = "windows"))]
+        let candidates = vec![home.join("tables"), home.join(".vpinball/tables")];
+        for candidate in candidates {
             if candidate.is_dir() {
                 return candidate;
             }
@@ -133,34 +265,128 @@ fn default_tables() -> PathBuf {
 }
 
 fn resolve_plugins_dir(vpx: &Path) -> Option<PathBuf> {
-    if cfg!(target_os = "macos") {
-        if vpx.join("Contents/Resources").is_dir() {
-            return Some(vpx.join("Contents/Resources/plugins"));
-        }
-        // folder containing the .app
-        let mut apps: Vec<PathBuf> = fs::read_dir(vpx)
-            .ok()?
-            .flatten()
-            .map(|e| e.path())
-            .filter(|p| {
-                p.extension().is_some_and(|x| x.eq_ignore_ascii_case("app"))
-                    && p.file_name()
-                        .and_then(|n| n.to_str())
-                        .is_some_and(|n| n.to_ascii_lowercase().starts_with("vpinballx"))
-            })
-            .collect();
-        apps.sort();
-        return apps.first().map(|app| app.join("Contents/Resources/plugins"));
+    let location = resolve_vpx_location(vpx)?;
+    #[cfg(target_os = "macos")]
+    return Some(location.join("Contents/Resources/plugins"));
+    #[cfg(not(target_os = "macos"))]
+    return Some(location.join("plugins"));
+}
+
+#[cfg(target_os = "macos")]
+fn resolve_vpx_location(path: &Path) -> Option<PathBuf> {
+    find_vpx_app(path)
+}
+
+#[cfg(not(target_os = "macos"))]
+fn resolve_vpx_location(path: &Path) -> Option<PathBuf> {
+    find_vpx_install_dir(path)
+}
+
+#[cfg(target_os = "macos")]
+fn find_vpx_app(path: &Path) -> Option<PathBuf> {
+    if is_vpx_app(path) {
+        return Some(path.to_path_buf());
     }
-    vpx.is_dir().then(|| vpx.join("plugins"))
+
+    // Accept a folder containing the app, as well as a local source tree
+    // whose build/ folder contains the app.
+    let mut apps = Vec::new();
+    for folder in [path.to_path_buf(), path.join("build")] {
+        apps.extend(
+            fs::read_dir(folder)
+                .into_iter()
+                .flatten()
+                .flatten()
+                .map(|entry| entry.path())
+                .filter(|candidate| is_vpx_app(candidate)),
+        );
+    }
+    apps.sort();
+    apps.into_iter().next()
+}
+
+#[cfg(target_os = "macos")]
+fn is_vpx_app(path: &Path) -> bool {
+    path.extension()
+        .is_some_and(|ext| ext.eq_ignore_ascii_case("app"))
+        && path
+            .file_name()
+            .and_then(|name| name.to_str())
+            .is_some_and(|name| name.to_ascii_lowercase().starts_with("vpinballx"))
+        && path.join("Contents/Resources").is_dir()
+}
+
+#[cfg(not(target_os = "macos"))]
+fn find_vpx_install_dir(path: &Path) -> Option<PathBuf> {
+    let mut candidates = vec![
+        path.to_path_buf(),
+        path.join("bin"),
+        path.join("build"),
+        path.join("build/bin"),
+        path.join("build/Release"),
+        path.join("build/Release/bin"),
+    ];
+    candidates.extend(
+        fs::read_dir(path)
+            .into_iter()
+            .flatten()
+            .flatten()
+            .map(|entry| entry.path())
+            .filter(|candidate| candidate.is_dir()),
+    );
+    candidates.sort();
+    candidates.into_iter().find(|candidate| {
+        fs::read_dir(candidate)
+            .into_iter()
+            .flatten()
+            .flatten()
+            .any(|entry| is_vpx_executable(&entry.path()))
+    })
+}
+
+#[cfg(target_os = "windows")]
+fn is_vpx_executable(path: &Path) -> bool {
+    path.is_file()
+        && path
+            .file_name()
+            .and_then(|name| name.to_str())
+            .is_some_and(|name| {
+                let name = name.to_ascii_lowercase();
+                name.starts_with("vpinballx") && name.ends_with(".exe")
+            })
+}
+
+#[cfg(target_os = "linux")]
+fn is_vpx_executable(path: &Path) -> bool {
+    use std::os::unix::fs::PermissionsExt;
+
+    path.is_file()
+        && path
+            .file_name()
+            .and_then(|name| name.to_str())
+            .is_some_and(|name| name.to_ascii_lowercase().starts_with("vpinballx"))
+        && path
+            .metadata()
+            .is_ok_and(|metadata| metadata.permissions().mode() & 0o111 != 0)
+}
+
+fn vpx_picker_help() -> &'static str {
+    if cfg!(target_os = "macos") {
+        "Choose the folder containing the VPinballX app, or a local VPX folder whose build directory contains the app."
+    } else if cfg!(target_os = "windows") {
+        "Choose the Visual Pinball folder containing VPinballX.exe or VPinballX64.exe. Local build folders are also supported."
+    } else {
+        "Choose the folder containing the VPinballX executable. Local build folders are also supported."
+    }
 }
 
 /// Preference inis live in <SDL pref path>/VPinballX/<major.minor>/VPinballX.ini;
 /// pick the newest version folder. Windows also supports a legacy ini beside the exe.
 fn find_ini(vpx: &Path) -> Option<PathBuf> {
-    let base = pref_base()?;
-    let mut versions: Vec<(u32, u32, PathBuf)> = fs::read_dir(&base)
-        .ok()?
+    let mut versions: Vec<(u32, u32, PathBuf)> = pref_base()
+        .and_then(|base| fs::read_dir(base).ok())
+        .into_iter()
+        .flatten()
         .flatten()
         .filter_map(|entry| {
             let ini = entry.path().join("VPinballX.ini");
@@ -174,7 +400,7 @@ fn find_ini(vpx: &Path) -> Option<PathBuf> {
     if let Some((_, _, ini)) = versions.last() {
         return Some(ini.clone());
     }
-    let legacy = vpx.join("VPinballX.ini");
+    let legacy = resolve_vpx_location(vpx)?.join("VPinballX.ini");
     legacy.is_file().then_some(legacy)
 }
 
@@ -221,44 +447,14 @@ fn exe_dir() -> Result<PathBuf, String> {
     Ok(exe.parent().unwrap_or(Path::new(".")).to_path_buf())
 }
 
-fn prompt_path(question: &str, default: &Path) -> Result<PathBuf, String> {
-    if default.as_os_str().is_empty() {
-        print!("{question}: ");
-    } else {
-        print!("{question} [{}]: ", default.display());
-    }
-    io::stdout().flush().ok();
-    let mut answer = String::new();
-    io::stdin()
-        .lock()
-        .read_line(&mut answer)
-        .map_err(|e| format!("could not read input: {e}"))?;
-    let answer = answer.trim().trim_matches('"').to_owned();
-    if answer.is_empty() {
-        return Ok(default.to_path_buf());
-    }
-    if let Some(rest) = answer.strip_prefix("~/") {
-        if let Some(home) = home_dir() {
-            return Ok(home.join(rest));
-        }
-    }
-    Ok(PathBuf::from(answer))
-}
-
-fn pause_before_exit() {
-    // Keeps the console window readable when the installer is double-clicked.
-    print!("\nPress Enter to close...");
-    io::stdout().flush().ok();
-    let mut sink = String::new();
-    io::stdin().lock().read_line(&mut sink).ok();
-}
-
 // ---------------------------------------------------------------------------
 // file operations
 
 fn copy_dir(from: &Path, to: &Path) -> Result<(), String> {
     fs::create_dir_all(to).map_err(|e| format!("could not create {}: {e}", to.display()))?;
-    for entry in fs::read_dir(from).map_err(|e| format!("could not read {}: {e}", from.display()))? {
+    for entry in
+        fs::read_dir(from).map_err(|e| format!("could not read {}: {e}", from.display()))?
+    {
         let entry = entry.map_err(|e| e.to_string())?;
         let target = to.join(entry.file_name());
         if entry.file_type().map_err(|e| e.to_string())?.is_dir() {
@@ -274,7 +470,8 @@ fn copy_dir(from: &Path, to: &Path) -> Result<(), String> {
 /// Set Enable = 1 in the [Plugin.ScoreTracker] section, creating either as needed.
 /// Everything else in the ini is preserved byte for byte.
 fn enable_in_ini(ini: &Path) -> Result<(), String> {
-    let text = fs::read_to_string(ini).map_err(|e| format!("could not read {}: {e}", ini.display()))?;
+    let text =
+        fs::read_to_string(ini).map_err(|e| format!("could not read {}: {e}", ini.display()))?;
     let mut out: Vec<String> = Vec::with_capacity(text.lines().count() + 4);
     let mut in_section = false;
     let mut section_seen = false;
@@ -320,4 +517,97 @@ fn enable_in_ini(ini: &Path) -> Result<(), String> {
 
 fn json_escape(value: &str) -> String {
     value.replace('\\', "\\\\").replace('"', "\\\"")
+}
+
+#[cfg(all(test, target_os = "macos"))]
+mod tests {
+    use super::*;
+
+    fn test_root(name: &str) -> PathBuf {
+        let root = std::env::temp_dir().join(format!(
+            "scoretracker-installer-{name}-{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&root);
+        root
+    }
+
+    fn create_vpx_app(path: &Path) {
+        fs::create_dir_all(path.join("Contents/Resources")).unwrap();
+    }
+
+    #[test]
+    fn accepts_the_app_bundle_itself() {
+        let root = test_root("app");
+        let app = root.join("VPinballX_BGFX.app");
+        create_vpx_app(&app);
+        assert_eq!(find_vpx_app(&app), Some(app.clone()));
+        assert_eq!(
+            resolve_plugins_dir(&app),
+            Some(app.join("Contents/Resources/plugins"))
+        );
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn accepts_a_local_source_tree_with_an_app_in_build() {
+        let root = test_root("source-tree");
+        let app = root.join("build/VPinballX_BGFX.app");
+        create_vpx_app(&app);
+        assert_eq!(find_vpx_app(&root), Some(app.clone()));
+        assert_eq!(
+            resolve_plugins_dir(&root),
+            Some(app.join("Contents/Resources/plugins"))
+        );
+        fs::remove_dir_all(root).unwrap();
+    }
+}
+
+#[cfg(all(test, not(target_os = "macos")))]
+mod non_macos_tests {
+    use super::*;
+
+    fn test_root(name: &str) -> PathBuf {
+        let root = std::env::temp_dir().join(format!(
+            "scoretracker-installer-{name}-{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&root);
+        root
+    }
+
+    fn create_vpx_executable(folder: &Path) {
+        fs::create_dir_all(folder).unwrap();
+        #[cfg(target_os = "windows")]
+        let executable = folder.join("VPinballX64.exe");
+        #[cfg(target_os = "linux")]
+        let executable = folder.join("VPinballX_GL");
+        fs::write(&executable, b"test executable").unwrap();
+        #[cfg(target_os = "linux")]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mut permissions = executable.metadata().unwrap().permissions();
+            permissions.set_mode(0o755);
+            fs::set_permissions(&executable, permissions).unwrap();
+        }
+    }
+
+    #[test]
+    fn accepts_an_install_folder_containing_the_vpx_executable() {
+        let root = test_root("install-folder");
+        create_vpx_executable(&root);
+        assert_eq!(find_vpx_install_dir(&root), Some(root.clone()));
+        assert_eq!(resolve_plugins_dir(&root), Some(root.join("plugins")));
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn accepts_a_local_source_tree_with_an_executable_in_build() {
+        let root = test_root("source-tree");
+        let build = root.join("build");
+        create_vpx_executable(&build);
+        assert_eq!(find_vpx_install_dir(&root), Some(build.clone()));
+        assert_eq!(resolve_plugins_dir(&root), Some(build.join("plugins")));
+        fs::remove_dir_all(root).unwrap();
+    }
 }

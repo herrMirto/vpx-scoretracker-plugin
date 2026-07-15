@@ -2,7 +2,7 @@
 name = "scoretracker-installer"
 version = "0.1.0"
 edition = "2021"
-description = "Interactive installer for the ScoreTracker VPX plugin"
+description = "Installer for the ScoreTracker VPX plugin"
 license = "GPL-3.0-or-later"
 
 [[bin]]
@@ -12,3 +12,6 @@ path = "src/main.rs"
 [profile.release]
 strip = true
 lto = true
+
+[dependencies]
+rfd = { version = "0.17", default-features = false, features = ["xdg-portal"] }
