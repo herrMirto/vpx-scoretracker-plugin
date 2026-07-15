@@ -21,8 +21,9 @@ cargo test --manifest-path src-tauri/Cargo.toml
 cargo check --manifest-path src-tauri/Cargo.toml
 ```
 
-The companion globally configures both the VPX tables directory and the shared NVRAM maps directory,
-then provides a read-only Rust scanner for ScoreTracker schema-v1 history, full-score progress
+The companion asks only for the VPX tables directory. Releases include a pinned NVRAM maps bundle,
+and the plugin installer configures it automatically. The app then provides a read-only Rust scanner
+for ScoreTracker schema-v1 history, full-score progress
 charts, read-only map-based NVRAM high scores, and optional table artwork. The companion resolves
 table identity through the public VPinPlay API and loads matching wheel images from VPinMediaDB;
 successful matches are cached for 30 days and missing network access never blocks local scores. VPX

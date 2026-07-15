@@ -6,8 +6,8 @@ independently of the vpinball project: installation is dropping the `scoretracke
 VPX's `plugins` directory — no vpinball source change of any kind is required.
 
 While a game runs, the plugin periodically decodes the machine's NVRAM (and, on platforms that
-keep live game state in volatile memory, main CPU RAM) using the community-maintained
-[PinMAME NVRAM maps](https://github.com/tomlogic/pinmame-nvram-maps). When the game is over, the
+keep live game state in volatile memory, main CPU RAM) using a pinned snapshot of the
+[PinMAME NVRAM maps](https://github.com/herrMirto/pinmame-nvram-maps). When the game is over, the
 per-player scores, game duration and selected `game_state` values are appended to `scores.json`.
 
 The plugin has no effect for tables without a PinMAME controller or for ROMs without a
@@ -72,10 +72,11 @@ The plugin builds against a vpinball checkout used purely as an SDK (headers +
 
 ## Maps
 
-Any checkout of [tomlogic/pinmame-nvram-maps](https://github.com/tomlogic/pinmame-nvram-maps) or
-a compatible fork works: point `nvram_maps_folder` at it, or install it as the plugin-default
-maps folder (`plugins/scoretracker/maps`). The in-tree CMake build downloads a pinned revision
-automatically; the maps are LGPL-3.0 (their LICENSE file is installed alongside).
+Releases include a pinned snapshot of
+[herrMirto/pinmame-nvram-maps](https://github.com/herrMirto/pinmame-nvram-maps) in the plugin-default
+maps folder (`plugins/scoretracker/maps`), so users do not download or select maps separately. The
+exact source commit is recorded in `maps/source.json`. The `nvram_maps_folder` setting remains an
+advanced development override. The maps are LGPL-3.0 and their license is installed alongside them.
 
 ## Development tools
 
@@ -95,7 +96,7 @@ See [`companion/README.md`](companion/README.md) for development instructions an
 
 Download the ZIP for your platform from the releases page and run the bundled
 `scoretracker-installer` (a small terminal program; on Windows it is `scoretracker-installer.exe`).
-It asks for your VPinballX location and your tables folder, copies the plugin into VPX's `plugins`
-directory, enables it in `VPinballX.ini`, and records the tables folder so the companion app finds
-your scores on first launch. Manual installation (copying the `scoretracker` folder yourself)
+It asks for your VPinballX location and your tables folder, copies the plugin and bundled maps into
+VPX's `plugins` directory, enables it in `VPinballX.ini`, and records the tables folder and internal
+maps location so the companion app finds your scores on first launch. Manual installation (copying the `scoretracker` folder yourself)
 works exactly as before.

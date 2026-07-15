@@ -69,8 +69,9 @@ locally for 30 days. API failures and missing wheel files fall back to a typogra
 without affecting history or NVRAM features.
 
 NVRAM parsing is isolated from score history parsing. It consumes the same pinned map data released
-with ScoreTracker, but map discovery must not depend on the plugin being installed in a particular
-directory. Release builds may embed or install one canonical map bundle for both products.
+with ScoreTracker. The plugin installer installs one canonical bundle beside the plugin and records
+its resolved path for the companion; users never configure that internal path themselves. Missing
+map data degrades only machine high scores and never blocks personal history.
 
 The selected NVRAM file remains the read-only source of truth for the machine leaderboard. The
 companion exposes no NVRAM write command and does not decode unrelated machine settings.

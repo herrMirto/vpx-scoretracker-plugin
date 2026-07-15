@@ -15,6 +15,8 @@ env:
   VPINBALL_REPO: https://github.com/vpinball/vpinball.git
   VPINBALL_REF: master
   PINMAME_REPO: https://github.com/vbousquet/pinmame.git
+  NVRAM_MAPS_REPO: https://github.com/herrMirto/pinmame-nvram-maps.git
+  NVRAM_MAPS_SHA: e3ec3e8a4c839e85afbdf6ba6538ca0ab46eff41
 
 jobs:
   build:
@@ -47,6 +49,29 @@ jobs:
 
     steps:
       - uses: actions/checkout@v6
+
+      - name: Set up Python for map validation
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.x"
+
+      - name: Fetch pinned NVRAM maps
+        shell: bash
+        run: |
+          git clone --filter=blob:none --no-checkout "${{ env.NVRAM_MAPS_REPO }}" nvram-maps-src
+          git -C nvram-maps-src fetch --depth 1 origin "${{ env.NVRAM_MAPS_SHA }}"
+          git -C nvram-maps-src checkout --detach "${{ env.NVRAM_MAPS_SHA }}"
+          test -f nvram-maps-src/index.json
+          test -d nvram-maps-src/maps
+          test -d nvram-maps-src/platforms
+          test -f nvram-maps-src/LICENSE
+
+      - name: Validate pinned NVRAM maps
+        shell: bash
+        run: |
+          cd nvram-maps-src
+          python tools/update-index.py
+          git diff --exit-code -- index.json
 
       - name: Clone VPX
         shell: bash
@@ -121,6 +146,7 @@ jobs:
           set(PLATFORM "${{ matrix.platform }}")
           set(ARCH "${{ matrix.arch }}")
           set(PLUGINS_DIR "${CMAKE_BINARY_DIR}/plugins_output")
+          set(SCORETRACKER_FETCH_MAPS OFF CACHE BOOL "" FORCE)
           include("${CMAKE_SOURCE_DIR}/make/CMakeLists_plugin_ScoreTracker.txt")
           EOF
 
@@ -152,6 +178,12 @@ jobs:
         run: |
           mkdir -p dist/scoretracker
           cp -R vpinball-src/build/plugins_output/scoretracker/. dist/scoretracker/
+          mkdir -p dist/scoretracker/maps
+          cp nvram-maps-src/index.json nvram-maps-src/LICENSE dist/scoretracker/maps/
+          cp -R nvram-maps-src/maps nvram-maps-src/platforms dist/scoretracker/maps/
+          printf '{\n  "repository": "%s",\n  "commit": "%s"\n}\n' \
+            "${{ env.NVRAM_MAPS_REPO }}" "${{ env.NVRAM_MAPS_SHA }}" \
+            > dist/scoretracker/maps/source.json
           if [ "${{ matrix.platform }}" = windows ]; then
             cp installer/target/release/scoretracker-installer.exe dist/
           else
