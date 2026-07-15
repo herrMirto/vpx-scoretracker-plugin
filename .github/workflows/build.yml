@@ -59,6 +59,7 @@ jobs:
         shell: bash
         run: |
           git clone --filter=blob:none --no-checkout "${{ env.NVRAM_MAPS_REPO }}" nvram-maps-src
+          git -C nvram-maps-src config core.autocrlf false
           git -C nvram-maps-src fetch --depth 1 origin "${{ env.NVRAM_MAPS_SHA }}"
           git -C nvram-maps-src checkout --detach "${{ env.NVRAM_MAPS_SHA }}"
           test -f nvram-maps-src/index.json
