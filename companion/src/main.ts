@@ -139,29 +139,29 @@ function render(): void {
   const tableList = tables();
   const selected = selectedRom();
   const table = selected ? tableList.find((candidate) => candidate.rom === selected) : null;
-  const configured = Boolean(root && mapsRoot);
+  const configured = Boolean(root);
 
   app.innerHTML = `
-    ${renderTopbar(root, mapsRoot, Boolean(table))}
+    ${renderTopbar(root, Boolean(table))}
     <main>
       ${renderNotices()}
-      ${table && configured ? renderTableDetail(table) : configured ? renderOverview(tableList) : renderSetup(root, mapsRoot)}
+      ${table && configured ? renderTableDetail(table) : configured ? renderOverview(tableList) : renderSetup(root)}
     </main>
-    ${foldersOpen && configured ? renderFoldersModal(root, mapsRoot) : ""}`;
+    ${foldersOpen && configured ? renderFoldersModal(root) : ""}`;
 
   wireEvents();
   if (configured && tableList.length) void ensureTableMedia(tableList);
   if (table && configured) void ensureNvram(table, root, mapsRoot);
 }
 
-function renderTopbar(root: string, mapsRoot: string, inDetail: boolean): string {
+function renderTopbar(root: string, inDetail: boolean): string {
   return `<header class="topbar">
     <button class="brand brand-button" id="home" type="button" aria-label="ScoreTracker home">
       <span class="brand-stripe" aria-hidden="true"></span><span class="brand-copy"><strong>VPX ScoreTracker</strong><small>Local scores</small></span>
     </button>
     <nav class="actions" aria-label="Application actions">
       ${inDetail ? `<button id="back" class="button secondary" type="button">← All tables</button>` : ""}
-      ${(root || mapsRoot) ? `<button id="show-folders" class="button secondary" type="button">Folders</button>` : ""}
+      ${root ? `<button id="show-folders" class="button secondary" type="button">Folders</button>` : ""}
       ${root ? `<button id="refresh" class="button primary" type="button" ${busy ? "disabled" : ""}>${busy ? "Scanning…" : "Refresh scores"}</button>` : ""}
     </nav>
   </header>`;
@@ -488,21 +488,19 @@ function stat(label: string, value: string, context: string): string {
   return `<article><span>${esc(label)}</span><strong>${esc(value)}</strong><small>${esc(context)}</small></article>`;
 }
 
-function renderSetup(root: string, mapsRoot: string): string {
-  return `<section class="hero setup-hero"><p class="eyebrow">Cabinet setup</p><h1>Connect your local files.</h1><p>ScoreTracker needs your VPX tables and one global NVRAM maps folder. Both locations stay on this machine.</p></section>
+function renderSetup(root: string): string {
+  return `<section class="hero setup-hero"><p class="eyebrow">Cabinet setup</p><h1>Connect your local files.</h1><p>Choose your VPX tables folder. ScoreTracker includes the NVRAM maps needed for machine high scores.</p></section>
     <section class="panel setup">
       <div class="folder-row"><span class="folder-number">01</span><div><h2>VPX tables</h2><p>Contains each table's <code>scores.json</code> and PinMAME NVRAM files.</p><code class="folder-path">${esc(root || "Not selected")}</code></div><button id="choose-root" class="button ${root ? "secondary" : "primary"}" type="button">${root ? "Change" : "Choose folder"}</button></div>
-      <div class="folder-row"><span class="folder-number">02</span><div><h2>NVRAM maps</h2><p>Global folder containing <code>index.json</code>, <code>maps/</code>, and <code>platforms/</code>.</p><code class="folder-path">${esc(mapsRoot || "Not selected")}</code></div><button id="choose-maps-root" class="button ${mapsRoot ? "secondary" : "primary"}" type="button">${mapsRoot ? "Change" : "Choose folder"}</button></div>
-      ${root && mapsRoot ? `<div class="setup-ready"><span>Both sources connected</span><button id="setup-done" class="button primary" type="button">View score history</button></div>` : `<div class="setup-hint">Select both folders to continue.</div>`}
+      ${root ? `<div class="setup-ready"><span>Tables folder connected</span><button id="setup-done" class="button primary" type="button">View score history</button></div>` : `<div class="setup-hint">Select your tables folder to continue.</div>`}
     </section>`;
 }
 
-function renderFoldersModal(root: string, mapsRoot: string): string {
+function renderFoldersModal(root: string): string {
   return `<div class="modal-backdrop" data-close-folders>
     <section class="folders-modal panel" role="dialog" aria-modal="true" aria-labelledby="folders-title">
       <div class="modal-heading"><div><p class="eyebrow">Cabinet setup</p><h2 id="folders-title">Folders</h2></div><button id="close-folders" class="modal-close" type="button" aria-label="Close folders">×</button></div>
       <div class="folder-row"><span class="folder-number">01</span><div><h2>VPX tables</h2><p>Contains each table's <code>scores.json</code> and PinMAME NVRAM files.</p><code class="folder-path">${esc(root)}</code></div><button id="choose-root" class="button secondary" type="button">Change</button></div>
-      <div class="folder-row"><span class="folder-number">02</span><div><h2>NVRAM maps</h2><p>Global folder containing <code>index.json</code>, <code>maps/</code>, and <code>platforms/</code>.</p><code class="folder-path">${esc(mapsRoot)}</code></div><button id="choose-maps-root" class="button secondary" type="button">Change</button></div>
     </section>
   </div>`;
 }
@@ -561,7 +559,6 @@ function wireEvents(): void {
   document.querySelector("#refresh")?.addEventListener("click", scanConfiguredRoot);
   document.querySelector("#home")?.addEventListener("click", goHome);
   document.querySelector("#back")?.addEventListener("click", goHome);
-  document.querySelectorAll("#choose-maps-root").forEach((element) => element.addEventListener("click", chooseMapsRoot));
   document.querySelectorAll<HTMLElement>("[data-rom]").forEach((element) => element.addEventListener("click", () => {
     location.hash = `#/table/${encodeURIComponent(element.dataset.rom ?? "")}`;
   }));
@@ -613,25 +610,6 @@ function closeFolders(): void {
   document.querySelector<HTMLButtonElement>("#show-folders")?.focus();
 }
 
-async function chooseMapsRoot(): Promise<void> {
-  const selected = await open({ directory: true, multiple: false, title: "Choose the ScoreTracker maps folder" });
-  if (typeof selected !== "string") return;
-  try {
-    const resolved = await invoke<string>("resolve_maps_root", { path: selected });
-    localStorage.setItem(MAPS_ROOT_KEY, resolved);
-    fatalError = "";
-  } catch (error) {
-    fatalError = `Maps folder: ${error instanceof Error ? error.message : String(error)}`;
-    render();
-    return;
-  }
-  nvram = null;
-  nvramRom = "";
-  nvramError = "";
-  if (localStorage.getItem(TABLES_ROOT_KEY)) await scanConfiguredRoot();
-  else render();
-}
-
 async function ensureNvram(table: TableHistory, tablesRoot: string, mapsRoot: string): Promise<void> {
   if (!mapsRoot || !tablesRoot || nvramBusy || nvramRom === table.rom) return;
   nvramRom = table.rom;
@@ -660,8 +638,7 @@ async function chooseRoot(): Promise<void> {
   localStorage.setItem(TABLES_ROOT_KEY, selected);
   snapshot = null;
   fatalError = "";
-  if (localStorage.getItem(MAPS_ROOT_KEY)) await scanConfiguredRoot();
-  else render();
+  await scanConfiguredRoot();
 }
 
 async function scanConfiguredRoot(): Promise<void> {
@@ -687,19 +664,18 @@ window.addEventListener("keydown", (event) => {
   if (event.key === "Escape" && foldersOpen) closeFolders();
 });
 async function initialize(): Promise<void> {
-  // First run: adopt the folder defaults written by the plugin installer, if any.
-  if (!localStorage.getItem(TABLES_ROOT_KEY) || !localStorage.getItem(MAPS_ROOT_KEY)) {
-    try {
-      const seed = await invoke<{ tablesRoot: string | null; mapsRoot: string | null } | null>("read_seed_config");
-      if (seed?.tablesRoot && !localStorage.getItem(TABLES_ROOT_KEY)) {
-        localStorage.setItem(TABLES_ROOT_KEY, seed.tablesRoot);
-      }
-      if (seed?.mapsRoot && !localStorage.getItem(MAPS_ROOT_KEY)) {
-        localStorage.setItem(MAPS_ROOT_KEY, seed.mapsRoot);
-      }
-    } catch {
-      // no seed available; the setup screen will ask for folders
+  // Adopt installer defaults. The bundled maps path is authoritative and replaces
+  // any map folder saved by older companion versions.
+  try {
+    const seed = await invoke<{ tablesRoot: string | null; mapsRoot: string | null } | null>("read_seed_config");
+    if (seed?.tablesRoot && !localStorage.getItem(TABLES_ROOT_KEY)) {
+      localStorage.setItem(TABLES_ROOT_KEY, seed.tablesRoot);
     }
+    if (seed?.mapsRoot) {
+      localStorage.setItem(MAPS_ROOT_KEY, seed.mapsRoot);
+    }
+  } catch {
+    // no seed available; the setup screen will ask for the tables folder
   }
 
   const selectedMapsRoot = localStorage.getItem(MAPS_ROOT_KEY);
@@ -709,12 +685,12 @@ async function initialize(): Promise<void> {
       localStorage.setItem(MAPS_ROOT_KEY, resolved);
     } catch (error) {
       localStorage.removeItem(MAPS_ROOT_KEY);
-      fatalError = `Maps folder: ${error instanceof Error ? error.message : String(error)}`;
+      nvramError = `Bundled maps unavailable: ${error instanceof Error ? error.message : String(error)}`;
     }
   }
 
   render();
-  if (localStorage.getItem(TABLES_ROOT_KEY) && localStorage.getItem(MAPS_ROOT_KEY)) void scanConfiguredRoot();
+  if (localStorage.getItem(TABLES_ROOT_KEY)) void scanConfiguredRoot();
 }
 
 void initialize();

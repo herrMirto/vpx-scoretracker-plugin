@@ -28,6 +28,16 @@ fn run() -> Result<(), String> {
             payload.display()
         ));
     }
+    let maps = payload.join("maps");
+    if !maps.join("index.json").is_file()
+        || !maps.join("maps").is_dir()
+        || !maps.join("platforms").is_dir()
+    {
+        return Err(format!(
+            "bundled NVRAM maps not found in the plugin payload (expected {})",
+            maps.display()
+        ));
+    }
 
     // ---- 1. locate VPX and its plugins folder -------------------------------
     let vpx = prompt_path(vpx_question(), &default_vpx())?;

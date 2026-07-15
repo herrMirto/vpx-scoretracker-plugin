@@ -19,8 +19,8 @@ suitable for a future cabinet mode without requiring a separate frontend.
   be changed later.
 - **COMP-003:** No default path is assumed to be correct on Windows, macOS, or Linux.
 - **COMP-004:** An unavailable or moved directory produces a recoverable setup state.
-- **COMP-005:** The global NVRAM maps directory is configured beside the tables directory and is
-  reused for every table.
+- **COMP-005:** The release includes one pinned NVRAM maps bundle that is reused for every table;
+  users are never asked to locate or configure a maps directory.
 
 ### Game discovery
 
@@ -75,7 +75,8 @@ suitable for a future cabinet mode without requiring a separate frontend.
 ## Platform and distribution requirements
 
 - **COMP-050:** Windows, macOS, and Linux are supported release targets.
-- **COMP-051:** Release artifacts include all application code; users install no language runtime.
+- **COMP-051:** Release artifacts include all application code and the pinned NVRAM maps; users
+  install no language runtime or separate data bundle.
 - **COMP-052:** Filesystem behavior is tested with Windows separators, Unix separators, Unicode,
   spaces, and case-sensitive filesystems.
 - **COMP-053:** The plugin and companion can be downloaded together but installed, launched, and

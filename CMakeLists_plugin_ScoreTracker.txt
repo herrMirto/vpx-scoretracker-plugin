@@ -18,18 +18,20 @@ set(SCORETRACKER_PLUGIN_SOURCES
    plugins/scoretracker/ScoresFileWriter.cpp
 )
 
-# The PinMAME NVRAM maps consumed by the plugin (https://github.com/tomlogic/pinmame-nvram-maps),
+# The PinMAME NVRAM maps consumed by the plugin
+# (https://github.com/herrMirto/pinmame-nvram-maps),
 # pinned to a known-good revision and installed alongside the plugin binary. Disable to build
 # offline; the plugin then relies on its nvram_maps_folder setting.
 option(SCORETRACKER_FETCH_MAPS "Download the PinMAME NVRAM maps shipped with the ScoreTracker plugin" ON)
-set(SCORETRACKER_MAPS_SHA "d8693b9ca59a1b871d2a473be3adb0392471a8e3")
+set(SCORETRACKER_MAPS_REPO "https://github.com/herrMirto/pinmame-nvram-maps")
+set(SCORETRACKER_MAPS_SHA "e3ec3e8a4c839e85afbdf6ba6538ca0ab46eff41")
 set(SCORETRACKER_MAPS_DIR "${CMAKE_BINARY_DIR}/external/pinmame-nvram-maps-${SCORETRACKER_MAPS_SHA}")
 
 if(BUILD_SHARED AND SCORETRACKER_FETCH_MAPS AND NOT EXISTS "${SCORETRACKER_MAPS_DIR}/index.json")
    set(SCORETRACKER_MAPS_ARCHIVE "${CMAKE_BINARY_DIR}/external/pinmame-nvram-maps-${SCORETRACKER_MAPS_SHA}.tar.gz")
    message(STATUS "Downloading PinMAME NVRAM maps (${SCORETRACKER_MAPS_SHA})")
    file(DOWNLOAD
-      "https://github.com/tomlogic/pinmame-nvram-maps/archive/${SCORETRACKER_MAPS_SHA}.tar.gz"
+      "${SCORETRACKER_MAPS_REPO}/archive/${SCORETRACKER_MAPS_SHA}.tar.gz"
       "${SCORETRACKER_MAPS_ARCHIVE}"
       STATUS SCORETRACKER_MAPS_DOWNLOAD_STATUS
    )
@@ -96,9 +98,11 @@ if(BUILD_SHARED)
    )
 
    if(EXISTS "${SCORETRACKER_MAPS_DIR}/index.json")
+      file(WRITE "${SCORETRACKER_MAPS_DIR}/source.json"
+         "{\n  \"repository\": \"${SCORETRACKER_MAPS_REPO}\",\n  \"commit\": \"${SCORETRACKER_MAPS_SHA}\"\n}\n")
       add_custom_command(TARGET ScoreTrackerPlugin POST_BUILD
          COMMAND "${CMAKE_COMMAND}" -E make_directory "${PLUGINS_DIR}/scoretracker/maps"
-         COMMAND "${CMAKE_COMMAND}" -E copy "${SCORETRACKER_MAPS_DIR}/index.json" "${SCORETRACKER_MAPS_DIR}/LICENSE" "${PLUGINS_DIR}/scoretracker/maps/"
+         COMMAND "${CMAKE_COMMAND}" -E copy "${SCORETRACKER_MAPS_DIR}/index.json" "${SCORETRACKER_MAPS_DIR}/LICENSE" "${SCORETRACKER_MAPS_DIR}/source.json" "${PLUGINS_DIR}/scoretracker/maps/"
          COMMAND "${CMAKE_COMMAND}" -E copy_directory "${SCORETRACKER_MAPS_DIR}/maps" "${PLUGINS_DIR}/scoretracker/maps/maps"
          COMMAND "${CMAKE_COMMAND}" -E copy_directory "${SCORETRACKER_MAPS_DIR}/platforms" "${PLUGINS_DIR}/scoretracker/maps/platforms"
       )
