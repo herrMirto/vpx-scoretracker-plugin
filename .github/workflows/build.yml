@@ -185,9 +185,9 @@ jobs:
         run: cargo test --manifest-path installer/Cargo.toml
 
       - name: Set up Node for the companion app
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v6
         with:
-          node-version: 22
+          node-version: 24
 
       - name: Install companion build dependencies (Linux)
         if: matrix.platform == 'linux'
