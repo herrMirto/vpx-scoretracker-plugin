@@ -188,6 +188,29 @@ jobs:
         shell: bash
         run: cargo build --release --manifest-path installer/Cargo.toml
 
+      - name: Set up Node for the companion app
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Install companion build dependencies (Linux)
+        if: matrix.platform == 'linux'
+        shell: bash
+        run: sudo apt-get install -y libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev patchelf libxdo-dev
+
+      - name: Build companion app (VPX Scoretracker Visualiser)
+        shell: bash
+        run: |
+          cd companion
+          npm ci
+          if [ "${{ matrix.platform }}" = windows ]; then
+            npm run tauri build -- --no-bundle
+          elif [ "${{ matrix.platform }}" = macos ]; then
+            npm run tauri build -- --bundles app
+          else
+            npm run tauri build -- --bundles appimage
+          fi
+
       - name: Create plugin ZIP
         shell: bash
         run: |
@@ -201,24 +224,27 @@ jobs:
             > dist/scoretracker/maps/source.json
           if [ "${{ matrix.platform }}" = windows ]; then
             cp installer/target/release/scoretracker-installer.exe dist/
+            cp companion/src-tauri/target/release/vpx-scoretracker-visualiser.exe dist/
           elif [ "${{ matrix.platform }}" = macos ]; then
             APP="dist/ScoreTracker Installer.app"
             mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
             cp installer/target/release/scoretracker-installer "$APP/Contents/MacOS/"
             cp installer/macos/Info.plist "$APP/Contents/"
             cp -R dist/scoretracker "$APP/Contents/Resources/"
+            cp -R "companion/src-tauri/target/release/bundle/macos/VPX Scoretracker Visualiser.app" "$APP/Contents/Resources/"
             chmod +x "$APP/Contents/MacOS/scoretracker-installer"
             codesign --force --deep --sign - "$APP"
           else
             cp installer/target/release/scoretracker-installer dist/
+            cp companion/src-tauri/target/release/bundle/appimage/*.AppImage dist/vpx-scoretracker-visualiser.AppImage
           fi
           cd dist
           if [ "${{ matrix.platform }}" = windows ]; then
-            cmake -E tar cf "scoretracker-plugin-${{ matrix.package }}.zip" --format=zip scoretracker scoretracker-installer.exe
+            cmake -E tar cf "scoretracker-plugin-${{ matrix.package }}.zip" --format=zip scoretracker scoretracker-installer.exe vpx-scoretracker-visualiser.exe
           elif [ "${{ matrix.platform }}" = macos ]; then
             cmake -E tar cf "scoretracker-plugin-${{ matrix.package }}.zip" --format=zip "ScoreTracker Installer.app"
           else
-            cmake -E tar cf "scoretracker-plugin-${{ matrix.package }}.zip" --format=zip scoretracker scoretracker-installer
+            cmake -E tar cf "scoretracker-plugin-${{ matrix.package }}.zip" --format=zip scoretracker scoretracker-installer vpx-scoretracker-visualiser.AppImage
           fi
 
       - name: Upload plugin ZIP
