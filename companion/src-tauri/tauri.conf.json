@@ -1,6 +1,6 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "ScoreTracker Companion",
+  "productName": "VPX Scoretracker Visualiser",
   "version": "0.1.0",
   "identifier": "com.antigravity.scoretracker.companion",
   "build": {
@@ -13,7 +13,7 @@
     "windows": [
       {
         "label": "main",
-        "title": "ScoreTracker Companion",
+        "title": "VPX Scoretracker Visualiser",
         "width": 1180,
         "height": 780,
         "minWidth": 360,

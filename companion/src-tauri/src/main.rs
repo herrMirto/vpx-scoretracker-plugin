@@ -1,5 +1,5 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 fn main() {
-    scoretracker_companion_lib::run();
+    vpx_scoretracker_visualiser_lib::run();
 }
