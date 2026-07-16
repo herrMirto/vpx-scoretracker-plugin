@@ -1,42 +1,32 @@
 // Installer for the ScoreTracker VPX plugin.
 //
-// Ships in the release ZIP with the scoretracker/ payload. Uses native dialogs
-// to locate VPinballX and the tables folder, copies the plugin into VPX's plugins
-// directory, enables it in VPinballX.ini, and prepares the companion app.
+// Ships in the release ZIP with the scoretracker/ payload. Shows a single
+// window with folder pickers for VPinballX and the tables folder, copies the
+// plugin into VPX's plugins directory, enables it in VPinballX.ini, and seeds
+// the companion app configuration.
 
 #![cfg_attr(target_os = "windows", windows_subsystem = "windows")]
 
 use std::fs;
 use std::path::{Path, PathBuf};
 
+use eframe::egui;
+
 const COMPANION_ID: &str = "com.antigravity.scoretracker.companion";
 
-fn main() {
-    use rfd::{MessageButtons, MessageDialog, MessageLevel};
-
-    match run_gui() {
-        Ok(Some(result)) => {
-            MessageDialog::new()
-                .set_level(MessageLevel::Info)
-                .set_title("ScoreTracker installed")
-                .set_description(format!(
-                    "ScoreTracker was installed successfully.\n\nPlugin: {}\nTables: {}\n\nStart a PinMAME table in VPX, then open the companion app.",
-                    result.plugin_dir.display(),
-                    result.tables_dir.display()
-                ))
-                .set_buttons(MessageButtons::Ok)
-                .show();
-        }
-        Ok(None) => {}
-        Err(message) => {
-            MessageDialog::new()
-                .set_level(MessageLevel::Error)
-                .set_title("ScoreTracker could not be installed")
-                .set_description(&message)
-                .set_buttons(MessageButtons::Ok)
-                .show();
-        }
-    }
+fn main() -> Result<(), eframe::Error> {
+    let options = eframe::NativeOptions {
+        viewport: egui::ViewportBuilder::default()
+            .with_inner_size([620.0, 330.0])
+            .with_min_inner_size([620.0, 330.0]),
+        centered: true,
+        ..Default::default()
+    };
+    eframe::run_native(
+        "ScoreTracker Installer",
+        options,
+        Box::new(|_cc| Ok(Box::new(InstallerApp::new()))),
+    )
 }
 
 #[derive(Debug)]
@@ -122,80 +112,162 @@ fn install(payload: &Path, vpx: &Path, tables: &Path) -> Result<InstallResult, S
     })
 }
 
-fn run_gui() -> Result<Option<InstallResult>, String> {
-    use rfd::{FileDialog, MessageButtons, MessageDialog, MessageDialogResult, MessageLevel};
+// ---------------------------------------------------------------------------
+// UI
 
-    let payload = payload_dir()?;
-    validate_payload(&payload)?;
+enum Screen {
+    Form,
+    Done(InstallResult),
+    Failed(String),
+}
 
-    let mut selected_vpx = None;
-    if let Some(detected) = detect_vpx() {
-        let use_detected = MessageDialog::new()
-            .set_level(MessageLevel::Info)
-            .set_title("Install ScoreTracker")
-            .set_description(format!(
-                "VPinballX was found here:\n\n{}\n\nInstall ScoreTracker in this location?",
-                detected.display()
-            ))
-            .set_buttons(MessageButtons::YesNo)
-            .show();
-        if use_detected == MessageDialogResult::Yes {
-            selected_vpx = Some(detected);
+struct InstallerApp {
+    payload: Result<PathBuf, String>,
+    vpx: String,
+    tables: String,
+    screen: Screen,
+}
+
+impl InstallerApp {
+    /// Detection only prefills the form fields; nothing is installed until the
+    /// user has both paths on screen and clicks Install.
+    fn new() -> Self {
+        let payload = payload_dir().and_then(|dir| validate_payload(&dir).map(|()| dir));
+        let vpx = detect_vpx()
+            .map(|path| path.display().to_string())
+            .unwrap_or_default();
+        let tables = default_tables();
+        let tables = if tables.as_os_str().is_empty() {
+            String::new()
+        } else {
+            tables.display().to_string()
+        };
+        Self {
+            payload,
+            vpx,
+            tables,
+            screen: Screen::Form,
         }
     }
 
-    let vpx = match selected_vpx {
-        Some(path) => path,
-        None => loop {
-            let mut picker = FileDialog::new().set_title("Choose the folder containing VPinballX");
-            if let Some(home) = home_dir() {
-                picker = picker.set_directory(home);
+    fn form_ui(&mut self, ui: &mut egui::Ui) {
+        ui.heading("Install ScoreTracker");
+        ui.add_space(8.0);
+
+        if let Err(message) = &self.payload {
+            ui.colored_label(ui.visuals().error_fg_color, message);
+            ui.add_space(8.0);
+        }
+
+        ui.label("VPinballX folder:");
+        Self::folder_row(ui, &mut self.vpx, "Choose the folder containing VPinballX");
+        let plugins_dir = Self::existing_dir(&self.vpx).and_then(|dir| resolve_plugins_dir(&dir));
+        if self.vpx.trim().is_empty() {
+            ui.weak("Select the folder containing VPinballX.");
+        } else {
+            match &plugins_dir {
+                Some(dir) => {
+                    ui.weak(format!(
+                        "Plugin will be installed to {}",
+                        dir.join("scoretracker").display()
+                    ));
+                }
+                None => {
+                    ui.colored_label(ui.visuals().error_fg_color, vpx_picker_help());
+                }
             }
-            let Some(path) = picker.pick_folder() else {
-                return Ok(None);
+        }
+        ui.add_space(8.0);
+
+        ui.label("VPX tables folder:");
+        Self::folder_row(ui, &mut self.tables, "Choose your VPX tables folder");
+        let tables_dir = Self::existing_dir(&self.tables);
+        if self.tables.trim().is_empty() {
+            ui.weak("Select the folder containing your .vpx tables.");
+        } else if tables_dir.is_none() {
+            ui.colored_label(ui.visuals().error_fg_color, "This folder does not exist.");
+        } else {
+            ui.weak("Completed games are written to scores.json next to each table.");
+        }
+        ui.add_space(12.0);
+
+        let ready = self.payload.is_ok() && plugins_dir.is_some() && tables_dir.is_some();
+        if ui
+            .add_enabled(ready, egui::Button::new("Install"))
+            .clicked()
+        {
+            let payload = self.payload.as_ref().expect("checked by `ready`").clone();
+            let vpx = Self::existing_dir(&self.vpx).expect("checked by `ready`");
+            let tables = tables_dir.expect("checked by `ready`");
+            self.screen = match install(&payload, &vpx, &tables) {
+                Ok(result) => Screen::Done(result),
+                Err(message) => Screen::Failed(message),
             };
-            if resolve_plugins_dir(&path).is_some() {
-                break path;
+        }
+    }
+
+    fn folder_row(ui: &mut egui::Ui, value: &mut String, title: &str) {
+        ui.horizontal(|ui| {
+            let browse = ui.button("Browse\u{2026}");
+            ui.add_sized(
+                [ui.available_width(), 20.0],
+                egui::TextEdit::singleline(value),
+            );
+            if browse.clicked() {
+                let mut picker = rfd::FileDialog::new().set_title(title);
+                if let Some(dir) = Self::existing_dir(value).or_else(home_dir) {
+                    picker = picker.set_directory(dir);
+                }
+                if let Some(path) = picker.pick_folder() {
+                    *value = path.display().to_string();
+                }
             }
-            MessageDialog::new()
-                .set_level(MessageLevel::Error)
-                .set_title("VPinballX was not found")
-                .set_description(vpx_picker_help())
-                .set_buttons(MessageButtons::Ok)
-                .show();
-        },
-    };
-
-    let mut tables_picker = FileDialog::new().set_title("Choose your VPX Tables folder");
-    let default_tables = default_tables();
-    if default_tables.is_dir() {
-        tables_picker = tables_picker.set_directory(default_tables);
-    }
-    let Some(tables) = tables_picker.pick_folder() else {
-        return Ok(None);
-    };
-
-    let plugins_dir = resolve_plugins_dir(&vpx).ok_or_else(|| {
-        format!(
-            "Could not find a VPinballX installation in {}",
-            vpx.display()
-        )
-    })?;
-    let confirmed = MessageDialog::new()
-        .set_level(MessageLevel::Info)
-        .set_title("Ready to install")
-        .set_description(format!(
-            "Plugin location:\n{}\n\nTables folder:\n{}",
-            plugins_dir.join("scoretracker").display(),
-            tables.display()
-        ))
-        .set_buttons(MessageButtons::OkCancel)
-        .show();
-    if confirmed != MessageDialogResult::Ok {
-        return Ok(None);
+        });
     }
 
-    install(&payload, &vpx, &tables).map(Some)
+    fn existing_dir(value: &str) -> Option<PathBuf> {
+        let trimmed = value.trim();
+        if trimmed.is_empty() {
+            return None;
+        }
+        let path = PathBuf::from(trimmed);
+        path.is_dir().then_some(path)
+    }
+
+    fn result_ui(&self, ui: &mut egui::Ui, ctx: &egui::Context) {
+        match &self.screen {
+            Screen::Done(result) => {
+                ui.heading("ScoreTracker installed");
+                ui.add_space(8.0);
+                ui.label(format!("Plugin: {}", result.plugin_dir.display()));
+                ui.label(format!("Tables: {}", result.tables_dir.display()));
+                ui.add_space(8.0);
+                ui.label("Start a PinMAME table in VPX to begin recording scores.");
+            }
+            Screen::Failed(message) => {
+                ui.heading("ScoreTracker could not be installed");
+                ui.add_space(8.0);
+                ui.colored_label(ui.visuals().error_fg_color, message);
+            }
+            Screen::Form => unreachable!("result_ui is only called for result screens"),
+        }
+        ui.add_space(12.0);
+        if ui.button("Close").clicked() {
+            ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+        }
+    }
+}
+
+impl eframe::App for InstallerApp {
+    fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        egui::CentralPanel::default().show(ctx, |ui| {
+            if matches!(self.screen, Screen::Form) {
+                self.form_ui(ui);
+            } else {
+                self.result_ui(ui, ctx);
+            }
+        });
+    }
 }
 
 // ---------------------------------------------------------------------------
