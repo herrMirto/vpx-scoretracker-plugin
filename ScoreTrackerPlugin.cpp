@@ -74,7 +74,7 @@ static void StopTracker()
 
 static void OnGameStart(const unsigned int eventId, void* userData, void* msgData)
 {
-   const CtlOnGameStartMsg* msg = static_cast<const CtlOnGameStartMsg*>(msgData);
+   const CtlOnGameStateChgMsg* msg = static_cast<const CtlOnGameStateChgMsg*>(msgData);
    if (msg == nullptr || msg->gameId == nullptr || msg->gameId[0] == '\0')
       return;
    const string gameId(msg->gameId);
