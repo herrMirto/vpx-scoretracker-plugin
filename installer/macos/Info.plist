@@ -6,6 +6,8 @@
   <string>ScoreTracker Installer</string>
   <key>CFBundleExecutable</key>
   <string>scoretracker-installer</string>
+  <key>CFBundleIconFile</key>
+  <string>icon.icns</string>
   <key>CFBundleIdentifier</key>
   <string>com.antigravity.scoretracker.installer</string>
   <key>CFBundleInfoDictionaryVersion</key>

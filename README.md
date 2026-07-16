@@ -96,7 +96,7 @@ See [`companion/README.md`](companion/README.md) for development instructions an
 ## Installation
 
 Download and run the single installer file for your platform:
-`scoretracker-installer-macos-arm64.pkg` on macOS,
+`scoretracker-installer-macos-arm64.dmg` on macOS,
 `scoretracker-installer-windows-x64.exe` on Windows, or the matching
 `scoretracker-installer-linux-*` file on Linux. On Linux, mark the downloaded file executable first
 (`chmod +x scoretracker-installer-linux-*`). The installer contains the plugin, maps, and Viewer;
@@ -104,4 +104,5 @@ it finds the VPX installation, asks for the tables folder, shows installation pr
 plugin, and displays the installed Viewer location when complete. The Viewer is placed in
 `~/Applications` on macOS, `%LOCALAPPDATA%\Programs` with a Start Menu shortcut on Windows, or
 `~/.local/bin` with a desktop entry on Linux. Manual installation of a locally built `scoretracker`
-folder still works.
+folder still works. On macOS, open the DMG and launch `ScoreTracker Installer.app` directly from
+it; the installer itself is not copied into `/Applications`.
