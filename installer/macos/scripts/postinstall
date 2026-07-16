@@ -1,0 +1,14 @@
+#!/bin/sh
+
+# Launch the graphical installer in the signed-in user's session after the PKG
+# has placed it in /Applications. If no desktop user is signed in, the package
+# still succeeds and the installer can be opened later from Applications.
+console_user=$(/usr/bin/stat -f '%Su' /dev/console)
+if [ -n "$console_user" ] && [ "$console_user" != "root" ] && [ "$console_user" != "loginwindow" ]; then
+  console_uid=$(/usr/bin/id -u "$console_user")
+  /bin/launchctl asuser "$console_uid" \
+    /usr/bin/sudo -u "$console_user" \
+    /usr/bin/open "/Applications/ScoreTracker Installer.app" || true
+fi
+
+exit 0

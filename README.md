@@ -84,21 +84,24 @@ advanced development override. The maps are LGPL-3.0 and their license is instal
 `game_state` fields (headless PinMAME exerciser, NVRAM diffing, candidate-map generation). It is
 development tooling only and is not part of the plugin runtime.
 
-## Companion app: VPX Scoretracker Visualiser
+## Companion app: VPX Scoretracker Viewer
 
-`companion/` contains VPX Scoretracker Visualiser, the cross-platform Tauri 2 desktop application
-for browsing the local game history produced by this plugin. It ships in the release ZIPs and is
-placed by the installer, but is operationally independent: score recording never requires the app
+`companion/` contains VPX Scoretracker Viewer, the cross-platform Tauri 2 desktop application for
+browsing the local game history produced by this plugin. It is embedded in each platform's
+self-contained installer, but is operationally independent: score recording never requires the app
 to be installed or running.
 
 See [`companion/README.md`](companion/README.md) for development instructions and the v1 design.
 
 ## Installation
 
-Download the ZIP for your platform and open the bundled graphical installer:
-`ScoreTracker Installer.app` on macOS, `scoretracker-installer.exe` on Windows, or
-`scoretracker-installer` on Linux. It finds the VPX installation, asks for the tables folder, copies
-the plugin and bundled maps into VPX, enables it, and installs the VPX Scoretracker Visualiser
-app (`~/Applications` on macOS, `%LOCALAPPDATA%\Programs` plus a Start Menu shortcut on Windows,
-`~/.local/bin` with a desktop entry on Linux). Manual installation (copying the `scoretracker`
-folder yourself) still works.
+Download and run the single installer file for your platform:
+`scoretracker-installer-macos-arm64.pkg` on macOS,
+`scoretracker-installer-windows-x64.exe` on Windows, or the matching
+`scoretracker-installer-linux-*` file on Linux. On Linux, mark the downloaded file executable first
+(`chmod +x scoretracker-installer-linux-*`). The installer contains the plugin, maps, and Viewer;
+it finds the VPX installation, asks for the tables folder, shows installation progress, enables the
+plugin, and displays the installed Viewer location when complete. The Viewer is placed in
+`~/Applications` on macOS, `%LOCALAPPDATA%\Programs` with a Start Menu shortcut on Windows, or
+`~/.local/bin` with a desktop entry on Linux. Manual installation of a locally built `scoretracker`
+folder still works.
