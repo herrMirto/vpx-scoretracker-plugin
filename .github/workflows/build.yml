@@ -44,7 +44,7 @@ jobs:
             runner: macos-15
             platform: macos
             arch: arm64
-            artifact: scoretracker-installer-macos-arm64.pkg
+            artifact: scoretracker-installer-macos-arm64.dmg
     runs-on: ${{ matrix.runner }}
 
     steps:
@@ -236,20 +236,18 @@ jobs:
           if [ "${{ matrix.platform }}" = windows ]; then
             cp installer/target/release/scoretracker-installer.exe "dist/${{ matrix.artifact }}"
           elif [ "${{ matrix.platform }}" = macos ]; then
-            APP="package-root/Applications/ScoreTracker Installer.app"
-            mkdir -p "$APP/Contents/MacOS"
+            APP="dmg-root/ScoreTracker Installer.app"
+            mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
             cp installer/target/release/scoretracker-installer "$APP/Contents/MacOS/"
             cp installer/macos/Info.plist "$APP/Contents/"
+            cp companion/src-tauri/icons/icon.icns "$APP/Contents/Resources/"
             chmod +x "$APP/Contents/MacOS/scoretracker-installer"
             codesign --force --deep --sign - "$APP"
-            VERSION="${GITHUB_REF_NAME#v}"
-            if ! [[ "$VERSION" =~ ^[0-9]+([.][0-9]+){1,3}$ ]]; then VERSION="0.0.0"; fi
-            pkgbuild \
-              --root package-root \
-              --scripts installer/macos/scripts \
-              --identifier com.antigravity.scoretracker.installer \
-              --version "$VERSION" \
-              --install-location / \
+            hdiutil create \
+              -volname "ScoreTracker Installer" \
+              -srcfolder dmg-root \
+              -ov \
+              -format UDZO \
               "dist/${{ matrix.artifact }}"
           else
             cp installer/target/release/scoretracker-installer "dist/${{ matrix.artifact }}"
