@@ -13,6 +13,7 @@ use std::path::{Path, PathBuf};
 use eframe::egui;
 
 const COMPANION_ID: &str = "com.antigravity.scoretracker.companion";
+const COMPANION_APP_NAME: &str = "VPX Scoretracker Visualiser";
 
 fn main() -> Result<(), eframe::Error> {
     let options = eframe::NativeOptions {
@@ -33,6 +34,7 @@ fn main() -> Result<(), eframe::Error> {
 struct InstallResult {
     plugin_dir: PathBuf,
     tables_dir: PathBuf,
+    companion_status: String,
 }
 
 fn payload_dir() -> Result<PathBuf, String> {
@@ -106,10 +108,140 @@ fn install(payload: &Path, vpx: &Path, tables: &Path) -> Result<InstallResult, S
         json_escape(&dest.join("maps").display().to_string())
     );
     fs::write(&seed, json).map_err(|e| format!("could not write {}: {e}", seed.display()))?;
+
+    // ---- 6. companion app (best effort) ----------------------------------------
+    // A missing bundle is normal (older ZIPs, local builds); a failed copy must not
+    // fail the plugin install that already happened.
+    let companion_status = match companion_payload() {
+        None => format!("{COMPANION_APP_NAME} is not bundled with this installer."),
+        Some(bundle) => match companion_dest_root().and_then(|root| install_companion(&bundle, &root)) {
+            Ok(installed) => format!("{COMPANION_APP_NAME}: {}", installed.display()),
+            Err(e) => format!("{COMPANION_APP_NAME} could not be installed: {e}"),
+        },
+    };
+
     Ok(InstallResult {
         plugin_dir: dest,
         tables_dir: tables.to_path_buf(),
+        companion_status,
     })
+}
+
+// ---------------------------------------------------------------------------
+// companion app (VPX Scoretracker Visualiser)
+
+/// CI bundles the Visualiser with the installer; locate it if present.
+fn companion_payload() -> Option<PathBuf> {
+    let exe = exe_dir().ok()?;
+    #[cfg(target_os = "macos")]
+    {
+        let name = format!("{COMPANION_APP_NAME}.app");
+        [exe.parent()?.join("Resources").join(&name), exe.join(&name)]
+            .into_iter()
+            .find(|path| path.is_dir())
+    }
+    #[cfg(target_os = "windows")]
+    {
+        let path = exe.join("vpx-scoretracker-visualiser.exe");
+        path.is_file().then_some(path)
+    }
+    #[cfg(target_os = "linux")]
+    {
+        fs::read_dir(exe)
+            .ok()?
+            .flatten()
+            .map(|entry| entry.path())
+            .find(|path| {
+                path.is_file()
+                    && path
+                        .extension()
+                        .is_some_and(|ext| ext.eq_ignore_ascii_case("AppImage"))
+            })
+    }
+}
+
+/// Per-user, no-elevation location the user can reach through the OS app launcher.
+fn companion_dest_root() -> Result<PathBuf, String> {
+    #[cfg(target_os = "macos")]
+    return Ok(home_dir()
+        .ok_or("cannot determine home directory")?
+        .join("Applications"));
+    #[cfg(target_os = "windows")]
+    return Ok(PathBuf::from(
+        std::env::var_os("LOCALAPPDATA").ok_or("LOCALAPPDATA is not set")?,
+    )
+    .join("Programs"));
+    #[cfg(target_os = "linux")]
+    return Ok(home_dir()
+        .ok_or("cannot determine home directory")?
+        .join(".local/bin"));
+}
+
+#[cfg(target_os = "macos")]
+fn install_companion(bundle: &Path, apps_dir: &Path) -> Result<PathBuf, String> {
+    fs::create_dir_all(apps_dir)
+        .map_err(|e| format!("could not create {}: {e}", apps_dir.display()))?;
+    let dest = apps_dir.join(format!("{COMPANION_APP_NAME}.app"));
+    if dest.exists() {
+        fs::remove_dir_all(&dest).map_err(|e| format!("could not replace {}: {e}", dest.display()))?;
+    }
+    // ditto preserves permissions, extended attributes and code signatures
+    let status = std::process::Command::new("ditto")
+        .arg(bundle)
+        .arg(&dest)
+        .status()
+        .map_err(|e| format!("could not run ditto: {e}"))?;
+    if !status.success() {
+        return Err(format!("ditto failed copying to {}", dest.display()));
+    }
+    Ok(dest)
+}
+
+#[cfg(target_os = "windows")]
+fn install_companion(exe: &Path, programs_dir: &Path) -> Result<PathBuf, String> {
+    let dir = programs_dir.join(COMPANION_APP_NAME);
+    fs::create_dir_all(&dir).map_err(|e| format!("could not create {}: {e}", dir.display()))?;
+    let dest = dir.join(format!("{COMPANION_APP_NAME}.exe"));
+    fs::copy(exe, &dest).map_err(|e| format!("could not copy to {}: {e}", dest.display()))?;
+    // Start Menu shortcut, best effort: the app is reachable in Programs either way
+    if let Some(appdata) = std::env::var_os("APPDATA") {
+        let lnk = PathBuf::from(appdata)
+            .join("Microsoft\\Windows\\Start Menu\\Programs")
+            .join(format!("{COMPANION_APP_NAME}.lnk"));
+        let script = format!(
+            "$s=(New-Object -ComObject WScript.Shell).CreateShortcut('{}');$s.TargetPath='{}';$s.Save()",
+            lnk.display(),
+            dest.display()
+        );
+        let _ = std::process::Command::new("powershell")
+            .args(["-NoProfile", "-NonInteractive", "-WindowStyle", "Hidden", "-Command", &script])
+            .status();
+    }
+    Ok(dest)
+}
+
+#[cfg(target_os = "linux")]
+fn install_companion(appimage: &Path, bin_dir: &Path) -> Result<PathBuf, String> {
+    use std::os::unix::fs::PermissionsExt;
+
+    fs::create_dir_all(bin_dir)
+        .map_err(|e| format!("could not create {}: {e}", bin_dir.display()))?;
+    let dest = bin_dir.join("vpx-scoretracker-visualiser.AppImage");
+    fs::copy(appimage, &dest).map_err(|e| format!("could not copy to {}: {e}", dest.display()))?;
+    fs::set_permissions(&dest, fs::Permissions::from_mode(0o755))
+        .map_err(|e| format!("could not mark {} executable: {e}", dest.display()))?;
+    // Desktop entry, best effort: the AppImage runs from ~/.local/bin either way
+    if let Some(home) = home_dir() {
+        let apps = home.join(".local/share/applications");
+        if fs::create_dir_all(&apps).is_ok() {
+            let entry = format!(
+                "[Desktop Entry]\nType=Application\nName={COMPANION_APP_NAME}\nExec=\"{}\"\nCategories=Game;\nTerminal=false\n",
+                dest.display()
+            );
+            let _ = fs::write(apps.join("vpx-scoretracker-visualiser.desktop"), entry);
+        }
+    }
+    Ok(dest)
 }
 
 // ---------------------------------------------------------------------------
@@ -241,6 +373,7 @@ impl InstallerApp {
                 ui.add_space(8.0);
                 ui.label(format!("Plugin: {}", result.plugin_dir.display()));
                 ui.label(format!("Tables: {}", result.tables_dir.display()));
+                ui.label(&result.companion_status);
                 ui.add_space(8.0);
                 ui.label("Start a PinMAME table in VPX to begin recording scores.");
             }
@@ -631,6 +764,25 @@ mod tests {
             resolve_plugins_dir(&root),
             Some(app.join("Contents/Resources/plugins"))
         );
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn installs_the_companion_app_bundle() {
+        let root = test_root("companion");
+        let bundle = root.join(format!("{COMPANION_APP_NAME}.app"));
+        fs::create_dir_all(bundle.join("Contents/MacOS")).unwrap();
+        fs::write(bundle.join("Contents/MacOS/visualiser"), b"binary").unwrap();
+
+        let apps = root.join("Applications");
+        let dest = install_companion(&bundle, &apps).unwrap();
+        assert_eq!(dest, apps.join(format!("{COMPANION_APP_NAME}.app")));
+        assert!(dest.join("Contents/MacOS/visualiser").is_file());
+
+        // Replaces an existing install rather than merging into it
+        fs::write(dest.join("stale-file"), b"old").unwrap();
+        let dest = install_companion(&bundle, &apps).unwrap();
+        assert!(!dest.join("stale-file").exists());
         fs::remove_dir_all(root).unwrap();
     }
 }
