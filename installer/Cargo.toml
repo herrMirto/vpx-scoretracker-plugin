@@ -15,4 +15,11 @@ lto = true
 
 [dependencies]
 eframe = "0.29"
+flate2 = "1"
 rfd = { version = "0.17", default-features = false, features = ["xdg-portal"] }
+tar = "0.4"
+tempfile = "3"
+
+[build-dependencies]
+flate2 = "1"
+tar = "0.4"

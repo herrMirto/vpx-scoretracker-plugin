@@ -79,5 +79,5 @@ pub fn run() {
             load_nvram
         ])
         .run(tauri::generate_context!())
-        .expect("error while running VPX Scoretracker Visualiser");
+        .expect("error while running VPX Scoretracker Viewer");
 }

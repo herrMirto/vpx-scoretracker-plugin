@@ -1,19 +1,27 @@
 // Installer for the ScoreTracker VPX plugin.
 //
-// Ships in the release ZIP with the scoretracker/ payload. Shows a single
-// window with folder pickers for VPinballX and the tables folder, copies the
-// plugin into VPX's plugins directory, enables it in VPinballX.ini, and seeds
-// the companion app configuration.
+// Embeds the platform-specific plugin and Viewer payload in one executable.
+// Shows a window with folder pickers for VPinballX and the tables folder,
+// installs the bundled files, enables the plugin in VPinballX.ini, and seeds
+// the Viewer configuration.
 
 #![cfg_attr(target_os = "windows", windows_subsystem = "windows")]
 
 use std::fs;
+use std::io::Cursor;
 use std::path::{Path, PathBuf};
+use std::sync::mpsc::{self, Receiver};
+use std::thread;
+use std::time::Duration;
 
 use eframe::egui;
+use flate2::read::GzDecoder;
 
 const COMPANION_ID: &str = "com.antigravity.scoretracker.companion";
-const COMPANION_APP_NAME: &str = "VPX Scoretracker Visualiser";
+const COMPANION_APP_NAME: &str = "VPX Scoretracker Viewer";
+const LEGACY_COMPANION_APP_NAME: &str = "VPX Scoretracker Visualiser";
+const EMBEDDED_PAYLOAD: &[u8] =
+    include_bytes!(concat!(env!("OUT_DIR"), "/scoretracker-payload.tar.gz"));
 
 fn main() -> Result<(), eframe::Error> {
     let options = eframe::NativeOptions {
@@ -37,19 +45,48 @@ struct InstallResult {
     companion_status: String,
 }
 
-fn payload_dir() -> Result<PathBuf, String> {
-    let exe = exe_dir()?;
-    let candidates = [
-        exe.join("scoretracker"),
-        exe.parent()
-            .unwrap_or(&exe)
-            .join("Resources")
-            .join("scoretracker"),
-    ];
-    candidates
-        .into_iter()
-        .find(|path| path.join("plugin.cfg").is_file())
-        .ok_or_else(|| "plugin payload is missing from the installer".into())
+fn extract_payload() -> Result<tempfile::TempDir, String> {
+    extract_payload_from(EMBEDDED_PAYLOAD)
+}
+
+fn extract_payload_from(archive_bytes: &[u8]) -> Result<tempfile::TempDir, String> {
+    let temp =
+        tempfile::tempdir().map_err(|e| format!("could not create temporary folder: {e}"))?;
+    let decoder = GzDecoder::new(Cursor::new(archive_bytes));
+    let mut archive = tar::Archive::new(decoder);
+    archive
+        .unpack(temp.path())
+        .map_err(|e| format!("could not extract the bundled installer files: {e}"))?;
+    Ok(temp)
+}
+
+#[cfg(test)]
+mod payload_tests {
+    use super::*;
+    use flate2::write::GzEncoder;
+    use flate2::Compression;
+
+    #[test]
+    fn extracts_and_validates_an_embedded_payload() {
+        let source = tempfile::tempdir().unwrap();
+        let plugin = source.path().join("scoretracker");
+        fs::create_dir_all(plugin.join("maps/maps")).unwrap();
+        fs::create_dir_all(plugin.join("maps/platforms")).unwrap();
+        fs::write(plugin.join("plugin.cfg"), b"[configuration]\n").unwrap();
+        fs::write(plugin.join("maps/index.json"), b"{}\n").unwrap();
+
+        let mut bytes = Vec::new();
+        {
+            let encoder = GzEncoder::new(&mut bytes, Compression::fast());
+            let mut archive = tar::Builder::new(encoder);
+            archive.append_dir_all(".", source.path()).unwrap();
+            let encoder = archive.into_inner().unwrap();
+            encoder.finish().unwrap();
+        }
+
+        let extracted = extract_payload_from(&bytes).unwrap();
+        validate_payload(&extracted.path().join("scoretracker")).unwrap();
+    }
 }
 
 fn validate_payload(payload: &Path) -> Result<(), String> {
@@ -73,7 +110,17 @@ fn validate_payload(payload: &Path) -> Result<(), String> {
     Ok(())
 }
 
-fn install(payload: &Path, vpx: &Path, tables: &Path) -> Result<InstallResult, String> {
+fn install(
+    vpx: &Path,
+    tables: &Path,
+    mut progress: impl FnMut(f32, &str),
+) -> Result<InstallResult, String> {
+    progress(0.05, "Extracting bundled files…");
+    let extracted = extract_payload()?;
+    let payload = extracted.path().join("scoretracker");
+    validate_payload(&payload)?;
+
+    progress(0.20, "Locating Visual Pinball X…");
     let plugins_dir = resolve_plugins_dir(vpx).ok_or_else(|| {
         format!(
             "Could not find a VPinballX installation in {}",
@@ -81,7 +128,7 @@ fn install(payload: &Path, vpx: &Path, tables: &Path) -> Result<InstallResult, S
         )
     })?;
 
-    // ---- 3. copy the plugin --------------------------------------------------
+    progress(0.30, "Installing the ScoreTracker plugin and maps…");
     let dest = plugins_dir.join("scoretracker");
     if dest.exists() {
         fs::remove_dir_all(&dest)
@@ -89,15 +136,12 @@ fn install(payload: &Path, vpx: &Path, tables: &Path) -> Result<InstallResult, S
     }
     copy_dir(&payload, &dest)?;
 
-    // ---- 4. enable in VPinballX.ini ------------------------------------------
-    match find_ini(&vpx) {
-        Some(ini) => {
-            enable_in_ini(&ini)?;
-        }
-        None => {}
+    progress(0.58, "Enabling the plugin…");
+    if let Some(ini) = find_ini(vpx) {
+        enable_in_ini(&ini)?;
     }
 
-    // ---- 5. companion seed config --------------------------------------------
+    progress(0.68, "Writing Viewer configuration…");
     let cfg_dir = companion_config_dir()?;
     fs::create_dir_all(&cfg_dir)
         .map_err(|e| format!("could not create {}: {e}", cfg_dir.display()))?;
@@ -109,17 +153,20 @@ fn install(payload: &Path, vpx: &Path, tables: &Path) -> Result<InstallResult, S
     );
     fs::write(&seed, json).map_err(|e| format!("could not write {}: {e}", seed.display()))?;
 
-    // ---- 6. companion app (best effort) ----------------------------------------
-    // A missing bundle is normal (older ZIPs, local builds); a failed copy must not
-    // fail the plugin install that already happened.
-    let companion_status = match companion_payload() {
+    progress(0.78, "Installing VPX Scoretracker Viewer…");
+    // A failed Viewer copy must not roll back the plugin install that already
+    // succeeded, but the completion screen makes the failure explicit.
+    let companion_status = match companion_payload(extracted.path()) {
         None => format!("{COMPANION_APP_NAME} is not bundled with this installer."),
-        Some(bundle) => match companion_dest_root().and_then(|root| install_companion(&bundle, &root)) {
-            Ok(installed) => format!("{COMPANION_APP_NAME}: {}", installed.display()),
-            Err(e) => format!("{COMPANION_APP_NAME} could not be installed: {e}"),
-        },
+        Some(bundle) => {
+            match companion_dest_root().and_then(|root| install_companion(&bundle, &root)) {
+                Ok(installed) => format!("Viewer: {}", installed.display()),
+                Err(e) => format!("{COMPANION_APP_NAME} could not be installed: {e}"),
+            }
+        }
     };
 
+    progress(1.0, "Installation complete");
     Ok(InstallResult {
         plugin_dir: dest,
         tables_dir: tables.to_path_buf(),
@@ -128,35 +175,24 @@ fn install(payload: &Path, vpx: &Path, tables: &Path) -> Result<InstallResult, S
 }
 
 // ---------------------------------------------------------------------------
-// companion app (VPX Scoretracker Visualiser)
+// companion app (VPX Scoretracker Viewer)
 
-/// CI bundles the Visualiser with the installer; locate it if present.
-fn companion_payload() -> Option<PathBuf> {
-    let exe = exe_dir().ok()?;
+/// CI embeds the Viewer with the installer; locate it in the extracted payload.
+fn companion_payload(payload_root: &Path) -> Option<PathBuf> {
     #[cfg(target_os = "macos")]
     {
-        let name = format!("{COMPANION_APP_NAME}.app");
-        [exe.parent()?.join("Resources").join(&name), exe.join(&name)]
-            .into_iter()
-            .find(|path| path.is_dir())
+        let path = payload_root.join(format!("{COMPANION_APP_NAME}.app"));
+        path.is_dir().then_some(path)
     }
     #[cfg(target_os = "windows")]
     {
-        let path = exe.join("vpx-scoretracker-visualiser.exe");
+        let path = payload_root.join("vpx-scoretracker-viewer.exe");
         path.is_file().then_some(path)
     }
     #[cfg(target_os = "linux")]
     {
-        fs::read_dir(exe)
-            .ok()?
-            .flatten()
-            .map(|entry| entry.path())
-            .find(|path| {
-                path.is_file()
-                    && path
-                        .extension()
-                        .is_some_and(|ext| ext.eq_ignore_ascii_case("AppImage"))
-            })
+        let path = payload_root.join("vpx-scoretracker-viewer.AppImage");
+        path.is_file().then_some(path)
     }
 }
 
@@ -167,10 +203,10 @@ fn companion_dest_root() -> Result<PathBuf, String> {
         .ok_or("cannot determine home directory")?
         .join("Applications"));
     #[cfg(target_os = "windows")]
-    return Ok(PathBuf::from(
-        std::env::var_os("LOCALAPPDATA").ok_or("LOCALAPPDATA is not set")?,
-    )
-    .join("Programs"));
+    return Ok(
+        PathBuf::from(std::env::var_os("LOCALAPPDATA").ok_or("LOCALAPPDATA is not set")?)
+            .join("Programs"),
+    );
     #[cfg(target_os = "linux")]
     return Ok(home_dir()
         .ok_or("cannot determine home directory")?
@@ -183,7 +219,8 @@ fn install_companion(bundle: &Path, apps_dir: &Path) -> Result<PathBuf, String> 
         .map_err(|e| format!("could not create {}: {e}", apps_dir.display()))?;
     let dest = apps_dir.join(format!("{COMPANION_APP_NAME}.app"));
     if dest.exists() {
-        fs::remove_dir_all(&dest).map_err(|e| format!("could not replace {}: {e}", dest.display()))?;
+        fs::remove_dir_all(&dest)
+            .map_err(|e| format!("could not replace {}: {e}", dest.display()))?;
     }
     // ditto preserves permissions, extended attributes and code signatures
     let status = std::process::Command::new("ditto")
@@ -194,6 +231,8 @@ fn install_companion(bundle: &Path, apps_dir: &Path) -> Result<PathBuf, String> 
     if !status.success() {
         return Err(format!("ditto failed copying to {}", dest.display()));
     }
+    let legacy = apps_dir.join(format!("{LEGACY_COMPANION_APP_NAME}.app"));
+    let _ = fs::remove_dir_all(legacy);
     Ok(dest)
 }
 
@@ -203,18 +242,26 @@ fn install_companion(exe: &Path, programs_dir: &Path) -> Result<PathBuf, String>
     fs::create_dir_all(&dir).map_err(|e| format!("could not create {}: {e}", dir.display()))?;
     let dest = dir.join(format!("{COMPANION_APP_NAME}.exe"));
     fs::copy(exe, &dest).map_err(|e| format!("could not copy to {}: {e}", dest.display()))?;
+    let _ = fs::remove_dir_all(programs_dir.join(LEGACY_COMPANION_APP_NAME));
     // Start Menu shortcut, best effort: the app is reachable in Programs either way
     if let Some(appdata) = std::env::var_os("APPDATA") {
-        let lnk = PathBuf::from(appdata)
-            .join("Microsoft\\Windows\\Start Menu\\Programs")
-            .join(format!("{COMPANION_APP_NAME}.lnk"));
+        let shortcuts = PathBuf::from(appdata).join("Microsoft\\Windows\\Start Menu\\Programs");
+        let _ = fs::remove_file(shortcuts.join(format!("{LEGACY_COMPANION_APP_NAME}.lnk")));
+        let lnk = shortcuts.join(format!("{COMPANION_APP_NAME}.lnk"));
         let script = format!(
             "$s=(New-Object -ComObject WScript.Shell).CreateShortcut('{}');$s.TargetPath='{}';$s.Save()",
             lnk.display(),
             dest.display()
         );
         let _ = std::process::Command::new("powershell")
-            .args(["-NoProfile", "-NonInteractive", "-WindowStyle", "Hidden", "-Command", &script])
+            .args([
+                "-NoProfile",
+                "-NonInteractive",
+                "-WindowStyle",
+                "Hidden",
+                "-Command",
+                &script,
+            ])
             .status();
     }
     Ok(dest)
@@ -226,19 +273,21 @@ fn install_companion(appimage: &Path, bin_dir: &Path) -> Result<PathBuf, String>
 
     fs::create_dir_all(bin_dir)
         .map_err(|e| format!("could not create {}: {e}", bin_dir.display()))?;
-    let dest = bin_dir.join("vpx-scoretracker-visualiser.AppImage");
+    let dest = bin_dir.join("vpx-scoretracker-viewer.AppImage");
     fs::copy(appimage, &dest).map_err(|e| format!("could not copy to {}: {e}", dest.display()))?;
     fs::set_permissions(&dest, fs::Permissions::from_mode(0o755))
         .map_err(|e| format!("could not mark {} executable: {e}", dest.display()))?;
+    let _ = fs::remove_file(bin_dir.join("vpx-scoretracker-visualiser.AppImage"));
     // Desktop entry, best effort: the AppImage runs from ~/.local/bin either way
     if let Some(home) = home_dir() {
         let apps = home.join(".local/share/applications");
         if fs::create_dir_all(&apps).is_ok() {
+            let _ = fs::remove_file(apps.join("vpx-scoretracker-visualiser.desktop"));
             let entry = format!(
                 "[Desktop Entry]\nType=Application\nName={COMPANION_APP_NAME}\nExec=\"{}\"\nCategories=Game;\nTerminal=false\n",
                 dest.display()
             );
-            let _ = fs::write(apps.join("vpx-scoretracker-visualiser.desktop"), entry);
+            let _ = fs::write(apps.join("vpx-scoretracker-viewer.desktop"), entry);
         }
     }
     Ok(dest)
@@ -249,12 +298,21 @@ fn install_companion(appimage: &Path, bin_dir: &Path) -> Result<PathBuf, String>
 
 enum Screen {
     Form,
+    Installing {
+        receiver: Receiver<InstallEvent>,
+        progress: f32,
+        message: String,
+    },
     Done(InstallResult),
     Failed(String),
 }
 
+enum InstallEvent {
+    Progress(f32, String),
+    Finished(Result<InstallResult, String>),
+}
+
 struct InstallerApp {
-    payload: Result<PathBuf, String>,
     vpx: String,
     tables: String,
     screen: Screen,
@@ -264,7 +322,6 @@ impl InstallerApp {
     /// Detection only prefills the form fields; nothing is installed until the
     /// user has both paths on screen and clicks Install.
     fn new() -> Self {
-        let payload = payload_dir().and_then(|dir| validate_payload(&dir).map(|()| dir));
         let vpx = detect_vpx()
             .map(|path| path.display().to_string())
             .unwrap_or_default();
@@ -275,7 +332,6 @@ impl InstallerApp {
             tables.display().to_string()
         };
         Self {
-            payload,
             vpx,
             tables,
             screen: Screen::Form,
@@ -285,11 +341,6 @@ impl InstallerApp {
     fn form_ui(&mut self, ui: &mut egui::Ui) {
         ui.heading("Install ScoreTracker");
         ui.add_space(8.0);
-
-        if let Err(message) = &self.payload {
-            ui.colored_label(ui.visuals().error_fg_color, message);
-            ui.add_space(8.0);
-        }
 
         ui.label("VPinballX folder:");
         Self::folder_row(ui, &mut self.vpx, "Choose the folder containing VPinballX");
@@ -323,17 +374,24 @@ impl InstallerApp {
         }
         ui.add_space(12.0);
 
-        let ready = self.payload.is_ok() && plugins_dir.is_some() && tables_dir.is_some();
+        let ready = plugins_dir.is_some() && tables_dir.is_some();
         if ui
             .add_enabled(ready, egui::Button::new("Install"))
             .clicked()
         {
-            let payload = self.payload.as_ref().expect("checked by `ready`").clone();
             let vpx = Self::existing_dir(&self.vpx).expect("checked by `ready`");
             let tables = tables_dir.expect("checked by `ready`");
-            self.screen = match install(&payload, &vpx, &tables) {
-                Ok(result) => Screen::Done(result),
-                Err(message) => Screen::Failed(message),
+            let (sender, receiver) = mpsc::channel();
+            thread::spawn(move || {
+                let result = install(&vpx, &tables, |fraction, message| {
+                    let _ = sender.send(InstallEvent::Progress(fraction, message.to_owned()));
+                });
+                let _ = sender.send(InstallEvent::Finished(result));
+            });
+            self.screen = Screen::Installing {
+                receiver,
+                progress: 0.0,
+                message: "Preparing installation…".into(),
             };
         }
     }
@@ -366,6 +424,52 @@ impl InstallerApp {
         path.is_dir().then_some(path)
     }
 
+    fn installing_ui(&self, ui: &mut egui::Ui) {
+        let Screen::Installing {
+            progress, message, ..
+        } = &self.screen
+        else {
+            return;
+        };
+        ui.heading("Installing ScoreTracker");
+        ui.add_space(16.0);
+        ui.label(message);
+        ui.add_space(8.0);
+        ui.add(
+            egui::ProgressBar::new(*progress)
+                .show_percentage()
+                .animate(true),
+        );
+        ui.add_space(8.0);
+        ui.weak("Please keep this window open while the files are installed.");
+    }
+
+    fn poll_install(&mut self) {
+        let events: Vec<InstallEvent> = match &self.screen {
+            Screen::Installing { receiver, .. } => receiver.try_iter().collect(),
+            _ => return,
+        };
+        for event in events {
+            match event {
+                InstallEvent::Progress(fraction, new_message) => {
+                    if let Screen::Installing {
+                        progress, message, ..
+                    } = &mut self.screen
+                    {
+                        *progress = fraction;
+                        *message = new_message;
+                    }
+                }
+                InstallEvent::Finished(result) => {
+                    self.screen = match result {
+                        Ok(result) => Screen::Done(result),
+                        Err(message) => Screen::Failed(message),
+                    };
+                }
+            }
+        }
+    }
+
     fn result_ui(&self, ui: &mut egui::Ui, ctx: &egui::Context) {
         match &self.screen {
             Screen::Done(result) => {
@@ -382,7 +486,9 @@ impl InstallerApp {
                 ui.add_space(8.0);
                 ui.colored_label(ui.visuals().error_fg_color, message);
             }
-            Screen::Form => unreachable!("result_ui is only called for result screens"),
+            Screen::Form | Screen::Installing { .. } => {
+                unreachable!("result_ui is only called for result screens")
+            }
         }
         ui.add_space(12.0);
         if ui.button("Close").clicked() {
@@ -393,13 +499,15 @@ impl InstallerApp {
 
 impl eframe::App for InstallerApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
-        egui::CentralPanel::default().show(ctx, |ui| {
-            if matches!(self.screen, Screen::Form) {
-                self.form_ui(ui);
-            } else {
-                self.result_ui(ui, ctx);
-            }
+        self.poll_install();
+        egui::CentralPanel::default().show(ctx, |ui| match &self.screen {
+            Screen::Form => self.form_ui(ui),
+            Screen::Installing { .. } => self.installing_ui(ui),
+            Screen::Done(_) | Screen::Failed(_) => self.result_ui(ui, ctx),
         });
+        if matches!(&self.screen, Screen::Installing { .. }) {
+            ctx.request_repaint_after(Duration::from_millis(50));
+        }
     }
 }
 
@@ -647,11 +755,6 @@ fn home_dir() -> Option<PathBuf> {
     std::env::var_os(if cfg!(windows) { "USERPROFILE" } else { "HOME" }).map(PathBuf::from)
 }
 
-fn exe_dir() -> Result<PathBuf, String> {
-    let exe = std::env::current_exe().map_err(|e| format!("cannot locate installer: {e}"))?;
-    Ok(exe.parent().unwrap_or(Path::new(".")).to_path_buf())
-}
-
 // ---------------------------------------------------------------------------
 // file operations
 
@@ -772,12 +875,16 @@ mod tests {
         let root = test_root("companion");
         let bundle = root.join(format!("{COMPANION_APP_NAME}.app"));
         fs::create_dir_all(bundle.join("Contents/MacOS")).unwrap();
-        fs::write(bundle.join("Contents/MacOS/visualiser"), b"binary").unwrap();
+        fs::write(bundle.join("Contents/MacOS/viewer"), b"binary").unwrap();
 
         let apps = root.join("Applications");
+        fs::create_dir_all(apps.join(format!("{LEGACY_COMPANION_APP_NAME}.app"))).unwrap();
         let dest = install_companion(&bundle, &apps).unwrap();
         assert_eq!(dest, apps.join(format!("{COMPANION_APP_NAME}.app")));
-        assert!(dest.join("Contents/MacOS/visualiser").is_file());
+        assert!(dest.join("Contents/MacOS/viewer").is_file());
+        assert!(!apps
+            .join(format!("{LEGACY_COMPANION_APP_NAME}.app"))
+            .exists());
 
         // Replaces an existing install rather than merging into it
         fs::write(dest.join("stale-file"), b"old").unwrap();
