@@ -80,8 +80,10 @@ if(BUILD_SHARED)
             SUFFIX ".dylib"
          )
       else()
+         # VPX installs libpinmame inside the sibling plugins/pinmame folder.
+         # Keep the VPX build root as a fallback for older layouts.
          set_target_properties(ScoreTrackerPlugin PROPERTIES
-            INSTALL_RPATH "\$ORIGIN/../.."
+            INSTALL_RPATH "\$ORIGIN/../pinmame;\$ORIGIN/../.."
             BUILD_WITH_INSTALL_RPATH TRUE
          )
       endif()

@@ -204,7 +204,10 @@ jobs:
           elif [ "${{ matrix.platform }}" = macos ]; then
             npm run tauri build -- --bundles app
           else
-            npm run tauri build -- --bundles appimage
+            # The outer ScoreTracker installer is already the single-file
+            # package. Embed the raw Tauri binary so it uses the target
+            # system's matching GLib/WebKitGTK stack at runtime.
+            npm run tauri build -- --no-bundle
           fi
 
       - name: Stage embedded installer payload
@@ -222,7 +225,7 @@ jobs:
           elif [ "${{ matrix.platform }}" = macos ]; then
             cp -R "companion/src-tauri/target/release/bundle/macos/VPX Scoretracker Viewer.app" installer-payload/
           else
-            cp companion/src-tauri/target/release/bundle/appimage/*.AppImage installer-payload/vpx-scoretracker-viewer.AppImage
+            cp companion/src-tauri/target/release/vpx-scoretracker-viewer installer-payload/
           fi
 
       - name: Compile self-contained installer
