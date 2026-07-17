@@ -93,7 +93,8 @@ CI builds and tests on Windows, macOS, and Linux. Release artifacts should inclu
 
 - Windows: NSIS installer initially; MSI may be added when deployment demand justifies it.
 - macOS: universal or separate Apple Silicon/Intel `.app` bundles distributed in a DMG.
-- Linux: AppImage plus a Debian package initially; RPM can follow demand.
+- Linux: a native Tauri binary embedded in the single-file ScoreTracker installer. It uses the
+  host's matching WebKitGTK/GLib stack instead of mixing AppImage libraries with system modules.
 
 Signing and notarization are release-pipeline concerns, never runtime requirements. Unsigned local
 development builds remain possible. The companion and plugin share a release version but keep

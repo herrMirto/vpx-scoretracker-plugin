@@ -191,7 +191,7 @@ fn companion_payload(payload_root: &Path) -> Option<PathBuf> {
     }
     #[cfg(target_os = "linux")]
     {
-        let path = payload_root.join("vpx-scoretracker-viewer.AppImage");
+        let path = payload_root.join("vpx-scoretracker-viewer");
         path.is_file().then_some(path)
     }
 }
@@ -268,17 +268,18 @@ fn install_companion(exe: &Path, programs_dir: &Path) -> Result<PathBuf, String>
 }
 
 #[cfg(target_os = "linux")]
-fn install_companion(appimage: &Path, bin_dir: &Path) -> Result<PathBuf, String> {
+fn install_companion(binary: &Path, bin_dir: &Path) -> Result<PathBuf, String> {
     use std::os::unix::fs::PermissionsExt;
 
     fs::create_dir_all(bin_dir)
         .map_err(|e| format!("could not create {}: {e}", bin_dir.display()))?;
-    let dest = bin_dir.join("vpx-scoretracker-viewer.AppImage");
-    fs::copy(appimage, &dest).map_err(|e| format!("could not copy to {}: {e}", dest.display()))?;
+    let dest = bin_dir.join("vpx-scoretracker-viewer");
+    fs::copy(binary, &dest).map_err(|e| format!("could not copy to {}: {e}", dest.display()))?;
     fs::set_permissions(&dest, fs::Permissions::from_mode(0o755))
         .map_err(|e| format!("could not mark {} executable: {e}", dest.display()))?;
+    let _ = fs::remove_file(bin_dir.join("vpx-scoretracker-viewer.AppImage"));
     let _ = fs::remove_file(bin_dir.join("vpx-scoretracker-visualiser.AppImage"));
-    // Desktop entry, best effort: the AppImage runs from ~/.local/bin either way
+    // Desktop entry, best effort: the binary runs from ~/.local/bin either way
     if let Some(home) = home_dir() {
         let apps = home.join(".local/share/applications");
         if fs::create_dir_all(&apps).is_ok() {
@@ -939,6 +940,28 @@ mod non_macos_tests {
         create_vpx_executable(&build);
         assert_eq!(find_vpx_install_dir(&root), Some(build.clone()));
         assert_eq!(resolve_plugins_dir(&root), Some(build.join("plugins")));
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn installs_the_companion_binary_and_removes_the_old_appimage() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let root = test_root("companion");
+        let payload = root.join("payload/vpx-scoretracker-viewer");
+        fs::create_dir_all(payload.parent().unwrap()).unwrap();
+        fs::write(&payload, b"viewer").unwrap();
+
+        let bin = root.join("bin");
+        fs::create_dir_all(&bin).unwrap();
+        fs::write(bin.join("vpx-scoretracker-viewer.AppImage"), b"old").unwrap();
+
+        let dest = install_companion(&payload, &bin).unwrap();
+        assert_eq!(dest, bin.join("vpx-scoretracker-viewer"));
+        assert_eq!(fs::read(&dest).unwrap(), b"viewer");
+        assert_eq!(dest.metadata().unwrap().permissions().mode() & 0o111, 0o111);
+        assert!(!bin.join("vpx-scoretracker-viewer.AppImage").exists());
         fs::remove_dir_all(root).unwrap();
     }
 }
