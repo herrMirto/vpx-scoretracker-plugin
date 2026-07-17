@@ -693,4 +693,7 @@ async function initialize(): Promise<void> {
   if (localStorage.getItem(TABLES_ROOT_KEY)) void scanConfiguredRoot();
 }
 
+// Paint the application immediately. Installer defaults are loaded
+// asynchronously and will update the view once IPC is ready.
+render();
 void initialize();
