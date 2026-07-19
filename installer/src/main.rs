@@ -637,7 +637,7 @@ fn default_tables() -> PathBuf {
 fn resolve_plugins_dir(vpx: &Path) -> Option<PathBuf> {
     let location = resolve_vpx_location(vpx)?;
     #[cfg(target_os = "macos")]
-    return Some(location.join("Contents/Resources/plugins"));
+    return Some(location.join("Contents/PlugIns"));
     #[cfg(not(target_os = "macos"))]
     return Some(location.join("plugins"));
 }
@@ -911,7 +911,7 @@ mod tests {
         assert_eq!(find_vpx_app(&app), Some(app.clone()));
         assert_eq!(
             resolve_plugins_dir(&app),
-            Some(app.join("Contents/Resources/plugins"))
+            Some(app.join("Contents/PlugIns"))
         );
         fs::remove_dir_all(root).unwrap();
     }
@@ -924,7 +924,7 @@ mod tests {
         assert_eq!(find_vpx_app(&root), Some(app.clone()));
         assert_eq!(
             resolve_plugins_dir(&root),
-            Some(app.join("Contents/Resources/plugins"))
+            Some(app.join("Contents/PlugIns"))
         );
         fs::remove_dir_all(root).unwrap();
     }

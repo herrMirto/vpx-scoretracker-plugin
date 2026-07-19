@@ -3,7 +3,7 @@
 # project, using vpinball's third-party/include headers and its stock,
 # unmodified libpinmame as an SDK reference only. Mirrors how a real user
 # would install a prebuilt plugin release: compile once, drop the .dylib and
-# plugin.cfg into the app bundle's Resources/plugins/scoretracker folder.
+# plugin.cfg into the app bundle's PlugIns/scoretracker folder.
 #
 # Usage: ./build-standalone.sh [path-to-vpinball-checkout] [path-to-nvram-maps]
 # Defaults to ~/vpinball; when a maps path is given (a checkout of
@@ -59,7 +59,7 @@ echo "Linking scoretracker-plugin.dylib..."
   -L"$VPINBALL_DIR/third-party/runtime-libs/macos-$ARCH" \
   -Wl,-rpath,@executable_path/../Frameworks -lpinmame
 
-DEST="$APP_BUNDLE/Contents/Resources/plugins/scoretracker"
+DEST="$APP_BUNDLE/Contents/PlugIns/scoretracker"
 mkdir -p "$DEST"
 cp "$WORK_DIR/scoretracker-plugin.dylib" "$DEST/scoretracker-plugin.dylib"
 cp "$PLUGIN_DIR/plugin.cfg" "$DEST/plugin.cfg"
