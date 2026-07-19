@@ -106,3 +106,16 @@ plugin, and displays the installed Viewer location when complete. The Viewer is 
 `~/.local/bin` with a desktop entry on Linux. Manual installation of a locally built `scoretracker`
 folder still works. On macOS, open the DMG and launch `ScoreTracker Installer.app` directly from
 it; the installer itself is not copied into `/Applications`.
+
+## Updates
+
+VPX Scoretracker Viewer checks the latest stable GitHub Release at most once per day. The
+**Updates** button can check manually. When a newer version is available, the Viewer downloads the
+installer for the current platform, verifies its GitHub-provided SHA-256 digest, starts it, and
+exits so its own files can be replaced safely. The installer remembers the VPX and tables folders
+from the previous installation. Close VPX before applying an update.
+
+The nightly VPX compatibility workflow builds every platform against the same resolved VPX master
+commit and its pinned PinMAME revision at 01:00 Europe/Berlin time. Nightly builds validate
+compatibility but are not published as stable releases. Tagged releases also include
+`update-manifest.json` with their VPX, PinMAME, artifact size, and checksum metadata.

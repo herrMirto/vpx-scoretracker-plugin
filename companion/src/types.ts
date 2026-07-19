@@ -36,3 +36,15 @@ export interface NvramDocument {
   rom: string;
   highScores: MachineHighScore[];
 }
+
+export interface UpdateInfo {
+  version: string;
+  currentVersion: string;
+  releaseUrl: string;
+  releaseNotes: string;
+  publishedAt: string | null;
+  assetName: string;
+  downloadUrl: string;
+  digest: string;
+  size: number;
+}

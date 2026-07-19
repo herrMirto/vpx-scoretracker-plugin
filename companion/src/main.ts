@@ -1,11 +1,13 @@
 import { invoke } from "@tauri-apps/api/core";
 import { open } from "@tauri-apps/plugin-dialog";
 import "./styles.css";
-import type { GameRecord, NvramDocument, ScanSnapshot } from "./types";
+import type { GameRecord, NvramDocument, ScanSnapshot, UpdateInfo } from "./types";
 
 const TABLES_ROOT_KEY = "scoretracker.tablesRoot";
 const MAPS_ROOT_KEY = "scoretracker.mapsRoot";
 const MEDIA_CACHE_KEY = "scoretracker.tableMedia.v1";
+const UPDATE_CHECK_KEY = "scoretracker.lastUpdateCheck";
+const UPDATE_CHECK_INTERVAL = 24 * 60 * 60 * 1000;
 const VPINPLAY_API_BASE = "https://api.vpinplay.com:8888/api/v1";
 const VPINMEDIA_BASE = "https://raw.githubusercontent.com/superhac/vpinmediadb/refs/heads/main";
 const MEDIA_CACHE_MAX_AGE = 30 * 24 * 60 * 60 * 1000;
@@ -70,6 +72,9 @@ let nvramError = "";
 const tableMedia = new Map<string, TableMedia>();
 let mediaGeneration = "";
 let foldersOpen = false;
+let availableUpdate: UpdateInfo | null = null;
+let updateBusy = false;
+let updateStatus = "";
 
 function number(value: number): string {
   return new Intl.NumberFormat().format(value);
@@ -163,14 +168,31 @@ function renderTopbar(root: string, inDetail: boolean): string {
       ${inDetail ? `<button id="back" class="button secondary" type="button">← All tables</button>` : ""}
       ${root ? `<button id="show-folders" class="button secondary" type="button">Folders</button>` : ""}
       ${root ? `<button id="refresh" class="button primary" type="button" ${busy ? "disabled" : ""}>${busy ? "Scanning…" : "Refresh scores"}</button>` : ""}
+      <button id="check-update" class="button secondary" type="button" ${updateBusy ? "disabled" : ""}>${updateBusy ? "Checking…" : "Updates"}</button>
     </nav>
   </header>`;
 }
 
 function renderNotices(): string {
-  if (fatalError) return `<div class="notice error" role="alert">${esc(fatalError)}</div>`;
-  if (!snapshot?.warnings.length) return "";
-  return `<details class="notice warning"><summary>${snapshot.warnings.length} source warning(s)</summary><ul>${snapshot.warnings.map((warning) => `<li><strong>${esc(warning.source)}</strong>: ${esc(warning.message)}</li>`).join("")}</ul></details>`;
+  const notices: string[] = [];
+  if (availableUpdate) {
+    notices.push(`<div class="notice update" role="status">
+      <span><strong>ScoreTracker ${esc(availableUpdate.version)} is available.</strong> ${esc(formatBytes(availableUpdate.size))} · Close VPX before installing.</span>
+      <button id="install-update" class="button primary" type="button" ${updateBusy ? "disabled" : ""}>${updateBusy ? "Downloading…" : "Download update"}</button>
+    </div>`);
+  } else if (updateStatus) {
+    notices.push(`<div class="notice update-status" role="status">${esc(updateStatus)}</div>`);
+  }
+  if (fatalError) notices.push(`<div class="notice error" role="alert">${esc(fatalError)}</div>`);
+  if (snapshot?.warnings.length) {
+    notices.push(`<details class="notice warning"><summary>${snapshot.warnings.length} source warning(s)</summary><ul>${snapshot.warnings.map((warning) => `<li><strong>${esc(warning.source)}</strong>: ${esc(warning.message)}</li>`).join("")}</ul></details>`);
+  }
+  return notices.join("");
+}
+
+function formatBytes(bytes: number): string {
+  if (bytes < 1024 * 1024) return `${Math.max(1, Math.round(bytes / 1024))} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
 function renderOverview(tableList: TableHistory[]): string {
@@ -557,6 +579,8 @@ function wireEvents(): void {
   });
   document.querySelector("#setup-done")?.addEventListener("click", goHome);
   document.querySelector("#refresh")?.addEventListener("click", scanConfiguredRoot);
+  document.querySelector("#check-update")?.addEventListener("click", () => void checkForUpdate(true));
+  document.querySelector("#install-update")?.addEventListener("click", () => void installAvailableUpdate());
   document.querySelector("#home")?.addEventListener("click", goHome);
   document.querySelector("#back")?.addEventListener("click", goHome);
   document.querySelectorAll<HTMLElement>("[data-rom]").forEach((element) => element.addEventListener("click", () => {
@@ -659,6 +683,48 @@ async function scanConfiguredRoot(): Promise<void> {
   }
 }
 
+async function checkForUpdate(manual: boolean): Promise<void> {
+  if (updateBusy) return;
+  updateBusy = true;
+  if (manual) updateStatus = "Checking GitHub Releases…";
+  render();
+  try {
+    availableUpdate = await invoke<UpdateInfo | null>("check_for_update");
+    localStorage.setItem(UPDATE_CHECK_KEY, String(Date.now()));
+    updateStatus = availableUpdate
+      ? ""
+      : manual
+        ? "VPX Scoretracker Viewer is up to date."
+        : "";
+  } catch (error) {
+    if (manual) {
+      updateStatus = `Update check failed: ${error instanceof Error ? error.message : String(error)}`;
+    }
+  } finally {
+    updateBusy = false;
+    render();
+  }
+}
+
+async function installAvailableUpdate(): Promise<void> {
+  if (!availableUpdate || updateBusy) return;
+  const confirmed = window.confirm(
+    `Download ScoreTracker ${availableUpdate.version} and open its installer?\n\nClose Visual Pinball X before continuing. The Viewer will close after the installer starts.`,
+  );
+  if (!confirmed) return;
+
+  updateBusy = true;
+  updateStatus = `Downloading and verifying ScoreTracker ${availableUpdate.version}…`;
+  render();
+  try {
+    await invoke("download_and_launch_update", { update: availableUpdate });
+  } catch (error) {
+    updateStatus = `Update failed: ${error instanceof Error ? error.message : String(error)}`;
+    updateBusy = false;
+    render();
+  }
+}
+
 window.addEventListener("hashchange", render);
 window.addEventListener("keydown", (event) => {
   if (event.key === "Escape" && foldersOpen) closeFolders();
@@ -691,6 +757,11 @@ async function initialize(): Promise<void> {
 
   render();
   if (localStorage.getItem(TABLES_ROOT_KEY)) void scanConfiguredRoot();
+
+  const lastCheck = Number(localStorage.getItem(UPDATE_CHECK_KEY) ?? 0);
+  if (!Number.isFinite(lastCheck) || Date.now() - lastCheck >= UPDATE_CHECK_INTERVAL) {
+    void checkForUpdate(false);
+  }
 }
 
 // Paint the application immediately. Installer defaults are loaded

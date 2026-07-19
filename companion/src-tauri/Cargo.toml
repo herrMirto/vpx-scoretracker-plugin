@@ -2,7 +2,7 @@
 name = "vpx-scoretracker-viewer"
 version = "0.1.0"
 description = "Local game history for the ScoreTracker VPX plugin"
-authors = ["Antigravity"]
+authors = ["Andre Santana"]
 edition = "2021"
 rust-version = "1.77.2"
 
@@ -18,10 +18,12 @@ chrono = { version = "0.4", default-features = false, features = ["clock", "serd
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 sha2 = "0.10"
+semver = "1"
 tauri = { version = "2", features = [] }
 tauri-plugin-dialog = "2"
 thiserror = "2"
 walkdir = "2"
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
 
 [dev-dependencies]
 tempfile = "3"
