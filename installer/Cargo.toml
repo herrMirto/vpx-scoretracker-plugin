@@ -3,6 +3,7 @@ name = "scoretracker-installer"
 version = "0.1.0"
 edition = "2021"
 description = "Installer for the ScoreTracker VPX plugin"
+authors = ["Andre Santana"]
 license = "GPL-3.0-or-later"
 
 [[bin]]
@@ -17,6 +18,8 @@ lto = true
 eframe = "0.29"
 flate2 = "1"
 rfd = { version = "0.17", default-features = false, features = ["xdg-portal"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
 tar = "0.4"
 tempfile = "3"
 

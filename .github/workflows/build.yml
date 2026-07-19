@@ -10,6 +10,7 @@ on:
       - .github/workflows/pages.yml
   pull_request:
   workflow_dispatch:
+  workflow_call:
 
 env:
   VPINBALL_REPO: https://github.com/vpinball/vpinball.git
@@ -19,8 +20,48 @@ env:
   NVRAM_MAPS_SHA: 2d886188712fe434a94910dafeb0cea27d539448
 
 jobs:
+  resolve-vpx:
+    name: Resolve VPX compatibility revision
+    runs-on: ubuntu-latest
+    outputs:
+      vpx_sha: ${{ steps.revisions.outputs.vpx_sha }}
+      pinmame_sha: ${{ steps.revisions.outputs.pinmame_sha }}
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Verify package versions
+        shell: bash
+        run: |
+          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
+            python3 scripts/check-version.py --tag "$GITHUB_REF_NAME"
+          else
+            python3 scripts/check-version.py
+          fi
+
+      - name: Resolve VPX and PinMAME revisions
+        id: revisions
+        shell: bash
+        run: |
+          VPX_SHA=$(git ls-remote "${{ env.VPINBALL_REPO }}" "refs/heads/${{ env.VPINBALL_REF }}" | cut -f1)
+          if [ -z "$VPX_SHA" ]; then
+            echo "error: could not resolve VPX ${{ env.VPINBALL_REF }}" >&2
+            exit 1
+          fi
+          PINMAME_SHA=$(curl --fail --silent --show-error \
+            "https://raw.githubusercontent.com/vpinball/vpinball/$VPX_SHA/platforms/config.sh" \
+            | sed -n 's/^PINMAME_SHA=//p')
+          if [ -z "$PINMAME_SHA" ]; then
+            echo "error: PINMAME_SHA not found for VPX $VPX_SHA" >&2
+            exit 1
+          fi
+          echo "VPX_SHA=$VPX_SHA"
+          echo "PINMAME_SHA=$PINMAME_SHA"
+          echo "vpx_sha=$VPX_SHA" >> "$GITHUB_OUTPUT"
+          echo "pinmame_sha=$PINMAME_SHA" >> "$GITHUB_OUTPUT"
+
   build:
     name: Build ${{ matrix.label }}
+    needs: resolve-vpx
     strategy:
       fail-fast: false
       matrix:
@@ -46,6 +87,9 @@ jobs:
             arch: arm64
             artifact: scoretracker-installer-macos-arm64.dmg
     runs-on: ${{ matrix.runner }}
+    env:
+      VPINBALL_SHA: ${{ needs.resolve-vpx.outputs.vpx_sha }}
+      PINMAME_SHA: ${{ needs.resolve-vpx.outputs.pinmame_sha }}
 
     steps:
       - uses: actions/checkout@v6
@@ -80,20 +124,9 @@ jobs:
       - name: Clone VPX
         shell: bash
         run: |
-          git clone --depth 1 --branch "${{ env.VPINBALL_REF }}" "${{ env.VPINBALL_REPO }}" vpinball-src
-
-      # Build against the exact libpinmame revision this VPX revision ships with
-      # (same source as platforms/*/external.sh).
-      - name: Determine PinMAME SHA from VPX
-        shell: bash
-        run: |
-          PINMAME_SHA=$(sed -n 's/^PINMAME_SHA=//p' vpinball-src/platforms/config.sh)
-          if [ -z "$PINMAME_SHA" ]; then
-            echo "error: PINMAME_SHA not found in vpinball-src/platforms/config.sh" >&2
-            exit 1
-          fi
-          echo "Using PINMAME_SHA=$PINMAME_SHA"
-          echo "PINMAME_SHA=$PINMAME_SHA" >> "$GITHUB_ENV"
+          git clone --filter=blob:none --no-checkout "${{ env.VPINBALL_REPO }}" vpinball-src
+          git -C vpinball-src fetch --depth 1 origin "$VPINBALL_SHA"
+          git -C vpinball-src checkout --detach "$VPINBALL_SHA"
 
       - name: Build PinMAME (Windows)
         if: matrix.platform == 'windows'
@@ -258,6 +291,7 @@ jobs:
           fi
 
       - name: Upload installer
+        if: github.event_name != 'schedule'
         uses: actions/upload-artifact@v7
         with:
           name: ${{ matrix.artifact }}
@@ -266,7 +300,7 @@ jobs:
 
   release:
     name: Publish GitHub release
-    needs: build
+    needs: [resolve-vpx, build]
     runs-on: ubuntu-latest
     if: startsWith(github.ref, 'refs/tags/v')
     permissions:
@@ -279,9 +313,50 @@ jobs:
           path: dist
           merge-multiple: true
 
+      - name: Generate update compatibility manifest
+        env:
+          SCORETRACKER_VERSION: ${{ github.ref_name }}
+          VPX_SHA: ${{ needs.resolve-vpx.outputs.vpx_sha }}
+          PINMAME_SHA: ${{ needs.resolve-vpx.outputs.pinmame_sha }}
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import hashlib
+          import json
+          import os
+          from pathlib import Path
+
+          assets = []
+          for path in sorted(Path("dist").glob("scoretracker-installer-*")):
+              assets.append({
+                  "name": path.name,
+                  "size": path.stat().st_size,
+                  "sha256": hashlib.sha256(path.read_bytes()).hexdigest(),
+              })
+
+          manifest = {
+              "schemaVersion": 1,
+              "version": os.environ["SCORETRACKER_VERSION"].removeprefix("v"),
+              "channel": "stable",
+              "repository": "herrMirto/vpx-scoretracker-plugin",
+              "compatibility": {
+                  "vpxRef": "master",
+                  "vpxCommit": os.environ["VPX_SHA"],
+                  "pinmameCommit": os.environ["PINMAME_SHA"],
+              },
+              "assets": assets,
+          }
+          Path("dist/update-manifest.json").write_text(
+              json.dumps(manifest, indent=2) + "\n",
+              encoding="utf-8",
+          )
+          PY
+
       - name: Create GitHub release
         uses: softprops/action-gh-release@v2
         with:
           name: ScoreTracker ${{ github.ref_name }}
           generate_release_notes: true
-          files: dist/scoretracker-installer-*
+          files: |
+            dist/scoretracker-installer-*
+            dist/update-manifest.json

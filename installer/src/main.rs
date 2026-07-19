@@ -16,6 +16,7 @@ use std::time::Duration;
 
 use eframe::egui;
 use flate2::read::GzDecoder;
+use serde::{Deserialize, Serialize};
 
 const COMPANION_ID: &str = "com.antigravity.scoretracker.companion";
 const COMPANION_APP_NAME: &str = "VPX Scoretracker Viewer";
@@ -23,11 +24,20 @@ const LEGACY_COMPANION_APP_NAME: &str = "VPX Scoretracker Visualiser";
 const EMBEDDED_PAYLOAD: &[u8] =
     include_bytes!(concat!(env!("OUT_DIR"), "/scoretracker-payload.tar.gz"));
 
+#[derive(Debug, Default, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct InstallConfig {
+    vpx_root: Option<String>,
+    tables_root: Option<String>,
+    maps_root: Option<String>,
+    version: Option<String>,
+}
+
 fn main() -> Result<(), eframe::Error> {
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
-            .with_inner_size([620.0, 330.0])
-            .with_min_inner_size([620.0, 330.0]),
+            .with_inner_size([620.0, 370.0])
+            .with_min_inner_size([620.0, 370.0]),
         centered: true,
         ..Default::default()
     };
@@ -86,6 +96,21 @@ mod payload_tests {
 
         let extracted = extract_payload_from(&bytes).unwrap();
         validate_payload(&extracted.path().join("scoretracker")).unwrap();
+    }
+
+    #[test]
+    fn persists_update_paths_with_viewer_compatible_keys() {
+        let config = InstallConfig {
+            vpx_root: Some("/vpx".into()),
+            tables_root: Some("/tables".into()),
+            maps_root: Some("/maps".into()),
+            version: Some("0.1.0".into()),
+        };
+        let value = serde_json::to_value(config).unwrap();
+        assert_eq!(value["vpxRoot"], "/vpx");
+        assert_eq!(value["tablesRoot"], "/tables");
+        assert_eq!(value["mapsRoot"], "/maps");
+        assert_eq!(value["version"], "0.1.0");
     }
 }
 
@@ -146,12 +171,16 @@ fn install(
     fs::create_dir_all(&cfg_dir)
         .map_err(|e| format!("could not create {}: {e}", cfg_dir.display()))?;
     let seed = cfg_dir.join("seed.json");
-    let json = format!(
-        "{{\n  \"tablesRoot\": \"{}\",\n  \"mapsRoot\": \"{}\"\n}}\n",
-        json_escape(&tables.display().to_string()),
-        json_escape(&dest.join("maps").display().to_string())
-    );
-    fs::write(&seed, json).map_err(|e| format!("could not write {}: {e}", seed.display()))?;
+    let config = InstallConfig {
+        vpx_root: Some(vpx.display().to_string()),
+        tables_root: Some(tables.display().to_string()),
+        maps_root: Some(dest.join("maps").display().to_string()),
+        version: Some(env!("CARGO_PKG_VERSION").to_owned()),
+    };
+    let json = serde_json::to_string_pretty(&config)
+        .map_err(|e| format!("could not serialize Viewer configuration: {e}"))?;
+    fs::write(&seed, format!("{json}\n"))
+        .map_err(|e| format!("could not write {}: {e}", seed.display()))?;
 
     progress(0.78, "Installing VPX Scoretracker Viewer…");
     // A failed Viewer copy must not roll back the plugin install that already
@@ -316,6 +345,7 @@ enum InstallEvent {
 struct InstallerApp {
     vpx: String,
     tables: String,
+    update_mode: bool,
     screen: Screen,
 }
 
@@ -323,10 +353,20 @@ impl InstallerApp {
     /// Detection only prefills the form fields; nothing is installed until the
     /// user has both paths on screen and clicks Install.
     fn new() -> Self {
-        let vpx = detect_vpx()
+        let remembered = read_install_config().unwrap_or_default();
+        let update_mode = remembered.version.is_some();
+        let vpx = remembered
+            .vpx_root
+            .filter(|path| Path::new(path).is_dir())
+            .map(PathBuf::from)
+            .or_else(detect_vpx)
             .map(|path| path.display().to_string())
             .unwrap_or_default();
-        let tables = default_tables();
+        let tables = remembered
+            .tables_root
+            .filter(|path| Path::new(path).is_dir())
+            .map(PathBuf::from)
+            .unwrap_or_else(default_tables);
         let tables = if tables.as_os_str().is_empty() {
             String::new()
         } else {
@@ -335,13 +375,22 @@ impl InstallerApp {
         Self {
             vpx,
             tables,
+            update_mode,
             screen: Screen::Form,
         }
     }
 
     fn form_ui(&mut self, ui: &mut egui::Ui) {
-        ui.heading("Install ScoreTracker");
+        ui.heading(if self.update_mode {
+            "Update ScoreTracker"
+        } else {
+            "Install ScoreTracker"
+        });
         ui.add_space(8.0);
+        if self.update_mode {
+            ui.label("Close Visual Pinball X before installing the update.");
+            ui.add_space(8.0);
+        }
 
         ui.label("VPinballX folder:");
         Self::folder_row(ui, &mut self.vpx, "Choose the folder containing VPinballX");
@@ -377,7 +426,14 @@ impl InstallerApp {
 
         let ready = plugins_dir.is_some() && tables_dir.is_some();
         if ui
-            .add_enabled(ready, egui::Button::new("Install"))
+            .add_enabled(
+                ready,
+                egui::Button::new(if self.update_mode {
+                    "Install update"
+                } else {
+                    "Install"
+                }),
+            )
             .clicked()
         {
             let vpx = Self::existing_dir(&self.vpx).expect("checked by `ready`");
@@ -752,6 +808,12 @@ fn companion_config_dir() -> Result<PathBuf, String> {
     Ok(dir)
 }
 
+fn read_install_config() -> Option<InstallConfig> {
+    let path = companion_config_dir().ok()?.join("seed.json");
+    let raw = fs::read_to_string(path).ok()?;
+    serde_json::from_str(&raw).ok()
+}
+
 fn home_dir() -> Option<PathBuf> {
     std::env::var_os(if cfg!(windows) { "USERPROFILE" } else { "HOME" }).map(PathBuf::from)
 }
@@ -822,10 +884,6 @@ fn enable_in_ini(ini: &Path) -> Result<(), String> {
     let mut result = out.join("\n");
     result.push('\n');
     fs::write(ini, result).map_err(|e| format!("could not write {}: {e}", ini.display()))
-}
-
-fn json_escape(value: &str) -> String {
-    value.replace('\\', "\\\\").replace('"', "\\\"")
 }
 
 #[cfg(all(test, target_os = "macos"))]

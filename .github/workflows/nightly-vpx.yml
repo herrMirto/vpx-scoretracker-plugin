@@ -1,0 +1,12 @@
+name: Nightly VPX Compatibility
+
+on:
+  schedule:
+    - cron: "0 1 * * *"
+      timezone: "Europe/Berlin"
+  workflow_dispatch:
+
+jobs:
+  build-current-vpx:
+    name: Build against current VPX master
+    uses: ./.github/workflows/build.yml

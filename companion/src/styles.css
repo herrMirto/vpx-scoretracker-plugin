@@ -87,6 +87,9 @@ h1 { margin: 0; font: 750 clamp(39px, 6vw, 68px)/.98 var(--display-font); letter
 .notice { margin: 0 0 18px; padding: 14px 17px; border-radius: 3px; font-size: 13px; }
 .notice.error { color: #7e2419; background: #fff3f1; border: 1px solid #dc948a; }
 .notice.warning { color: #674a08; background: #fff9e8; border: 1px solid #d8bd72; }
+.notice.update { display: flex; align-items: center; justify-content: space-between; gap: 18px; color: #174f39; background: #eef9f3; border: 1px solid #86b99f; }
+.notice.update span { line-height: 1.5; }
+.notice.update-status { color: var(--muted); background: var(--surface-soft); border: 1px solid var(--border); }
 .notice summary { cursor: pointer; font-weight: 750; }
 .notice ul { margin-bottom: 0; padding-left: 20px; }
 
@@ -239,6 +242,7 @@ h1 { margin: 0; font: 750 clamp(39px, 6vw, 68px)/.98 var(--display-font); letter
   .folder-row { grid-template-columns: 36px minmax(0, 1fr); padding: 20px 16px; gap: 14px; }
   .folder-row .button { grid-column: 2; justify-self: start; }
   .setup-ready { align-items: flex-start; flex-direction: column; }
+  .notice.update { align-items: flex-start; flex-direction: column; }
   .chart-leaderboard { padding: 16px; }
   .chart-leaderboard ol { grid-template-columns: 1fr; }
 }

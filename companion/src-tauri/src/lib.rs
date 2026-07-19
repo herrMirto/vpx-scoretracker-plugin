@@ -1,5 +1,6 @@
 mod nvram;
 mod scores;
+mod update;
 
 use serde_json::Value;
 
@@ -76,7 +77,9 @@ pub fn run() {
             resolve_vpx_hash,
             resolve_maps_root,
             read_seed_config,
-            load_nvram
+            load_nvram,
+            update::check_for_update,
+            update::download_and_launch_update
         ])
         .run(tauri::generate_context!())
         .expect("error while running VPX Scoretracker Viewer");
