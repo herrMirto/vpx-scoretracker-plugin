@@ -66,7 +66,8 @@ The plugin builds against a vpinball checkout used purely as an SDK (headers +
 
 - **Standalone (macOS)**: `./build-standalone.sh [vpinball-checkout] [nvram-maps-checkout]`
   compiles the plugin and installs it (plus, optionally, the maps) straight into the
-  `VPinballX*.app` bundle found under the checkout's `build/` folder.
+  `VPinballX*.app/Contents/PlugIns/scoretracker` folder in the app bundle found under the
+  checkout's `build/` folder.
 - **In-tree (all platforms)**: see the header of `CMakeLists_plugin_ScoreTracker.txt` for
   building as part of a vpinball CMake build without changing any vpinball source file.
 
