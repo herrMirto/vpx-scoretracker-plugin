@@ -193,31 +193,78 @@ async fn download(update: &UpdateInfo, destination: &Path) -> Result<(), String>
 }
 
 #[cfg(target_os = "linux")]
-fn launch_installer(path: &Path) -> Result<(), String> {
+fn launch_installer(path: &Path, _cache_dir: &Path) -> Result<(), String> {
     use std::os::unix::fs::PermissionsExt;
 
     std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o755))
         .map_err(|error| format!("could not mark {} executable: {error}", path.display()))?;
     Command::new(path)
+        .arg("--automatic-update")
         .spawn()
         .map_err(|error| format!("could not launch {}: {error}", path.display()))?;
     Ok(())
 }
 
 #[cfg(target_os = "windows")]
-fn launch_installer(path: &Path) -> Result<(), String> {
+fn launch_installer(path: &Path, _cache_dir: &Path) -> Result<(), String> {
     Command::new(path)
+        .arg("--automatic-update")
         .spawn()
         .map_err(|error| format!("could not launch {}: {error}", path.display()))?;
     Ok(())
 }
 
 #[cfg(target_os = "macos")]
-fn launch_installer(path: &Path) -> Result<(), String> {
-    Command::new("open")
+fn launch_installer(path: &Path, cache_dir: &Path) -> Result<(), String> {
+    let mount_point = cache_dir.join("mounted-update");
+    if mount_point.exists() {
+        let _ = Command::new("hdiutil")
+            .args(["detach", "-force"])
+            .arg(&mount_point)
+            .status();
+        let _ = std::fs::remove_dir_all(&mount_point);
+    }
+    std::fs::create_dir_all(&mount_point)
+        .map_err(|error| format!("could not prepare {}: {error}", mount_point.display()))?;
+
+    let attached = Command::new("hdiutil")
+        .args(["attach", "-nobrowse", "-readonly", "-mountpoint"])
+        .arg(&mount_point)
         .arg(path)
+        .status()
+        .map_err(|error| format!("could not mount {}: {error}", path.display()))?;
+    if !attached.success() {
+        return Err(format!("hdiutil could not mount {}", path.display()));
+    }
+
+    let installer_app = mount_point.join("ScoreTracker Installer.app");
+    if !installer_app.is_dir() {
+        let _ = Command::new("hdiutil")
+            .arg("detach")
+            .arg(&mount_point)
+            .status();
+        return Err(format!(
+            "the update image does not contain {}",
+            installer_app.display()
+        ));
+    }
+
+    let launched = Command::new("open")
+        .arg("-n")
+        .arg(&installer_app)
+        .arg("--args")
+        .arg("--automatic-update")
+        .arg("--mounted-volume")
+        .arg(&mount_point)
         .spawn()
-        .map_err(|error| format!("could not open {}: {error}", path.display()))?;
+        .map_err(|error| format!("could not launch {}: {error}", installer_app.display()));
+    if launched.is_err() {
+        let _ = Command::new("hdiutil")
+            .arg("detach")
+            .arg(&mount_point)
+            .status();
+    }
+    launched?;
     Ok(())
 }
 
@@ -235,7 +282,7 @@ pub async fn download_and_launch_update(
         .map_err(|error| format!("could not create {}: {error}", cache_dir.display()))?;
     let destination = cache_dir.join(&update.asset_name);
     download(&update, &destination).await?;
-    launch_installer(&destination)?;
+    launch_installer(&destination, &cache_dir)?;
 
     // The installer may need to replace the Viewer executable or app bundle.
     // Exit only after the verified updater process has started successfully.

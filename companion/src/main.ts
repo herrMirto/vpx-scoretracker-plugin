@@ -168,7 +168,7 @@ function renderTopbar(root: string, inDetail: boolean): string {
       ${inDetail ? `<button id="back" class="button secondary" type="button">← All tables</button>` : ""}
       ${root ? `<button id="show-folders" class="button secondary" type="button">Folders</button>` : ""}
       ${root ? `<button id="refresh" class="button primary" type="button" ${busy ? "disabled" : ""}>${busy ? "Scanning…" : "Refresh scores"}</button>` : ""}
-      <button id="check-update" class="button secondary" type="button" ${updateBusy ? "disabled" : ""}>${updateBusy ? "Checking…" : "Updates"}</button>
+      <button id="check-update" class="button ${availableUpdate ? "update-nav" : "secondary"}" type="button" ${updateBusy ? "disabled" : ""}>${updateBusy ? "Checking…" : availableUpdate ? `Update ${esc(availableUpdate.version)}` : "Updates"}</button>
     </nav>
   </header>`;
 }
@@ -176,10 +176,15 @@ function renderTopbar(root: string, inDetail: boolean): string {
 function renderNotices(): string {
   const notices: string[] = [];
   if (availableUpdate) {
-    notices.push(`<div class="notice update" role="status">
-      <span><strong>ScoreTracker ${esc(availableUpdate.version)} is available.</strong> ${esc(formatBytes(availableUpdate.size))} · Close VPX before installing.</span>
-      <button id="install-update" class="button primary" type="button" ${updateBusy ? "disabled" : ""}>${updateBusy ? "Downloading…" : "Download update"}</button>
-    </div>`);
+    notices.push(`<section class="update-card" role="alert" aria-live="polite">
+      <div class="update-mark" aria-hidden="true">↑</div>
+      <div class="update-copy">
+        <p class="update-eyebrow">Software update</p>
+        <strong>ScoreTracker ${esc(availableUpdate.version)} is ready</strong>
+        <span>${esc(formatBytes(availableUpdate.size))} · Updates the Viewer, VPX plugin, and maps, then restarts automatically. Close VPX before continuing.</span>
+      </div>
+      <button id="install-update" class="button update-action" type="button" ${updateBusy ? "disabled" : ""}>${updateBusy ? "Downloading and verifying…" : "Update and restart"}</button>
+    </section>`);
   } else if (updateStatus) {
     notices.push(`<div class="notice update-status" role="status">${esc(updateStatus)}</div>`);
   }
@@ -579,7 +584,10 @@ function wireEvents(): void {
   });
   document.querySelector("#setup-done")?.addEventListener("click", goHome);
   document.querySelector("#refresh")?.addEventListener("click", scanConfiguredRoot);
-  document.querySelector("#check-update")?.addEventListener("click", () => void checkForUpdate(true));
+  document.querySelector("#check-update")?.addEventListener("click", () => {
+    if (availableUpdate) void installAvailableUpdate();
+    else void checkForUpdate(true);
+  });
   document.querySelector("#install-update")?.addEventListener("click", () => void installAvailableUpdate());
   document.querySelector("#home")?.addEventListener("click", goHome);
   document.querySelector("#back")?.addEventListener("click", goHome);
@@ -708,10 +716,6 @@ async function checkForUpdate(manual: boolean): Promise<void> {
 
 async function installAvailableUpdate(): Promise<void> {
   if (!availableUpdate || updateBusy) return;
-  const confirmed = window.confirm(
-    `Download ScoreTracker ${availableUpdate.version} and open its installer?\n\nClose Visual Pinball X before continuing. The Viewer will close after the installer starts.`,
-  );
-  if (!confirmed) return;
 
   updateBusy = true;
   updateStatus = `Downloading and verifying ScoreTracker ${availableUpdate.version}…`;

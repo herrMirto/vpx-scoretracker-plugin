@@ -10,6 +10,7 @@
 use std::fs;
 use std::io::Cursor;
 use std::path::{Path, PathBuf};
+use std::process::Command;
 use std::sync::mpsc::{self, Receiver};
 use std::thread;
 use std::time::Duration;
@@ -33,18 +34,38 @@ struct InstallConfig {
     version: Option<String>,
 }
 
+#[derive(Debug, Default, PartialEq, Eq)]
+struct LaunchOptions {
+    automatic_update: bool,
+    mounted_volume: Option<PathBuf>,
+}
+
+fn launch_options(args: impl IntoIterator<Item = String>) -> LaunchOptions {
+    let mut options = LaunchOptions::default();
+    let mut args = args.into_iter().skip(1);
+    while let Some(argument) = args.next() {
+        match argument.as_str() {
+            "--automatic-update" => options.automatic_update = true,
+            "--mounted-volume" => options.mounted_volume = args.next().map(PathBuf::from),
+            _ => {}
+        }
+    }
+    options
+}
+
 fn main() -> Result<(), eframe::Error> {
+    let launch = launch_options(std::env::args());
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
-            .with_inner_size([620.0, 370.0])
-            .with_min_inner_size([620.0, 370.0]),
+            .with_inner_size([720.0, 560.0])
+            .with_min_inner_size([640.0, 500.0]),
         centered: true,
         ..Default::default()
     };
     eframe::run_native(
         "ScoreTracker Installer",
         options,
-        Box::new(|_cc| Ok(Box::new(InstallerApp::new()))),
+        Box::new(move |cc| Ok(Box::new(InstallerApp::new(cc, launch)))),
     )
 }
 
@@ -53,6 +74,7 @@ struct InstallResult {
     plugin_dir: PathBuf,
     tables_dir: PathBuf,
     companion_status: String,
+    companion_path: Option<PathBuf>,
 }
 
 fn extract_payload() -> Result<tempfile::TempDir, String> {
@@ -111,6 +133,33 @@ mod payload_tests {
         assert_eq!(value["tablesRoot"], "/tables");
         assert_eq!(value["mapsRoot"], "/maps");
         assert_eq!(value["version"], "0.1.0");
+    }
+
+    #[test]
+    fn parses_automatic_update_launch_options() {
+        let options = launch_options(
+            [
+                "scoretracker-installer",
+                "--automatic-update",
+                "--mounted-volume",
+                "/Volumes/ScoreTracker Installer",
+            ]
+            .into_iter()
+            .map(str::to_owned),
+        );
+        assert_eq!(
+            options,
+            LaunchOptions {
+                automatic_update: true,
+                mounted_volume: Some(PathBuf::from("/Volumes/ScoreTracker Installer")),
+            }
+        );
+    }
+
+    #[test]
+    fn manual_install_is_the_default_launch_mode() {
+        let options = launch_options(["scoretracker-installer"].into_iter().map(str::to_owned));
+        assert_eq!(options, LaunchOptions::default());
     }
 }
 
@@ -185,12 +234,18 @@ fn install(
     progress(0.78, "Installing VPX Scoretracker Viewer…");
     // A failed Viewer copy must not roll back the plugin install that already
     // succeeded, but the completion screen makes the failure explicit.
-    let companion_status = match companion_payload(extracted.path()) {
-        None => format!("{COMPANION_APP_NAME} is not bundled with this installer."),
+    let (companion_status, companion_path) = match companion_payload(extracted.path()) {
+        None => (
+            format!("{COMPANION_APP_NAME} is not bundled with this installer."),
+            None,
+        ),
         Some(bundle) => {
             match companion_dest_root().and_then(|root| install_companion(&bundle, &root)) {
-                Ok(installed) => format!("Viewer: {}", installed.display()),
-                Err(e) => format!("{COMPANION_APP_NAME} could not be installed: {e}"),
+                Ok(installed) => (format!("Viewer: {}", installed.display()), Some(installed)),
+                Err(e) => (
+                    format!("{COMPANION_APP_NAME} could not be installed: {e}"),
+                    None,
+                ),
             }
         }
     };
@@ -200,6 +255,7 @@ fn install(
         plugin_dir: dest,
         tables_dir: tables.to_path_buf(),
         companion_status,
+        companion_path,
     })
 }
 
@@ -270,7 +326,7 @@ fn install_companion(exe: &Path, programs_dir: &Path) -> Result<PathBuf, String>
     let dir = programs_dir.join(COMPANION_APP_NAME);
     fs::create_dir_all(&dir).map_err(|e| format!("could not create {}: {e}", dir.display()))?;
     let dest = dir.join(format!("{COMPANION_APP_NAME}.exe"));
-    fs::copy(exe, &dest).map_err(|e| format!("could not copy to {}: {e}", dest.display()))?;
+    copy_file_with_retry(exe, &dest)?;
     let _ = fs::remove_dir_all(programs_dir.join(LEGACY_COMPANION_APP_NAME));
     // Start Menu shortcut, best effort: the app is reachable in Programs either way
     if let Some(appdata) = std::env::var_os("APPDATA") {
@@ -303,7 +359,7 @@ fn install_companion(binary: &Path, bin_dir: &Path) -> Result<PathBuf, String> {
     fs::create_dir_all(bin_dir)
         .map_err(|e| format!("could not create {}: {e}", bin_dir.display()))?;
     let dest = bin_dir.join("vpx-scoretracker-viewer");
-    fs::copy(binary, &dest).map_err(|e| format!("could not copy to {}: {e}", dest.display()))?;
+    copy_file_with_retry(binary, &dest)?;
     fs::set_permissions(&dest, fs::Permissions::from_mode(0o755))
         .map_err(|e| format!("could not mark {} executable: {e}", dest.display()))?;
     let _ = fs::remove_file(bin_dir.join("vpx-scoretracker-viewer.AppImage"));
@@ -322,6 +378,63 @@ fn install_companion(binary: &Path, bin_dir: &Path) -> Result<PathBuf, String> {
     }
     Ok(dest)
 }
+
+#[cfg(not(target_os = "macos"))]
+fn copy_file_with_retry(from: &Path, to: &Path) -> Result<(), String> {
+    let mut last_error = None;
+    for _ in 0..40 {
+        match fs::copy(from, to) {
+            Ok(_) => return Ok(()),
+            Err(error) => {
+                last_error = Some(error);
+                thread::sleep(Duration::from_millis(250));
+            }
+        }
+    }
+    Err(format!(
+        "could not copy to {}: {}",
+        to.display(),
+        last_error.expect("at least one copy was attempted")
+    ))
+}
+
+#[cfg(target_os = "macos")]
+fn relaunch_companion(path: &Path) -> Result<(), String> {
+    Command::new("open")
+        .arg(path)
+        .spawn()
+        .map_err(|e| format!("could not relaunch {}: {e}", path.display()))?;
+    Ok(())
+}
+
+#[cfg(not(target_os = "macos"))]
+fn relaunch_companion(path: &Path) -> Result<(), String> {
+    Command::new(path)
+        .spawn()
+        .map_err(|e| format!("could not relaunch {}: {e}", path.display()))?;
+    Ok(())
+}
+
+#[cfg(target_os = "macos")]
+fn schedule_mounted_volume_cleanup(path: Option<&Path>) {
+    let Some(path) = path else {
+        return;
+    };
+    // The installer is running from the mounted image, so detach it after this
+    // process has had time to exit. Pass the path as a positional argument to
+    // avoid interpolating it into the shell command.
+    let _ = Command::new("sh")
+        .args([
+            "-c",
+            "sleep 2; for attempt in 1 2 3 4 5; do if hdiutil detach \"$1\"; then rmdir \"$1\" 2>/dev/null; exit 0; fi; sleep 2; done",
+            "scoretracker-cleanup",
+        ])
+        .arg(path)
+        .spawn();
+}
+
+#[cfg(not(target_os = "macos"))]
+fn schedule_mounted_volume_cleanup(_path: Option<&Path>) {}
 
 // ---------------------------------------------------------------------------
 // UI
@@ -346,13 +459,25 @@ struct InstallerApp {
     vpx: String,
     tables: String,
     update_mode: bool,
+    automatic_update: bool,
+    mounted_volume: Option<PathBuf>,
+    close_requested: bool,
     screen: Screen,
 }
 
 impl InstallerApp {
-    /// Detection only prefills the form fields; nothing is installed until the
-    /// user has both paths on screen and clicks Install.
-    fn new() -> Self {
+    fn new(cc: &eframe::CreationContext<'_>, launch: LaunchOptions) -> Self {
+        let mut visuals = egui::Visuals::light();
+        visuals.panel_fill = egui::Color32::from_rgb(246, 247, 247);
+        visuals.window_fill = egui::Color32::WHITE;
+        visuals.faint_bg_color = egui::Color32::from_rgb(239, 242, 242);
+        visuals.selection.bg_fill = egui::Color32::from_rgb(52, 59, 63);
+        cc.egui_ctx.set_visuals(visuals);
+        let mut style = (*cc.egui_ctx.style()).clone();
+        style.spacing.item_spacing = egui::vec2(10.0, 10.0);
+        style.spacing.button_padding = egui::vec2(16.0, 9.0);
+        cc.egui_ctx.set_style(style);
+
         let remembered = read_install_config().unwrap_or_default();
         let update_mode = remembered.version.is_some();
         let vpx = remembered
@@ -372,94 +497,170 @@ impl InstallerApp {
         } else {
             tables.display().to_string()
         };
-        Self {
+        let mut app = Self {
             vpx,
             tables,
             update_mode,
+            automatic_update: launch.automatic_update,
+            mounted_volume: launch.mounted_volume,
+            close_requested: false,
             screen: Screen::Form,
+        };
+        if app.automatic_update {
+            app.screen = match (
+                Self::existing_dir(&app.vpx),
+                Self::existing_dir(&app.tables),
+            ) {
+                (Some(vpx), Some(tables)) if resolve_plugins_dir(&vpx).is_some() => {
+                    Self::install_screen(vpx, tables, true)
+                }
+                _ => Screen::Failed(
+                    "The saved VPX or tables folder is no longer available. Run the installer manually to choose the folders again."
+                        .into(),
+                ),
+            };
+        }
+        app
+    }
+
+    fn install_screen(vpx: PathBuf, tables: PathBuf, update: bool) -> Screen {
+        let (sender, receiver) = mpsc::channel();
+        thread::spawn(move || {
+            // Give the Viewer a moment to exit before its installed bundle or
+            // executable is replaced, particularly on Windows.
+            if update {
+                thread::sleep(Duration::from_millis(750));
+            }
+            let result = install(&vpx, &tables, |fraction, message| {
+                let _ = sender.send(InstallEvent::Progress(fraction, message.to_owned()));
+            });
+            let _ = sender.send(InstallEvent::Finished(result));
+        });
+        Screen::Installing {
+            receiver,
+            progress: 0.0,
+            message: if update {
+                "Preparing the automatic update…".into()
+            } else {
+                "Preparing installation…".into()
+            },
         }
     }
 
     fn form_ui(&mut self, ui: &mut egui::Ui) {
+        ui.label(
+            egui::RichText::new("SCORETRACKER SETUP")
+                .strong()
+                .size(12.0)
+                .color(egui::Color32::from_rgb(82, 99, 107)),
+        );
         ui.heading(if self.update_mode {
-            "Update ScoreTracker"
+            "Review installation"
         } else {
             "Install ScoreTracker"
         });
+        ui.label(
+            egui::RichText::new(
+                "Choose your Visual Pinball installation and tables library. ScoreTracker will install the plugin, maps, and Viewer together.",
+            )
+            .size(14.0)
+            .color(egui::Color32::from_rgb(76, 85, 89)),
+        );
         ui.add_space(8.0);
-        if self.update_mode {
-            ui.label("Close Visual Pinball X before installing the update.");
-            ui.add_space(8.0);
-        }
+        ui.separator();
+        ui.add_space(4.0);
 
-        ui.label("VPinballX folder:");
-        Self::folder_row(ui, &mut self.vpx, "Choose the folder containing VPinballX");
         let plugins_dir = Self::existing_dir(&self.vpx).and_then(|dir| resolve_plugins_dir(&dir));
-        if self.vpx.trim().is_empty() {
-            ui.weak("Select the folder containing VPinballX.");
-        } else {
+        ui.group(|ui| {
+            ui.set_width(ui.available_width());
+            ui.horizontal(|ui| {
+                ui.label(
+                    egui::RichText::new("01")
+                        .strong()
+                        .size(16.0)
+                        .color(egui::Color32::from_rgb(82, 99, 107)),
+                );
+                ui.vertical(|ui| {
+                    ui.label(egui::RichText::new("Visual Pinball X").strong().size(16.0));
+                    ui.weak("Select the VPinballX application or installation folder.");
+                });
+            });
+            Self::folder_row(ui, &mut self.vpx, "Choose the folder containing VPinballX");
             match &plugins_dir {
                 Some(dir) => {
-                    ui.weak(format!(
-                        "Plugin will be installed to {}",
-                        dir.join("scoretracker").display()
-                    ));
+                    ui.colored_label(
+                        egui::Color32::from_rgb(23, 105, 67),
+                        format!("Ready · {}", dir.join("scoretracker").display()),
+                    );
+                }
+                None if self.vpx.trim().is_empty() => {
+                    ui.weak("Required · Choose the folder containing VPinballX.");
                 }
                 None => {
                     ui.colored_label(ui.visuals().error_fg_color, vpx_picker_help());
                 }
             }
-        }
+        });
         ui.add_space(8.0);
 
-        ui.label("VPX tables folder:");
-        Self::folder_row(ui, &mut self.tables, "Choose your VPX tables folder");
         let tables_dir = Self::existing_dir(&self.tables);
-        if self.tables.trim().is_empty() {
-            ui.weak("Select the folder containing your .vpx tables.");
-        } else if tables_dir.is_none() {
-            ui.colored_label(ui.visuals().error_fg_color, "This folder does not exist.");
-        } else {
-            ui.weak("Completed games are written to scores.json next to each table.");
-        }
-        ui.add_space(12.0);
+        ui.group(|ui| {
+            ui.set_width(ui.available_width());
+            ui.horizontal(|ui| {
+                ui.label(
+                    egui::RichText::new("02")
+                        .strong()
+                        .size(16.0)
+                        .color(egui::Color32::from_rgb(82, 99, 107)),
+                );
+                ui.vertical(|ui| {
+                    ui.label(egui::RichText::new("VPX tables").strong().size(16.0));
+                    ui.weak("Choose the folder containing your .vpx table files.");
+                });
+            });
+            Self::folder_row(ui, &mut self.tables, "Choose your VPX tables folder");
+            if self.tables.trim().is_empty() {
+                ui.weak("Required · Choose your tables folder.");
+            } else if tables_dir.is_none() {
+                ui.colored_label(ui.visuals().error_fg_color, "This folder does not exist.");
+            } else {
+                ui.colored_label(
+                    egui::Color32::from_rgb(23, 105, 67),
+                    "Ready · Completed games will be written beside each table.",
+                );
+            }
+        });
+        ui.add_space(8.0);
 
         let ready = plugins_dir.is_some() && tables_dir.is_some();
         if ui
             .add_enabled(
                 ready,
-                egui::Button::new(if self.update_mode {
-                    "Install update"
-                } else {
-                    "Install"
-                }),
+                egui::Button::new(
+                    egui::RichText::new("Install")
+                        .strong()
+                        .size(15.0)
+                        .color(egui::Color32::WHITE),
+                )
+                .fill(egui::Color32::from_rgb(52, 59, 63))
+                .min_size(egui::vec2(ui.available_width(), 44.0)),
             )
             .clicked()
         {
             let vpx = Self::existing_dir(&self.vpx).expect("checked by `ready`");
             let tables = tables_dir.expect("checked by `ready`");
-            let (sender, receiver) = mpsc::channel();
-            thread::spawn(move || {
-                let result = install(&vpx, &tables, |fraction, message| {
-                    let _ = sender.send(InstallEvent::Progress(fraction, message.to_owned()));
-                });
-                let _ = sender.send(InstallEvent::Finished(result));
-            });
-            self.screen = Screen::Installing {
-                receiver,
-                progress: 0.0,
-                message: "Preparing installation…".into(),
-            };
+            self.screen = Self::install_screen(vpx, tables, false);
         }
     }
 
     fn folder_row(ui: &mut egui::Ui, value: &mut String, title: &str) {
         ui.horizontal(|ui| {
-            let browse = ui.button("Browse\u{2026}");
+            let field_width = (ui.available_width() - 112.0).max(180.0);
             ui.add_sized(
-                [ui.available_width(), 20.0],
-                egui::TextEdit::singleline(value),
+                [field_width, 34.0],
+                egui::TextEdit::singleline(value).hint_text("Choose a folder…"),
             );
+            let browse = ui.add_sized([102.0, 34.0], egui::Button::new("Browse…"));
             if browse.clicked() {
                 let mut picker = rfd::FileDialog::new().set_title(title);
                 if let Some(dir) = Self::existing_dir(value).or_else(home_dir) {
@@ -488,17 +689,39 @@ impl InstallerApp {
         else {
             return;
         };
-        ui.heading("Installing ScoreTracker");
-        ui.add_space(16.0);
-        ui.label(message);
-        ui.add_space(8.0);
-        ui.add(
-            egui::ProgressBar::new(*progress)
-                .show_percentage()
-                .animate(true),
-        );
-        ui.add_space(8.0);
-        ui.weak("Please keep this window open while the files are installed.");
+        ui.vertical_centered(|ui| {
+            ui.add_space(72.0);
+            ui.label(
+                egui::RichText::new(if self.automatic_update {
+                    "AUTOMATIC UPDATE"
+                } else {
+                    "SCORETRACKER SETUP"
+                })
+                .strong()
+                .size(12.0)
+                .color(egui::Color32::from_rgb(82, 99, 107)),
+            );
+            ui.heading(if self.automatic_update {
+                "Updating ScoreTracker"
+            } else {
+                "Installing ScoreTracker"
+            });
+            ui.add_space(12.0);
+            ui.label(egui::RichText::new(message).size(14.0));
+            ui.add_space(16.0);
+            ui.add_sized(
+                [440.0, 22.0],
+                egui::ProgressBar::new(*progress)
+                    .show_percentage()
+                    .animate(true),
+            );
+            ui.add_space(12.0);
+            ui.weak(if self.automatic_update {
+                "The updated Viewer will reopen automatically."
+            } else {
+                "Please keep this window open while the files are installed."
+            });
+        });
     }
 
     fn poll_install(&mut self) {
@@ -519,9 +742,27 @@ impl InstallerApp {
                 }
                 InstallEvent::Finished(result) => {
                     self.screen = match result {
+                        Ok(result) if self.automatic_update => {
+                            let relaunch = result
+                                .companion_path
+                                .as_deref()
+                                .ok_or_else(|| {
+                                    "The Viewer payload could not be installed, so it cannot be relaunched."
+                                        .to_owned()
+                                })
+                                .and_then(relaunch_companion);
+                            match relaunch {
+                                Ok(()) => {
+                                    schedule_mounted_volume_cleanup(self.mounted_volume.as_deref());
+                                    self.close_requested = true;
+                                    Screen::Done(result)
+                                }
+                                Err(message) => Screen::Failed(message),
+                            }
+                        }
                         Ok(result) => Screen::Done(result),
                         Err(message) => Screen::Failed(message),
-                    };
+                    }
                 }
             }
         }
@@ -530,25 +771,48 @@ impl InstallerApp {
     fn result_ui(&self, ui: &mut egui::Ui, ctx: &egui::Context) {
         match &self.screen {
             Screen::Done(result) => {
-                ui.heading("ScoreTracker installed");
-                ui.add_space(8.0);
-                ui.label(format!("Plugin: {}", result.plugin_dir.display()));
-                ui.label(format!("Tables: {}", result.tables_dir.display()));
-                ui.label(&result.companion_status);
-                ui.add_space(8.0);
+                ui.label(
+                    egui::RichText::new("INSTALLATION COMPLETE")
+                        .strong()
+                        .size(12.0)
+                        .color(egui::Color32::from_rgb(23, 105, 67)),
+                );
+                ui.heading("ScoreTracker is ready");
+                ui.add_space(12.0);
+                ui.group(|ui| {
+                    ui.set_width(ui.available_width());
+                    ui.label(egui::RichText::new("Installed components").strong());
+                    ui.weak(format!("Plugin · {}", result.plugin_dir.display()));
+                    ui.weak(format!("Tables · {}", result.tables_dir.display()));
+                    ui.weak(&result.companion_status);
+                });
+                ui.add_space(12.0);
                 ui.label("Start a PinMAME table in VPX to begin recording scores.");
             }
             Screen::Failed(message) => {
+                ui.label(
+                    egui::RichText::new("INSTALLATION STOPPED")
+                        .strong()
+                        .size(12.0)
+                        .color(ui.visuals().error_fg_color),
+                );
                 ui.heading("ScoreTracker could not be installed");
-                ui.add_space(8.0);
-                ui.colored_label(ui.visuals().error_fg_color, message);
+                ui.add_space(12.0);
+                ui.group(|ui| {
+                    ui.set_width(ui.available_width());
+                    ui.colored_label(ui.visuals().error_fg_color, message);
+                });
             }
             Screen::Form | Screen::Installing { .. } => {
                 unreachable!("result_ui is only called for result screens")
             }
         }
         ui.add_space(12.0);
-        if ui.button("Close").clicked() {
+        if ui
+            .add_sized([120.0, 40.0], egui::Button::new("Close"))
+            .clicked()
+        {
+            schedule_mounted_volume_cleanup(self.mounted_volume.as_deref());
             ctx.send_viewport_cmd(egui::ViewportCommand::Close);
         }
     }
@@ -557,11 +821,23 @@ impl InstallerApp {
 impl eframe::App for InstallerApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         self.poll_install();
-        egui::CentralPanel::default().show(ctx, |ui| match &self.screen {
-            Screen::Form => self.form_ui(ui),
-            Screen::Installing { .. } => self.installing_ui(ui),
-            Screen::Done(_) | Screen::Failed(_) => self.result_ui(ui, ctx),
+        egui::CentralPanel::default().show(ctx, |ui| {
+            ui.add_space(18.0);
+            ui.horizontal(|ui| {
+                ui.add_space(24.0);
+                ui.vertical(|ui| {
+                    ui.set_max_width(640.0);
+                    match &self.screen {
+                        Screen::Form => self.form_ui(ui),
+                        Screen::Installing { .. } => self.installing_ui(ui),
+                        Screen::Done(_) | Screen::Failed(_) => self.result_ui(ui, ctx),
+                    }
+                });
+            });
         });
+        if self.close_requested {
+            ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+        }
         if matches!(&self.screen, Screen::Installing { .. }) {
             ctx.request_repaint_after(Duration::from_millis(50));
         }
