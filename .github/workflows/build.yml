@@ -7,8 +7,40 @@ on:
       - README.md
       - pages/**
       - .github/workflows/pages.yml
+      # A page-only release still carries synchronized version metadata, but
+      # should deploy Pages without rebuilding every application artifact.
+      - .github/workflows/build.yml
+      - VERSION
+      - plugin.cfg
+      - installer/Cargo.toml
+      - installer/Cargo.lock
+      - companion/package.json
+      - companion/package-lock.json
+      - companion/src-tauri/Cargo.toml
+      - companion/src-tauri/Cargo.lock
+      - companion/src-tauri/tauri.conf.json
   pull_request:
+    paths-ignore:
+      - README.md
+      - pages/**
+      - .github/workflows/pages.yml
+      - .github/workflows/build.yml
+      - VERSION
+      - plugin.cfg
+      - installer/Cargo.toml
+      - installer/Cargo.lock
+      - companion/package.json
+      - companion/package-lock.json
+      - companion/src-tauri/Cargo.toml
+      - companion/src-tauri/Cargo.lock
+      - companion/src-tauri/tauri.conf.json
   workflow_dispatch:
+    inputs:
+      publish_release:
+        description: Build installers and publish the VERSION as a GitHub release
+        required: false
+        type: boolean
+        default: false
   workflow_call:
 
 env:
@@ -305,7 +337,9 @@ jobs:
     name: Publish GitHub release
     needs: [resolve-vpx, build]
     runs-on: ubuntu-latest
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    if: >-
+      (github.event_name == 'push' && github.ref == 'refs/heads/main') ||
+      (github.event_name == 'workflow_dispatch' && inputs.publish_release)
     permissions:
       contents: write
     steps:
