@@ -1,5 +1,9 @@
 .DS_Store
 
+# Local development and planning artifacts
+/tools/
+/.planning/
+
 # Prerequisites
 *.d
 
