@@ -112,9 +112,11 @@ it; the installer itself is not copied into `/Applications`.
 
 VPX Scoretracker Viewer checks the latest stable GitHub Release at most once per day. The
 **Updates** button can check manually. When a newer version is available, the Viewer downloads the
-installer for the current platform, verifies its GitHub-provided SHA-256 digest, starts it, and
-exits so its own files can be replaced safely. The installer remembers the VPX and tables folders
-from the previous installation. Close VPX before applying an update.
+installer for the current platform and verifies its GitHub-provided SHA-256 digest. **Update and
+restart** then runs the installer in automatic mode using the remembered VPX and tables folders,
+replaces the Viewer, plugin, and maps together, and relaunches the updated Viewer. On macOS the
+Viewer mounts the downloaded DMG, launches the enclosed installer, and unmounts it after the update.
+Close VPX before applying an update so its loaded plugin can be replaced safely.
 
 The nightly VPX compatibility workflow builds every platform against the same resolved VPX master
 commit and its pinned PinMAME revision at 01:00 Europe/Berlin time. Nightly builds validate
