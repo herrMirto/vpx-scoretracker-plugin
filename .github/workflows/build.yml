@@ -3,7 +3,6 @@ name: Build ScoreTracker VPX Plugin
 on:
   push:
     branches: [main, "feat/*"]
-    tags: ["v*"]
     paths-ignore:
       - README.md
       - pages/**
@@ -306,10 +305,31 @@ jobs:
     name: Publish GitHub release
     needs: [resolve-vpx, build]
     runs-on: ubuntu-latest
-    if: startsWith(github.ref, 'refs/tags/v')
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     permissions:
       contents: write
     steps:
+      - uses: actions/checkout@v6
+
+      - name: Resolve release version
+        id: release_version
+        shell: bash
+        run: |
+          version="$(tr -d '[:space:]' < VERSION)"
+          python3 scripts/check-version.py
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "tag=v$version" >> "$GITHUB_OUTPUT"
+
+      - name: Require a new release version
+        env:
+          RELEASE_TAG: ${{ steps.release_version.outputs.tag }}
+        shell: bash
+        run: |
+          if git ls-remote --exit-code --tags origin "refs/tags/$RELEASE_TAG" >/dev/null 2>&1; then
+            echo "::error::Release tag $RELEASE_TAG already exists. Bump VERSION before pushing to main."
+            exit 1
+          fi
+
       - name: Download installers
         uses: actions/download-artifact@v4
         with:
@@ -319,7 +339,7 @@ jobs:
 
       - name: Generate update compatibility manifest
         env:
-          SCORETRACKER_VERSION: ${{ github.ref_name }}
+          SCORETRACKER_VERSION: ${{ steps.release_version.outputs.version }}
           VPX_SHA: ${{ needs.resolve-vpx.outputs.vpx_sha }}
           PINMAME_SHA: ${{ needs.resolve-vpx.outputs.pinmame_sha }}
         shell: bash
@@ -359,7 +379,9 @@ jobs:
       - name: Create GitHub release
         uses: softprops/action-gh-release@v2
         with:
-          name: ScoreTracker ${{ github.ref_name }}
+          tag_name: ${{ steps.release_version.outputs.tag }}
+          target_commitish: ${{ github.sha }}
+          name: ScoreTracker ${{ steps.release_version.outputs.tag }}
           generate_release_notes: true
           files: |
             dist/scoretracker-installer-*
