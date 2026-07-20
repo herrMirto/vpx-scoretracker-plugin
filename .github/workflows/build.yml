@@ -42,6 +42,17 @@ on:
         type: boolean
         default: false
   workflow_call:
+    inputs:
+      publish_release:
+        description: Publish the checked-out VERSION after successful builds
+        required: false
+        type: boolean
+        default: false
+      source_ref:
+        description: Git ref to build instead of the caller commit
+        required: false
+        type: string
+        default: ""
 
 env:
   VPINBALL_REPO: https://github.com/vpinball/vpinball.git
@@ -57,10 +68,13 @@ jobs:
     permissions:
       contents: read
     outputs:
+      source_sha: ${{ steps.revisions.outputs.source_sha }}
       vpx_sha: ${{ steps.revisions.outputs.vpx_sha }}
       pinmame_sha: ${{ steps.revisions.outputs.pinmame_sha }}
     steps:
       - uses: actions/checkout@v6
+        with:
+          ref: ${{ inputs.source_ref || github.sha }}
 
       - name: Verify package versions
         shell: bash
@@ -89,6 +103,7 @@ jobs:
           fi
           echo "VPX_SHA=$VPX_SHA"
           echo "PINMAME_SHA=$PINMAME_SHA"
+          echo "source_sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
           echo "vpx_sha=$VPX_SHA" >> "$GITHUB_OUTPUT"
           echo "pinmame_sha=$PINMAME_SHA" >> "$GITHUB_OUTPUT"
 
@@ -128,6 +143,8 @@ jobs:
 
     steps:
       - uses: actions/checkout@v6
+        with:
+          ref: ${{ inputs.source_ref || github.sha }}
 
       - name: Set up Python for map validation
         if: matrix.platform != 'windows'
@@ -326,7 +343,7 @@ jobs:
           fi
 
       - name: Upload installer
-        if: github.event_name != 'schedule'
+        if: github.event_name != 'schedule' || inputs.publish_release
         uses: actions/upload-artifact@v7
         with:
           name: ${{ matrix.artifact }}
@@ -339,11 +356,13 @@ jobs:
     runs-on: ubuntu-latest
     if: >-
       (github.event_name == 'push' && github.ref == 'refs/heads/main') ||
-      (github.event_name == 'workflow_dispatch' && inputs.publish_release)
+      inputs.publish_release
     permissions:
       contents: write
     steps:
       - uses: actions/checkout@v6
+        with:
+          ref: ${{ inputs.source_ref || github.sha }}
 
       - name: Resolve release version
         id: release_version
@@ -414,7 +433,7 @@ jobs:
         uses: softprops/action-gh-release@v3
         with:
           tag_name: ${{ steps.release_version.outputs.tag }}
-          target_commitish: ${{ github.sha }}
+          target_commitish: ${{ needs.resolve-vpx.outputs.source_sha }}
           name: ScoreTracker ${{ steps.release_version.outputs.tag }}
           generate_release_notes: true
           files: |

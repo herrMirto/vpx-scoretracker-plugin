@@ -2,8 +2,8 @@
 
 A third-party [Visual Pinball X](https://github.com/vpinball/vpinball) plugin that records the
 scores of played PinMAME games to a `scores.json` file. It is developed and distributed
-independently of the vpinball project: installation is dropping the `scoretracker` folder into
-VPX's `plugins` directory — no vpinball source change of any kind is required.
+independently of the vpinball project. The installer places the plugin in the correct VPX location;
+no vpinball source changes are required.
 
 While a game runs, the plugin periodically decodes the machine's NVRAM (and, on platforms that
 keep live game state in volatile memory, main CPU RAM) using a pinned snapshot of the
@@ -16,7 +16,7 @@ The plugin has no effect for tables without a PinMAME controller or for ROMs wit
 ## How it works
 
 - The plugin registers through VPX's public plugin API (`MsgPlugin`/`ControllerPlugin`/`VPXPlugin`
-  headers) and reads machine memory through the stable libpinmame API (`PinmameGetNVRAM`,
+  headers) and reads machine memory through the libpinmame API (`PinmameGetNVRAM`,
   `PinmameReadMainCPUByte` — both read-only).
 - On `OnGameStart` (controller event), the ROM id is looked up in the maps `index.json`; if a map
   exists, it is parsed once together with its platform description.
@@ -79,12 +79,6 @@ maps folder (`plugins/scoretracker/maps`), so users do not download or select ma
 exact source commit is recorded in `maps/source.json`. The `nvram_maps_folder` setting remains an
 advanced development override. The maps are LGPL-3.0 and their license is installed alongside them.
 
-## Development tools
-
-`tools/rom-map-lab/` contains the reverse-engineering lab used to discover and validate
-`game_state` fields (headless PinMAME exerciser, NVRAM diffing, candidate-map generation). It is
-development tooling only and is not part of the plugin runtime.
-
 ## Companion app: VPX Scoretracker Viewer
 
 `companion/` contains VPX Scoretracker Viewer, the cross-platform Tauri 2 desktop application for
@@ -92,35 +86,40 @@ browsing the local game history produced by this plugin. It is embedded in each 
 self-contained installer, but is operationally independent: score recording never requires the app
 to be installed or running.
 
-See [`companion/README.md`](companion/README.md) for development instructions and the v1 design.
+See [`companion/README.md`](companion/README.md) for development instructions and feature details.
 
 ## Installation
 
-Download and run the single installer file for your platform:
-`scoretracker-installer-macos-arm64.dmg` on macOS,
-`scoretracker-installer-windows-x64.exe` on Windows, or the matching
-`scoretracker-installer-linux-*` file on Linux. On Linux, mark the downloaded file executable first
-(`chmod +x scoretracker-installer-linux-*`). The installer contains the plugin, maps, and Viewer;
-it finds the VPX installation, asks for the tables folder, shows installation progress, enables the
-plugin, and displays the installed Viewer location when complete. The Viewer is placed in
-`~/Applications` on macOS, `%LOCALAPPDATA%\Programs` with a Start Menu shortcut on Windows, or
-`~/.local/bin` with a desktop entry on Linux. Manual installation of a locally built `scoretracker`
-folder still works. On macOS, open the DMG and launch `ScoreTracker Installer.app` directly from
-it; the installer itself is not copied into `/Applications`.
+Download the latest installer from [GitHub Releases](https://github.com/herrMirto/vpx-scoretracker-plugin/releases/latest).
+
+Platform binaries:
+
+- **macOS (Apple Silicon):** `scoretracker-installer-macos-arm64.dmg`
+- **Windows (x64):** `scoretracker-installer-windows-x64.exe`
+- **Linux (x64):** `scoretracker-installer-linux-x64`
+- **Linux (ARM64):** `scoretracker-installer-linux-arm64`
+
+Installed Viewer locations:
+
+- **macOS:** `~/Applications/VPX Scoretracker Viewer.app`
+- **Windows:** `%LOCALAPPDATA%\Programs\VPX Scoretracker Viewer\VPX Scoretracker Viewer.exe`
+  with a Start Menu shortcut
+- **Linux:** `~/.local/bin/vpx-scoretracker-viewer` with a desktop entry
+
+1. On macOS, open the DMG and launch `ScoreTracker Installer.app` from it. On Linux, first run
+   `chmod +x scoretracker-installer-linux-*`.
+2. Run the installer and confirm the detected VPX installation and tables folder. It installs and
+   enables the plugin, bundled maps, and Viewer.
+3. Start VPX and play a supported PinMAME table. Its completed game is added to `scores.json`.
+
+Manual installation of a locally built `scoretracker` folder also works.
 
 ## Updates
 
-VPX Scoretracker Viewer checks the latest stable GitHub Release at most once per day. The
-**Updates** button can check manually. When a newer version is available, the Viewer downloads the
-installer for the current platform and verifies its GitHub-provided SHA-256 digest. **Update and
-restart** then runs the installer in automatic mode using the remembered VPX and tables folders,
-replaces the Viewer, plugin, and maps together, and relaunches the updated Viewer. On macOS the
-Viewer mounts the downloaded DMG, launches the enclosed installer, and unmounts it after the update.
-Close VPX before applying an update so its loaded plugin can be replaced safely.
+The Viewer checks for stable updates daily, or on demand through **Updates**. Close VPX, then choose
+**Update and restart** to update the Viewer, plugin, and bundled maps together.
 
-The nightly VPX compatibility workflow builds every platform against the same resolved VPX master
-commit and its pinned PinMAME revision at 01:00 Europe/Berlin time. Nightly builds validate
-compatibility but are not published as stable releases. Tagged releases also include
-`update-manifest.json` with their VPX, PinMAME, artifact size, and checksum metadata.
-Every successful build pushed to `main` publishes the version declared in `VERSION`; the release
-job creates the matching `v<version>` tag only after all platform builds complete successfully.
+## License
+
+ScoreTracker is available under the [MIT License](LICENSE). The bundled NVRAM maps retain their
+LGPL-3.0 license.

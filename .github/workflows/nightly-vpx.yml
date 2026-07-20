@@ -7,10 +7,113 @@ on:
   workflow_dispatch:
 
 jobs:
+  prepare:
+    name: Check current PinMAME revision
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    outputs:
+      pinmame_sha: ${{ steps.compatibility.outputs.pinmame_sha }}
+      release_needed: ${{ steps.compatibility.outputs.release_needed }}
+      source_ref: ${{ steps.release_source.outputs.source_ref || steps.compatibility_source.outputs.source_ref }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - name: Compare PinMAME with the latest stable release
+        id: compatibility
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VPINBALL_REPO: https://github.com/vpinball/vpinball.git
+          VPINBALL_REF: master
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          vpx_sha="$(git ls-remote "$VPINBALL_REPO" "refs/heads/$VPINBALL_REF" | cut -f1)"
+          if [ -z "$vpx_sha" ]; then
+            echo "::error::Could not resolve VPX $VPINBALL_REF."
+            exit 1
+          fi
+
+          pinmame_sha="$(
+            curl --fail --silent --show-error \
+              "https://raw.githubusercontent.com/vpinball/vpinball/$vpx_sha/platforms/config.sh" \
+              | sed -n 's/^PINMAME_SHA=//p'
+          )"
+          if [ -z "$pinmame_sha" ]; then
+            echo "::error::PINMAME_SHA was not found for VPX $vpx_sha."
+            exit 1
+          fi
+
+          manifest_url="$(
+            gh api "repos/$GITHUB_REPOSITORY/releases/latest" \
+              --jq '.assets[] | select(.name == "update-manifest.json") | .browser_download_url' \
+              2>/dev/null || true
+          )"
+          released_pinmame=""
+          if [ -n "$manifest_url" ]; then
+            released_pinmame="$(
+              curl --fail --location --silent --show-error "$manifest_url" \
+                | jq -r '.compatibility.pinmameCommit // empty'
+            )"
+          fi
+
+          release_needed=false
+          if [ "$pinmame_sha" != "$released_pinmame" ]; then
+            release_needed=true
+          fi
+
+          echo "Current PinMAME: $pinmame_sha"
+          echo "Released PinMAME: ${released_pinmame:-none}"
+          echo "pinmame_sha=$pinmame_sha" >> "$GITHUB_OUTPUT"
+          echo "release_needed=$release_needed" >> "$GITHUB_OUTPUT"
+
+      - name: Prepare patch release version
+        id: release_source
+        if: steps.compatibility.outputs.release_needed == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          current_version="$(tr -d '[:space:]' < VERSION)"
+          if git ls-remote --exit-code --tags origin "refs/tags/v$current_version" >/dev/null 2>&1; then
+            next_version="$(python3 scripts/bump-version.py --dry-run)"
+            python3 scripts/bump-version.py
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git add \
+              VERSION \
+              plugin.cfg \
+              installer/Cargo.toml \
+              installer/Cargo.lock \
+              companion/package.json \
+              companion/package-lock.json \
+              companion/src-tauri/Cargo.toml \
+              companion/src-tauri/Cargo.lock \
+              companion/src-tauri/tauri.conf.json
+            git commit -m "chore: bump version to $next_version for PinMAME compatibility"
+            git push origin HEAD:main
+          else
+            echo "v$current_version has not been released; retrying it without another bump."
+          fi
+
+          echo "source_ref=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+
+      - name: Keep the current source for compatibility-only builds
+        id: compatibility_source
+        if: steps.compatibility.outputs.release_needed != 'true'
+        shell: bash
+        run: echo "source_ref=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+
   build-current-vpx:
     name: Build against current VPX master
-    # Reusable-workflow permissions cannot be elevated by the called workflow.
-    # build.yml downgrades its compile jobs to read; only its tag-gated release job keeps write.
+    needs: prepare
     permissions:
       contents: write
     uses: ./.github/workflows/build.yml
+    with:
+      publish_release: ${{ needs.prepare.outputs.release_needed == 'true' }}
+      source_ref: ${{ needs.prepare.outputs.source_ref }}
