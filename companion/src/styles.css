@@ -188,8 +188,13 @@ h1 { margin: 0; font: 750 clamp(39px, 6vw, 68px)/.98 var(--display-font); letter
 .chart-grid text, .axis-date { fill: var(--muted); font: 10px ui-monospace, SFMono-Regular, Menlo, monospace; }
 .record-line { stroke: var(--target-line); stroke-width: 1.25; stroke-dasharray: 5 6; }
 .record-label { fill: var(--accent); font: 700 8.5px ui-monospace, SFMono-Regular, Menlo, monospace; letter-spacing: .04em; }
-.score-line { fill: none; stroke: var(--chrome); stroke-width: 3; stroke-linejoin: round; stroke-linecap: square; }
+.score-line { fill: none; stroke: var(--accent); stroke-width: 3; stroke-linejoin: round; stroke-linecap: round; }
 .score-dots circle { stroke-width: 3; }
+.progress-chart .score-point { stroke: var(--accent); }
+.progress-chart .latest-score-point { fill: var(--accent); stroke: var(--surface); stroke-width: 3.5; }
+.personal-best-line { stroke: var(--target-line); stroke-width: 1.1; stroke-dasharray: 4 5; }
+.personal-best-label { fill: var(--muted); font: 700 8.5px ui-monospace, SFMono-Regular, Menlo, monospace; letter-spacing: .025em; }
+.latest-score-label { fill: var(--text); font: 700 9px ui-monospace, SFMono-Regular, Menlo, monospace; letter-spacing: .015em; }
 .chart-leaderboard { min-width: 0; padding: 20px; background: var(--surface-soft); }
 .leaderboard-heading { min-height: 45px; display: flex; align-items: flex-start; justify-content: space-between; gap: 10px; }
 .leaderboard-heading h3 { margin: 0; font: 750 19px/1 var(--display-font); }
