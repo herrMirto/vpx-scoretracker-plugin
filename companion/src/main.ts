@@ -166,7 +166,7 @@ function renderTopbar(root: string, inDetail: boolean): string {
     </button>
     <nav class="actions" aria-label="Application actions">
       ${inDetail ? `<button id="back" class="button secondary" type="button">← All tables</button>` : ""}
-      ${root ? `<button id="show-folders" class="button secondary" type="button">Folders</button>` : ""}
+      ${root ? `<button id="show-folders" class="button secondary" type="button">Tables Folder</button>` : ""}
       ${root ? `<button id="refresh" class="button primary" type="button" ${busy ? "disabled" : ""}>${busy ? "Scanning…" : "Refresh scores"}</button>` : ""}
       <button id="check-update" class="button ${availableUpdate ? "update-nav" : "secondary"}" type="button" ${updateBusy ? "disabled" : ""}>${updateBusy ? "Checking…" : availableUpdate ? `Update ${esc(availableUpdate.version)}` : "Updates"}</button>
     </nav>
@@ -438,8 +438,8 @@ function renderTableDetail(table: TableHistory): string {
       ${stat("Time played", duration(table.totalTime), `${table.games.length} completed games`)}
     </section>
     <section class="panel chart-panel">
-      <div class="panel-heading"><div><p class="eyebrow">Progress</p><h2>Score journey</h2></div><span>${targets.length} ${targets.length === 1 ? "threshold" : "high-score thresholds"}</span></div>
-      <div class="progress-layout">${renderProgressChart(table, targets)}${renderChartLeaderboard(targets)}</div>
+      <div class="panel-heading"><div><p class="eyebrow">Personal scores</p><h2>Score journey</h2></div><span>${table.entries.length} recorded ${table.entries.length === 1 ? "score" : "scores"}</span></div>
+      <div class="progress-layout">${renderProgressChart(table)}${renderChartLeaderboard(targets)}</div>
     </section>
     <section class="panel history-panel full-history"><div class="panel-heading"><div><p class="eyebrow">Every result</p><h2>Score history</h2></div><span>${table.entries.length} scores</span></div>${renderScoreHistory(table.entries)}</section>`;
 }
@@ -461,27 +461,54 @@ function machineBoardTargets(table: TableHistory): ChartTarget[] {
   return [{ score: table.best, label: "Personal record", name: "Personal record", initials: "", rank: 0 }];
 }
 
-function renderProgressChart(table: TableHistory, targets: ChartTarget[]): string {
-  const width = 1000, height = 300, left = 128, right = 28, top = 30, bottom = 48;
+function renderProgressChart(table: TableHistory): string {
+  const width = 1000, height = 320, left = 148, right = 32, top = 38, bottom = 52;
   const chartWidth = width - left - right, chartHeight = height - top - bottom;
-  const max = Math.max(table.best, ...targets.map((target) => target.score)) || 1;
+  const scores = table.entries.map((entry) => entry.score);
+  const scoreMin = Math.min(...scores);
+  const scoreMax = Math.max(...scores);
+  const spread = scoreMax - scoreMin;
+  const padding = spread > 0
+    ? Math.max(spread * .18, scoreMax * .06)
+    : Math.max(scoreMax * .25, 1);
+  const paddedMin = Math.max(0, scoreMin - padding);
+  const paddedMax = Math.max(paddedMin + 1, scoreMax + padding);
+  const roughStep = (paddedMax - paddedMin) / 3;
+  const magnitude = 10 ** Math.floor(Math.log10(roughStep));
+  const residual = roughStep / magnitude;
+  const step = (residual <= 1.5 ? 1 : residual <= 3 ? 2 : residual <= 7 ? 5 : 10) * magnitude;
+  const axisMin = Math.max(0, Math.floor(paddedMin / step) * step);
+  const axisMax = Math.max(axisMin + step, Math.ceil(paddedMax / step) * step);
   const x = (index: number) => left + (table.entries.length === 1 ? chartWidth / 2 : (index / (table.entries.length - 1)) * chartWidth);
-  const y = (score: number) => top + chartHeight - (score / max) * chartHeight;
+  const y = (score: number) => top + chartHeight - ((score - axisMin) / (axisMax - axisMin)) * chartHeight;
   const points = table.entries.map((entry, index) => `${x(index).toFixed(1)},${y(entry.score).toFixed(1)}`).join(" ");
-  const labels = [0, .5, 1].map((ratio) => `<g><line x1="${left}" y1="${y(max * ratio)}" x2="${width - right}" y2="${y(max * ratio)}"></line><text x="${left - 14}" y="${y(max * ratio) + 4}" text-anchor="end">${number(Math.round(max * ratio))}</text></g>`).join("");
-  const dots = table.entries.map((entry, index) => `<circle class="score-point" cx="${x(index)}" cy="${y(entry.score)}" r="6" tabindex="0" data-score="${entry.score}" data-date="${esc(date(entry.date))}"><title>${date(entry.date)} — ${number(entry.score)}</title></circle>`).join("");
-  const firstDate = table.entries[0]?.date ?? "", lastDate = table.entries.at(-1)?.date ?? "";
-  const targetLines = [...targets].sort((left, right) => right.score - left.score).map((target) => {
-    const targetY = y(target.score);
-    return `<g class="highscore-target"><line class="record-line" x1="${left}" y1="${targetY}" x2="${width - right}" y2="${targetY}"></line>
-      <text class="record-label" x="${width - right}" y="${Math.max(14, targetY - 7)}" text-anchor="end">${esc(target.label)} · ${number(target.score)}</text></g>`;
+  const tickValues: number[] = [];
+  for (let value = axisMin; value <= axisMax + step / 2; value += step) tickValues.push(Math.round(value));
+  const labels = tickValues.map((value) => `<g><line x1="${left}" y1="${y(value)}" x2="${width - right}" y2="${y(value)}"></line><text x="${left - 14}" y="${y(value) + 4}" text-anchor="end">${number(value)}</text></g>`).join("");
+  const dots = table.entries.map((entry, index) => {
+    const latest = index === table.entries.length - 1 ? " latest-score-point" : "";
+    return `<circle class="score-point${latest}" cx="${x(index)}" cy="${y(entry.score)}" r="${latest ? 7 : 6}" tabindex="0" data-score="${entry.score}" data-date="${esc(date(entry.date))}"><title>${date(entry.date)} — ${number(entry.score)}</title></circle>`;
   }).join("");
-  const targetDescription = targets.map((target) => `${target.label} ${number(target.score)}`).join(", ");
+  const firstDate = table.entries[0]?.date ?? "", lastDate = table.entries.at(-1)?.date ?? "";
+  const bestLine = table.entries.length > 1 && table.latest.score !== table.best
+    ? `<g class="personal-best"><line class="personal-best-line" x1="${left}" y1="${y(table.best)}" x2="${width - right}" y2="${y(table.best)}"></line>
+      <text class="personal-best-label" x="${width - right}" y="${Math.max(15, y(table.best) - 8)}" text-anchor="end">Personal best · ${number(table.best)}</text></g>`
+    : "";
+  const dateIndexes = table.entries.length <= 6
+    ? table.entries.map((_, index) => index)
+    : [0, Math.floor((table.entries.length - 1) / 2), table.entries.length - 1];
+  const dateLabels = dateIndexes.map((index) => `<text class="axis-date" x="${x(index)}" y="${height - 15}" text-anchor="${index === 0 ? "start" : index === table.entries.length - 1 ? "end" : "middle"}">${date(table.entries[index].date, false)}</text>`).join("");
+  const latestY = y(table.latest.score);
+  const latestLabelY = latestY < top + 20 ? latestY + 24 : latestY - 13;
+  const line = table.entries.length > 1
+    ? `<polyline class="score-line" points="${points}" vector-effect="non-scaling-stroke"></polyline>`
+    : "";
   return `<div class="chart-wrap"><svg class="progress-chart" viewBox="0 0 ${width} ${height}" role="img" aria-labelledby="chart-title chart-desc">
-    <title id="chart-title">Score progression for ${esc(table.name)}</title><desc id="chart-desc">${table.entries.length} scores from ${date(firstDate, false)} to ${date(lastDate, false)}. High-score thresholds: ${esc(targetDescription)}.</desc>
-    <g class="chart-grid">${labels}</g>${targetLines}
-    <polyline class="score-line" points="${points}" vector-effect="non-scaling-stroke"></polyline><g class="score-dots">${dots}</g>
-    <text class="axis-date" x="${left}" y="${height - 13}">${date(firstDate, false)}</text><text class="axis-date" x="${width - right}" y="${height - 13}" text-anchor="end">${date(lastDate, false)}</text>
+    <title id="chart-title">Personal score progression for ${esc(table.name)}</title><desc id="chart-desc">${table.entries.length} ${table.entries.length === 1 ? "score" : "scores"} from ${date(firstDate, false)} to ${date(lastDate, false)}. Latest score: ${number(table.latest.score)}. Personal best: ${number(table.best)}.</desc>
+    <g class="chart-grid">${labels}</g>${bestLine}
+    ${line}<g class="score-dots">${dots}</g>
+    <text class="latest-score-label" x="${x(table.entries.length - 1) - 12}" y="${latestLabelY}" text-anchor="end">${number(table.latest.score)}</text>
+    ${dateLabels}
   </svg></div>`;
 }
 
