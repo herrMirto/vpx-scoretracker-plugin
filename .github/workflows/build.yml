@@ -23,6 +23,8 @@ jobs:
   resolve-vpx:
     name: Resolve VPX compatibility revision
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     outputs:
       vpx_sha: ${{ steps.revisions.outputs.vpx_sha }}
       pinmame_sha: ${{ steps.revisions.outputs.pinmame_sha }}
@@ -62,6 +64,8 @@ jobs:
   build:
     name: Build ${{ matrix.label }}
     needs: resolve-vpx
+    permissions:
+      contents: read
     strategy:
       fail-fast: false
       matrix:

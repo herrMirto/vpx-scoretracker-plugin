@@ -9,4 +9,8 @@ on:
 jobs:
   build-current-vpx:
     name: Build against current VPX master
+    # Reusable-workflow permissions cannot be elevated by the called workflow.
+    # build.yml downgrades its compile jobs to read; only its tag-gated release job keeps write.
+    permissions:
+      contents: write
     uses: ./.github/workflows/build.yml
