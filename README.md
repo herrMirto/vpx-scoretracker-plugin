@@ -122,3 +122,5 @@ The nightly VPX compatibility workflow builds every platform against the same re
 commit and its pinned PinMAME revision at 01:00 Europe/Berlin time. Nightly builds validate
 compatibility but are not published as stable releases. Tagged releases also include
 `update-manifest.json` with their VPX, PinMAME, artifact size, and checksum metadata.
+Every successful build pushed to `main` publishes the version declared in `VERSION`; the release
+job creates the matching `v<version>` tag only after all platform builds complete successfully.
