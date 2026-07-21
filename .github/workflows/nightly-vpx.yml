@@ -114,6 +114,7 @@ jobs:
     permissions:
       contents: write
     uses: ./.github/workflows/build.yml
+    secrets: inherit
     with:
       publish_release: ${{ needs.prepare.outputs.release_needed == 'true' }}
       source_ref: ${{ needs.prepare.outputs.source_ref }}

@@ -146,6 +146,76 @@ jobs:
         with:
           ref: ${{ inputs.source_ref || github.sha }}
 
+      - name: Configure macOS signing credentials
+        if: matrix.platform == 'macos' && github.event_name != 'pull_request'
+        shell: bash
+        env:
+          APPLE_CERTIFICATE_BASE64: ${{ secrets.APPLE_CERTIFICATE_BASE64 }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_API_KEY_BASE64: ${{ secrets.APPLE_API_KEY_BASE64 }}
+          SIGNING_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
+          SIGNING_API_ISSUER_ID: ${{ secrets.APPLE_API_ISSUER_ID }}
+          SIGNING_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          set -euo pipefail
+
+          for variable in \
+            APPLE_CERTIFICATE_BASE64 \
+            APPLE_CERTIFICATE_PASSWORD \
+            APPLE_API_KEY_BASE64 \
+            SIGNING_API_KEY_ID \
+            SIGNING_API_ISSUER_ID \
+            SIGNING_TEAM_ID; do
+            if [ -z "${!variable:-}" ]; then
+              echo "::error::Required GitHub Actions secret $variable is missing."
+              exit 1
+            fi
+          done
+
+          certificate_path="$RUNNER_TEMP/apple-developer-id.p12"
+          api_key_path="$RUNNER_TEMP/AuthKey_${SIGNING_API_KEY_ID}.p8"
+          keychain_path="$RUNNER_TEMP/scoretracker-signing.keychain-db"
+          keychain_password="$(openssl rand -base64 32)"
+
+          echo "APPLE_KEYCHAIN_PATH=$keychain_path" >> "$GITHUB_ENV"
+          echo "APPLE_API_KEY_PATH=$api_key_path" >> "$GITHUB_ENV"
+          echo "APPLE_API_KEY_ID=$SIGNING_API_KEY_ID" >> "$GITHUB_ENV"
+          echo "APPLE_API_ISSUER_ID=$SIGNING_API_ISSUER_ID" >> "$GITHUB_ENV"
+          echo "APPLE_TEAM_ID=$SIGNING_TEAM_ID" >> "$GITHUB_ENV"
+
+          printf '%s' "$APPLE_CERTIFICATE_BASE64" | /usr/bin/base64 -D > "$certificate_path"
+          printf '%s' "$APPLE_API_KEY_BASE64" | /usr/bin/base64 -D > "$api_key_path"
+          chmod 600 "$certificate_path" "$api_key_path"
+
+          security create-keychain -p "$keychain_password" "$keychain_path"
+          security set-keychain-settings -lut 21600 "$keychain_path"
+          security unlock-keychain -p "$keychain_password" "$keychain_path"
+          security import "$certificate_path" \
+            -k "$keychain_path" \
+            -P "$APPLE_CERTIFICATE_PASSWORD" \
+            -T /usr/bin/codesign \
+            -T /usr/bin/security
+          security set-key-partition-list \
+            -S apple-tool:,apple:,codesign: \
+            -s \
+            -k "$keychain_password" \
+            "$keychain_path"
+          security list-keychains -d user -s "$keychain_path"
+
+          signing_identity="$(
+            security find-identity -v -p codesigning "$keychain_path" \
+              | sed -n 's/.*"\(Developer ID Application:.*\)"/\1/p' \
+              | head -n 1
+          )"
+          if [ -z "$signing_identity" ]; then
+            echo "::error::The imported certificate does not contain a Developer ID Application identity."
+            exit 1
+          fi
+
+          echo "APPLE_SIGNING_IDENTITY=$signing_identity" >> "$GITHUB_ENV"
+
+          echo "Configured signing identity: $signing_identity"
+
       - name: Set up Python for map validation
         if: matrix.platform != 'windows'
         uses: actions/setup-python@v6
@@ -314,6 +384,38 @@ jobs:
             cp companion/src-tauri/icons/icon.png installer-payload/vpx-scoretracker-viewer.png
           fi
 
+      - name: Sign and notarize embedded macOS payload
+        if: matrix.platform == 'macos' && github.event_name != 'pull_request'
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          while IFS= read -r -d '' candidate; do
+            case "$candidate" in
+              *'.app/'*) continue ;;
+            esac
+            if file "$candidate" | grep -q 'Mach-O'; then
+              codesign \
+                --force \
+                --options runtime \
+                --timestamp \
+                --sign "$APPLE_SIGNING_IDENTITY" \
+                "$candidate"
+              codesign --verify --strict --verbose=2 "$candidate"
+            fi
+          done < <(find installer-payload -type f -print0)
+
+          viewer_app="installer-payload/VPX Scoretracker Viewer.app"
+          codesign --verify --deep --strict --verbose=2 "$viewer_app"
+          codesign --display --verbose=2 "$viewer_app"
+
+          payload_archive="$RUNNER_TEMP/scoretracker-installer-payload.zip"
+          /usr/bin/ditto -c -k --keepParent installer-payload "$payload_archive"
+          bash .github/scripts/notarize-macos.sh "$payload_archive" embedded-payload
+
+          xcrun stapler staple "$viewer_app"
+          xcrun stapler validate "$viewer_app"
+
       - name: Compile self-contained installer
         shell: bash
         run: SCORETRACKER_PAYLOAD_DIR="$PWD/installer-payload" cargo build --release --manifest-path installer/Cargo.toml
@@ -326,18 +428,56 @@ jobs:
             cp installer/target/release/scoretracker-installer.exe "dist/${{ matrix.artifact }}"
           elif [ "${{ matrix.platform }}" = macos ]; then
             APP="dmg-root/ScoreTracker Installer.app"
+            DMG="dist/${{ matrix.artifact }}"
             mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
             cp installer/target/release/scoretracker-installer "$APP/Contents/MacOS/"
             cp installer/macos/Info.plist "$APP/Contents/"
             cp companion/src-tauri/icons/icon.icns "$APP/Contents/Resources/"
             chmod +x "$APP/Contents/MacOS/scoretracker-installer"
-            codesign --force --deep --sign - "$APP"
+
+            if [ "${{ github.event_name }}" = pull_request ]; then
+              codesign --force --deep --sign - "$APP"
+            else
+              codesign \
+                --force \
+                --options runtime \
+                --timestamp \
+                --sign "$APPLE_SIGNING_IDENTITY" \
+                "$APP/Contents/MacOS/scoretracker-installer"
+              codesign \
+                --force \
+                --options runtime \
+                --timestamp \
+                --sign "$APPLE_SIGNING_IDENTITY" \
+                "$APP"
+              codesign --verify --deep --strict --verbose=2 "$APP"
+              codesign --display --verbose=2 "$APP"
+            fi
+
             hdiutil create \
               -volname "ScoreTracker Installer" \
               -srcfolder dmg-root \
               -ov \
               -format UDZO \
-              "dist/${{ matrix.artifact }}"
+              "$DMG"
+            hdiutil verify "$DMG"
+
+            if [ "${{ github.event_name }}" != pull_request ]; then
+              codesign \
+                --force \
+                --timestamp \
+                --sign "$APPLE_SIGNING_IDENTITY" \
+                "$DMG"
+              codesign --verify --strict --verbose=2 "$DMG"
+              bash .github/scripts/notarize-macos.sh "$DMG" installer-dmg
+              xcrun stapler staple "$DMG"
+              xcrun stapler validate "$DMG"
+              spctl --assess \
+                --type open \
+                --context context:primary-signature \
+                --verbose=4 \
+                "$DMG"
+            fi
           else
             cp installer/target/release/scoretracker-installer "dist/${{ matrix.artifact }}"
             chmod +x "dist/${{ matrix.artifact }}"
@@ -350,6 +490,22 @@ jobs:
           name: ${{ matrix.artifact }}
           path: dist/${{ matrix.artifact }}
           archive: false
+
+      - name: Remove macOS signing credentials
+        if: always() && matrix.platform == 'macos' && github.event_name != 'pull_request'
+        shell: bash
+        run: |
+          if [ -n "${APPLE_KEYCHAIN_PATH:-}" ]; then
+            security delete-keychain "$APPLE_KEYCHAIN_PATH" || true
+          fi
+          rm -f \
+            "${RUNNER_TEMP}/apple-developer-id.p12" \
+            "${APPLE_API_KEY_PATH:-}" \
+            "${RUNNER_TEMP}/embedded-payload-notary-submission.json" \
+            "${RUNNER_TEMP}/embedded-payload-notary-log.json" \
+            "${RUNNER_TEMP}/installer-dmg-notary-submission.json" \
+            "${RUNNER_TEMP}/installer-dmg-notary-log.json" \
+            "${RUNNER_TEMP}/scoretracker-installer-payload.zip"
 
   release:
     name: Publish GitHub release
