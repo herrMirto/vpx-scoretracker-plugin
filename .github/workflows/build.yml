@@ -116,21 +116,24 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - label: Windows x64
-            runner: windows-2022
-            platform: windows
-            arch: x64
-            artifact: scoretracker-installer-windows-x64.exe
-          - label: Linux x64
-            runner: ubuntu-22.04
-            platform: linux
-            arch: x64
-            artifact: scoretracker-installer-linux-x64
-          - label: Linux ARM64
-            runner: ubuntu-24.04-arm
-            platform: linux
-            arch: arm64
-            artifact: scoretracker-installer-linux-arm64
+          # TEMPORARY (branch codex/macos-signing-notarization): non-macOS
+          # builds are disabled so we can iterate on macOS signing/notarization
+          # alone. Restore the Windows and Linux entries before merging.
+          # - label: Windows x64
+          #   runner: windows-2022
+          #   platform: windows
+          #   arch: x64
+          #   artifact: scoretracker-installer-windows-x64.exe
+          # - label: Linux x64
+          #   runner: ubuntu-22.04
+          #   platform: linux
+          #   arch: x64
+          #   artifact: scoretracker-installer-linux-x64
+          # - label: Linux ARM64
+          #   runner: ubuntu-24.04-arm
+          #   platform: linux
+          #   arch: arm64
+          #   artifact: scoretracker-installer-linux-arm64
           - label: macOS ARM64
             runner: macos-15
             platform: macos
