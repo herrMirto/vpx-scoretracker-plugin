@@ -116,14 +116,14 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          # TEMPORARY (branch codex/macos-signing-notarization): non-macOS
-          # builds are disabled so we can iterate on macOS signing/notarization
-          # alone. Restore the Windows and Linux entries before merging.
-          # - label: Windows x64
-          #   runner: windows-2022
-          #   platform: windows
-          #   arch: x64
-          #   artifact: scoretracker-installer-windows-x64.exe
+          # TEMPORARY (branch codex/macos-signing-notarization): Linux builds
+          # stay disabled so signing test runs stay lean. Restore the Linux
+          # entries before merging.
+          - label: Windows x64
+            runner: windows-2022
+            platform: windows
+            arch: x64
+            artifact: scoretracker-installer-windows-x64.exe
           # - label: Linux x64
           #   runner: ubuntu-22.04
           #   platform: linux
@@ -387,6 +387,25 @@ jobs:
             cp companion/src-tauri/icons/icon.png installer-payload/vpx-scoretracker-viewer.png
           fi
 
+      # Windows code signing via SSL.com eSigner (cloud OV cert). Sign the
+      # embedded companion here, before the installer packs it in, so the
+      # extracted viewer.exe keeps a valid Authenticode signature. The outer
+      # installer .exe is signed after packaging below. The eSigner action
+      # derives the OTP from ES_TOTP_SECRET, so signing runs fully headless.
+      - name: Sign embedded Windows companion
+        if: matrix.platform == 'windows' && github.event_name != 'pull_request'
+        uses: sslcom/esigner-codesign@v1.3.2
+        with:
+          command: sign
+          username: ${{ secrets.ES_USERNAME }}
+          password: ${{ secrets.ES_PASSWORD }}
+          credential_id: ${{ secrets.ES_CREDENTIAL_ID }}
+          totp_secret: ${{ secrets.ES_TOTP_SECRET }}
+          file_path: ${{ github.workspace }}\installer-payload\vpx-scoretracker-viewer.exe
+          override: true
+          malware_block: false
+          environment_name: PROD
+
       - name: Sign and notarize embedded macOS payload
         if: matrix.platform == 'macos' && github.event_name != 'pull_request'
         shell: bash
@@ -485,6 +504,32 @@ jobs:
             cp installer/target/release/scoretracker-installer "dist/${{ matrix.artifact }}"
             chmod +x "dist/${{ matrix.artifact }}"
           fi
+
+      - name: Sign Windows installer
+        if: matrix.platform == 'windows' && github.event_name != 'pull_request'
+        uses: sslcom/esigner-codesign@v1.3.2
+        with:
+          command: sign
+          username: ${{ secrets.ES_USERNAME }}
+          password: ${{ secrets.ES_PASSWORD }}
+          credential_id: ${{ secrets.ES_CREDENTIAL_ID }}
+          totp_secret: ${{ secrets.ES_TOTP_SECRET }}
+          file_path: ${{ github.workspace }}\dist\${{ matrix.artifact }}
+          override: true
+          malware_block: false
+          environment_name: PROD
+
+      - name: Verify Windows signature
+        if: matrix.platform == 'windows' && github.event_name != 'pull_request'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $sig = Get-AuthenticodeSignature "dist/${{ matrix.artifact }}"
+          Write-Host "dist/${{ matrix.artifact }} -> $($sig.Status)"
+          Write-Host "Signer: $($sig.SignerCertificate.Subject)"
+          if ($sig.Status -ne 'Valid') {
+            throw "Authenticode signature is not valid: $($sig.Status)"
+          }
 
       - name: Upload installer
         if: github.event_name != 'schedule' || inputs.publish_release
