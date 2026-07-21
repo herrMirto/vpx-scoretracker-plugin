@@ -125,8 +125,8 @@ main { margin-left: var(--sidebar); overflow: hidden; }
   margin-inline: auto;
 }
 .hero {
-  min-height: 680px;
-  padding: 96px 0 82px;
+  min-height: 610px;
+  padding: 72px 0 64px;
   display: flex;
   flex-direction: column;
   justify-content: center;
@@ -157,47 +157,74 @@ h1 em { color: var(--accent); font-style: italic; font-weight: 500; }
   font-size: 17px;
   line-height: 1.7;
 }
-.download {
-  width: fit-content;
-  min-height: 54px;
-  margin-top: 34px;
-  padding-left: 19px;
+.download-heading {
+  max-width: 720px;
+  margin-top: 32px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 20px;
+}
+.download-heading p {
+  margin: 0;
+  color: var(--ink);
+  font: 800 11px/1 var(--condensed);
+  letter-spacing: .06em;
+  text-transform: uppercase;
+}
+.download-heading span {
+  color: var(--muted);
+  font-size: 10px;
+}
+.download-options {
+  max-width: 720px;
+  margin-top: 13px;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+.platform-download {
+  min-height: 65px;
+  padding-left: 17px;
   display: flex;
   align-items: center;
-  gap: 22px;
+  justify-content: space-between;
+  gap: 18px;
   color: #fff;
   background: var(--chrome);
   border: 1px solid #000000;
-  box-shadow: 5px 5px 0 rgba(56,103,255,.28);
-  font-size: 12px;
-  font-weight: 800;
-  letter-spacing: .025em;
+  box-shadow: 4px 4px 0 rgba(56,103,255,.22);
   text-decoration: none;
   transition: transform .15s ease, box-shadow .15s ease, background .15s ease;
 }
-.download b {
-  width: 46px;
+.platform-download span { min-width: 0; display: flex; flex-direction: column; gap: 5px; }
+.platform-download strong { font-size: 12px; letter-spacing: .025em; }
+.platform-download small {
+  overflow: hidden;
+  color: #aeb1b9;
+  font-size: 9px;
+  line-height: 1.2;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.platform-download b {
+  width: 48px;
   align-self: stretch;
+  flex: 0 0 48px;
   display: grid;
   place-items: center;
   color: #ffffff;
   background: var(--accent);
   font-size: 18px;
 }
-.download:hover { background: var(--chrome-hover); box-shadow: 7px 7px 0 rgba(56,103,255,.38); transform: translate(-2px, -2px); }
-.platforms {
-  margin: 19px 0 0;
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  color: #70737b;
-  font: 700 9px/1 var(--condensed);
-  letter-spacing: .07em;
-  text-transform: uppercase;
+.platform-download:hover {
+  background: var(--chrome-hover);
+  box-shadow: 6px 6px 0 rgba(56,103,255,.34);
+  transform: translate(-2px, -2px);
 }
-.platforms i { width: 3px; height: 3px; background: var(--accent); border-radius: 50%; }
+.download-fallback { margin: 12px 0 0; color: var(--muted); font-size: 10px; }
 
-.install { padding: 96px 0 104px; border-top: 1px solid var(--line); }
+.install { padding: 70px 0 76px; border-top: 1px solid var(--line); }
 .section-heading {
   display: flex;
   align-items: end;
@@ -251,8 +278,8 @@ h1 em { color: var(--accent); font-style: italic; font-weight: 500; }
 .linux-note code { padding: 3px 6px; color: #30323a; background: #e6e8ec; border: 1px solid #cfd2d8; }
 
 .enable {
-  margin-bottom: 96px;
-  padding: 60px;
+  margin-bottom: 64px;
+  padding: 52px;
   display: grid;
   grid-template-columns: minmax(0, 1fr) minmax(330px, .85fr);
   align-items: center;
@@ -303,7 +330,7 @@ h1 em { color: var(--accent); font-style: italic; font-weight: 500; }
 }
 
 .done {
-  padding: 48px 0 72px;
+  padding: 38px 0 54px;
   display: grid;
   grid-template-columns: 58px minmax(0, 1fr);
   align-items: start;
@@ -339,6 +366,10 @@ footer {
   .enable { padding: 44px; grid-template-columns: 1fr; gap: 36px; }
 }
 
+@media (max-width: 800px) {
+  .download-options { max-width: 520px; grid-template-columns: 1fr; }
+}
+
 @media (max-width: 700px) {
   :root { --sidebar: 0px; }
   .sidebar {
@@ -369,15 +400,17 @@ footer {
   nav a { margin: 0; padding: 7px 8px; justify-content: center; border: 0; font-size: 10px; }
   main { margin-left: 0; }
   .hero, .install, .enable, .done, footer { width: calc(100vw - 40px); }
-  .hero { min-height: auto; padding: 72px 0 74px; }
+  .hero { min-height: auto; padding: 58px 0 54px; }
   h1 { font-size: clamp(50px, 15vw, 75px); }
   .intro { font-size: 15px; }
-  .install { padding: 76px 0 82px; }
+  .download-heading { align-items: flex-start; flex-direction: column; gap: 8px; }
+  .download-options { grid-template-columns: 1fr; }
+  .install { padding: 56px 0 62px; }
   .section-heading { align-items: start; flex-direction: column; gap: 18px; }
   .section-heading > p { text-align: left; }
   .steps { grid-template-columns: 1fr; }
   .steps li { min-height: 175px; border-left: 1px solid var(--line); }
-  .enable { margin-bottom: 76px; padding: 34px 24px; }
+  .enable { margin-bottom: 54px; padding: 34px 24px; }
   .config-card pre { font-size: 12px; }
   .done { grid-template-columns: 44px minmax(0, 1fr); gap: 17px; }
   .done-mark { width: 40px; height: 40px; }
