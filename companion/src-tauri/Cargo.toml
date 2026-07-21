@@ -1,6 +1,6 @@
 [package]
 name = "vpx-scoretracker-viewer"
-version = "0.1.7"
+version = "0.1.8"
 description = "Local game history for the ScoreTracker VPX plugin"
 authors = ["Andre Santana"]
 edition = "2021"
