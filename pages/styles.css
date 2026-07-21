@@ -307,6 +307,8 @@ h1 em { color: var(--accent); font-style: italic; font-weight: 500; }
 .config-note { margin: 16px 0 0; color: var(--muted); font-size: 11px; line-height: 1.65; }
 .config-note strong { color: var(--ink); }
 .config-note code { padding: 3px 6px; color: #30323a; background: #e6e8ec; border: 1px solid #cfd2d8; }
+.signed-note { margin: 16px 0 0; color: var(--muted); font-size: 11px; line-height: 1.65; }
+.signed-note strong { color: var(--ink); }
 
 .done {
   padding: 38px 0 54px;
