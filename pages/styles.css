@@ -125,8 +125,8 @@ main { margin-left: var(--sidebar); overflow: hidden; }
   margin-inline: auto;
 }
 .hero {
-  min-height: 610px;
-  padding: 72px 0 64px;
+  min-height: auto;
+  padding: 54px 0 42px;
   display: flex;
   flex-direction: column;
   justify-content: center;
@@ -224,8 +224,8 @@ h1 em { color: var(--accent); font-style: italic; font-weight: 500; }
 }
 .download-fallback { margin: 12px 0 0; color: var(--muted); font-size: 10px; }
 
-.screenshots { padding: 70px 0 76px; border-top: 1px solid var(--line); }
-.screenshot-grid { margin-top: 34px; display: grid; gap: 26px; }
+.screenshots { padding: 42px 0 50px; border-top: 1px solid var(--line); }
+.screenshot-grid { margin-top: 24px; display: grid; gap: 26px; }
 .screenshot-card {
   margin: 0;
   overflow: hidden;
@@ -252,7 +252,7 @@ h1 em { color: var(--accent); font-style: italic; font-weight: 500; }
 .screenshot-card figcaption strong { font: 600 20px/1.05 var(--display); }
 .screenshot-card figcaption small { color: var(--muted); font-size: 11px; line-height: 1.55; }
 
-.install { padding: 70px 0 76px; border-top: 1px solid var(--line); }
+.install { padding: 42px 0 48px; border-top: 1px solid var(--line); }
 .section-heading {
   display: flex;
   align-items: end;
@@ -378,16 +378,16 @@ footer {
   nav a { margin: 0; padding: 7px 8px; justify-content: center; border: 0; font-size: 10px; }
   main { margin-left: 0; }
   .hero, .screenshots, .install, .done, footer { width: calc(100vw - 40px); }
-  .hero { min-height: auto; padding: 58px 0 54px; }
+  .hero { padding: 44px 0 38px; }
   h1 { font-size: clamp(42px, 12vw, 60px); }
   .intro { font-size: 15px; }
   .download-heading { align-items: flex-start; flex-direction: column; gap: 8px; }
   .download-options { grid-template-columns: 1fr; }
-  .screenshots { padding: 56px 0 62px; }
-  .screenshot-grid { margin-top: 27px; gap: 20px; }
+  .screenshots { padding: 38px 0 44px; }
+  .screenshot-grid { margin-top: 22px; gap: 20px; }
   .screenshot-frame { padding: 5px; }
   .screenshot-card figcaption { padding: 17px 16px 19px; }
-  .install { padding: 56px 0 62px; }
+  .install { padding: 38px 0 44px; }
   .section-heading { align-items: start; flex-direction: column; gap: 18px; }
   .section-heading > p { text-align: left; }
   .steps { grid-template-columns: 1fr; }
