@@ -1,164 +1,155 @@
 <!doctype html>
 <html lang="en">
-  <head>
-    <meta charset="utf-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1">
-    <meta name="description" content="Install VPX Score Tracker and enable it in VPinballX.ini.">
-    <title>Install VPX Score Tracker</title>
-    <link rel="stylesheet" href="styles.css?v=4">
-    <script src="downloads.js?v=2" defer></script>
-  </head>
-  <body>
-    <a class="skip-link" href="#content">Skip to installation</a>
 
-    <aside class="sidebar">
-      <a class="brand" href="#download" aria-label="VPX Score Tracker install guide">
-        <span class="brand-mark" aria-hidden="true"><i></i><i></i></span>
-        <span><strong>VPX</strong> Score Tracker</span>
-      </a>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="Install VPX Score Tracker and enable it in VPinballX.ini.">
+  <title>Install VPX Score Tracker</title>
+  <link rel="stylesheet" href="styles.css?v=5">
+  <script src="downloads.js?v=2" defer></script>
+</head>
 
-      <nav aria-label="Installation guide">
-        <p>Quick install</p>
-        <a href="#download"><span>01</span> Download</a>
-        <a href="#screenshots"><span>02</span> Screenshots</a>
-        <a href="#install"><span>03</span> Install</a>
-        <a href="#enable"><span>04</span> Enable</a>
-      </nav>
+<body>
+  <a class="skip-link" href="#content">Skip to installation</a>
 
-      <div class="sidebar-footer">
-        <p>Local score history for Visual Pinball X.</p>
-        <a href="https://github.com/herrMirto/vpx-scoretracker-plugin">Source on GitHub <span aria-hidden="true">↗</span></a>
+  <aside class="sidebar">
+    <a class="brand" href="#download" aria-label="VPX Score Tracker install guide">
+      <span class="brand-mark" aria-hidden="true"><i></i><i></i></span>
+      <span><strong>VPX</strong> Score Tracker</span>
+    </a>
+
+    <nav aria-label="Installation guide">
+      <p>Quick install</p>
+      <a href="#download"><span>01</span> Download</a>
+      <a href="#install"><span>02</span> Install</a>
+      <a href="#screenshots"><span>03</span> Screenshots</a>
+    </nav>
+
+    <div class="sidebar-footer">
+      <p>Local score history for Visual Pinball X.</p>
+      <a href="https://github.com/herrMirto/vpx-scoretracker-plugin">Source on GitHub <span
+          aria-hidden="true">↗</span></a>
+    </div>
+  </aside>
+
+  <main id="content">
+    <section class="hero" id="download">
+      <p class="eyebrow"><span></span> Installation guide</p>
+      <h1>Install it.<br>Play a table.<br><em>Keep the score.</em></h1>
+      <p class="intro">One installer adds the Score Tracker plugin, its NVRAM maps, and the Viewer. Your scores stay on
+        your machine.</p>
+      <div class="download-heading">
+        <p>Download the latest release</p>
+        <span id="release-status" role="status" aria-live="polite">Choose your system</span>
       </div>
-    </aside>
+      <div class="download-options" aria-label="Latest installers">
+        <a class="platform-download" data-asset="scoretracker-installer-macos-arm64.dmg" data-platform="macOS"
+          href="https://github.com/herrMirto/vpx-scoretracker-plugin/releases/latest/download/scoretracker-installer-macos-arm64.dmg">
+          <span><strong>macOS</strong><small>Apple Silicon · DMG</small></span>
+          <b aria-hidden="true">↓</b>
+        </a>
+        <a class="platform-download" data-asset="scoretracker-installer-windows-x64.exe" data-platform="Windows"
+          href="https://github.com/herrMirto/vpx-scoretracker-plugin/releases/latest/download/scoretracker-installer-windows-x64.exe">
+          <span><strong>Windows</strong><small>x64 · EXE</small></span>
+          <b aria-hidden="true">↓</b>
+        </a>
+        <a class="platform-download" data-asset="scoretracker-installer-linux-x64" data-platform="Linux x64"
+          href="https://github.com/herrMirto/vpx-scoretracker-plugin/releases/latest/download/scoretracker-installer-linux-x64">
+          <span><strong>Linux</strong><small>x64 · Executable</small></span>
+          <b aria-hidden="true">↓</b>
+        </a>
+        <a class="platform-download" data-asset="scoretracker-installer-linux-arm64" data-platform="Linux ARM64"
+          href="https://github.com/herrMirto/vpx-scoretracker-plugin/releases/latest/download/scoretracker-installer-linux-arm64">
+          <span><strong>Linux</strong><small>ARM64 · Executable</small></span>
+          <b aria-hidden="true">↓</b>
+        </a>
+      </div>
+      <noscript>
+        <p class="download-fallback">Direct download links remain available without JavaScript.</p>
+      </noscript>
+    </section>
 
-    <main id="content">
-      <section class="hero" id="download">
-        <p class="eyebrow"><span></span> Installation guide</p>
-        <h1>Install it.<br>Play a table.<br><em>Keep the score.</em></h1>
-        <p class="intro">One installer adds the Score Tracker plugin, its NVRAM maps, and the Viewer. Your scores stay on your machine.</p>
-        <div class="download-heading">
-          <p>Download the latest release</p>
-          <span id="release-status" role="status" aria-live="polite">Choose your system</span>
-        </div>
-        <div class="download-options" aria-label="Latest installers">
-          <a class="platform-download" data-asset="scoretracker-installer-macos-arm64.dmg" data-platform="macOS" href="https://github.com/herrMirto/vpx-scoretracker-plugin/releases/latest/download/scoretracker-installer-macos-arm64.dmg">
-            <span><strong>macOS</strong><small>Apple Silicon · DMG</small></span>
-            <b aria-hidden="true">↓</b>
-          </a>
-          <a class="platform-download" data-asset="scoretracker-installer-windows-x64.exe" data-platform="Windows" href="https://github.com/herrMirto/vpx-scoretracker-plugin/releases/latest/download/scoretracker-installer-windows-x64.exe">
-            <span><strong>Windows</strong><small>x64 · EXE</small></span>
-            <b aria-hidden="true">↓</b>
-          </a>
-          <a class="platform-download" data-asset="scoretracker-installer-linux-x64" data-platform="Linux x64" href="https://github.com/herrMirto/vpx-scoretracker-plugin/releases/latest/download/scoretracker-installer-linux-x64">
-            <span><strong>Linux</strong><small>x64 · Executable</small></span>
-            <b aria-hidden="true">↓</b>
-          </a>
-          <a class="platform-download" data-asset="scoretracker-installer-linux-arm64" data-platform="Linux ARM64" href="https://github.com/herrMirto/vpx-scoretracker-plugin/releases/latest/download/scoretracker-installer-linux-arm64">
-            <span><strong>Linux</strong><small>ARM64 · Executable</small></span>
-            <b aria-hidden="true">↓</b>
-          </a>
-        </div>
-        <noscript><p class="download-fallback">Direct download links remain available without JavaScript.</p></noscript>
-      </section>
-
-      <section class="screenshots" id="screenshots" aria-labelledby="screenshots-title">
-        <header class="section-heading">
-          <div>
-            <p class="eyebrow"><span></span> The Viewer</p>
-            <h2 id="screenshots-title">Your cabinet, remembered.</h2>
-          </div>
-          <p>Browse every table at a glance, then open one to follow each score over time.</p>
-        </header>
-
-        <div class="screenshot-grid">
-          <figure class="screenshot-card">
-            <div class="screenshot-frame">
-              <img src="assets/viewer-collection.png" alt="VPX ScoreTracker Viewer showing four recently played tables and their score trends" loading="lazy">
-            </div>
-            <figcaption>
-              <span>01</span>
-              <div><strong>Your table collection</strong><small>Recent play, personal bests, and score trends in one place.</small></div>
-            </figcaption>
-          </figure>
-
-          <figure class="screenshot-card">
-            <div class="screenshot-frame">
-              <img src="assets/viewer-table-detail.png" alt="Attack from Mars detail view showing six personal scores, a progress chart, and machine high scores" loading="lazy">
-            </div>
-            <figcaption>
-              <span>02</span>
-              <div><strong>Every score tells a story</strong><small>See your progress, complete history, and the machine leaderboard together.</small></div>
-            </figcaption>
-          </figure>
-        </div>
-      </section>
-
-      <section class="install" id="install" aria-labelledby="install-title">
-        <header class="section-heading">
-          <div>
-            <p class="eyebrow"><span></span> Installation</p>
-            <h2 id="install-title">Three small steps.</h2>
-          </div>
-          <p>The installer handles the plugin, maps, and Viewer together.</p>
-        </header>
-
-        <ol class="steps">
-          <li>
-            <span class="step-number">01</span>
-            <div>
-              <h3>Get your installer</h3>
-              <p>Choose the installer for your operating system above. It downloads directly from the latest GitHub release.</p>
-            </div>
-          </li>
-          <li>
-            <span class="step-number">02</span>
-            <div>
-              <h3>Run it</h3>
-              <p>Select your VPX installation and tables folder when prompted. The installer places everything where it belongs.</p>
-            </div>
-          </li>
-          <li>
-            <span class="step-number">03</span>
-            <div>
-              <h3>Finish a game</h3>
-              <p>Play a supported PinMAME table through game over. Score Tracker records the result automatically.</p>
-            </div>
-          </li>
-        </ol>
-
-        <p class="linux-note"><strong>Linux:</strong> make the downloaded installer executable before opening it: <code>chmod +x scoretracker-installer-linux-*</code></p>
-      </section>
-
-      <section class="enable" id="enable" aria-labelledby="enable-title">
-        <div class="enable-copy">
-          <p class="eyebrow light"><span></span> VPinballX.ini</p>
-          <h2 id="enable-title">One setting matters.</h2>
-          <p>The installer enables Score Tracker automatically. For a manual installation, find or add this section in <code>VPinballX.ini</code>.</p>
-        </div>
-
-        <div class="config-card">
-          <div class="config-top">
-            <span>VPinballX.ini</span>
-            <span>Required</span>
-          </div>
-          <pre><code><span>[Plugin.ScoreTracker]</span>
-Enable = 1</code></pre>
-          <p>Restart VPX after changing the file.</p>
-        </div>
-      </section>
-
-      <section class="done" aria-label="Installation complete">
-        <span class="done-mark" aria-hidden="true">✓</span>
+    <section class="install" id="install" aria-labelledby="install-title">
+      <header class="section-heading">
         <div>
-          <p class="eyebrow">That is all</p>
-          <h2>Your next finished game becomes the first entry in your local score history.</h2>
+          <p class="eyebrow"><span></span> Installation</p>
+          <h2 id="install-title">Three small steps.</h2>
         </div>
-      </section>
+        <p>The installer handles the plugin, maps, and Viewer together.</p>
+      </header>
 
-      <footer>
-        <span>VPX Score Tracker</span>
-        <span>Independent third-party plugin for Visual Pinball X</span>
-      </footer>
-    </main>
-  </body>
+      <ol class="steps">
+        <li>
+          <span class="step-number">01</span>
+          <div>
+            <h3>Get your installer</h3>
+            <p>Choose the installer for your operating system above. It downloads directly from the latest GitHub
+              release.</p>
+          </div>
+        </li>
+        <li>
+          <span class="step-number">02</span>
+          <div>
+            <h3>Run it</h3>
+            <p>Select your VPX installation and tables folder when prompted. The installer places everything where it
+              belongs.</p>
+          </div>
+        </li>
+        <li>
+          <span class="step-number">03</span>
+          <div>
+            <h3>Finish a game</h3>
+            <p>Play a supported PinMAME table through game over. Score Tracker records the result automatically.</p>
+          </div>
+        </li>
+      </ol>
+
+      <p class="linux-note"><strong>Linux:</strong> make the downloaded installer executable before opening it:
+        <code>chmod +x scoretracker-installer-linux-*</code>
+      </p>
+      <p class="config-note"><strong>Enable or disable:</strong> in <code>VPinballX.ini</code>, use
+        <code>[Plugin.ScoreTracker]</code> with <code>Enable = 1</code> or <code>Enable = 0</code>, then restart VPX.
+      </p>
+    </section>
+
+    <section class="screenshots" id="screenshots" aria-labelledby="screenshots-title">
+      <header class="section-heading">
+        <div>
+          <p class="eyebrow"><span></span> The Viewer</p>
+          <h2 id="screenshots-title">Your scores, remembered.</h2>
+        </div>
+        <p>Browse every table at a glance, then open one to follow each score over time.</p>
+      </header>
+
+      <div class="screenshot-grid">
+        <figure class="screenshot-card">
+          <div class="screenshot-frame">
+            <img src="assets/viewer-collection.png"
+              alt="VPX ScoreTracker Viewer showing four recently played tables and their score trends" loading="lazy">
+          </div>
+          <figcaption>
+            <span>01</span>
+            <div><strong>Your table collection</strong><small>Recent play, personal bests, and score trends in one
+                place.</small></div>
+          </figcaption>
+        </figure>
+
+        <figure class="screenshot-card">
+          <div class="screenshot-frame">
+            <img src="assets/viewer-table-detail.png"
+              alt="Attack from Mars detail view showing six personal scores, a progress chart, and machine high scores"
+              loading="lazy">
+          </div>
+        </figure>
+      </div>
+    </section>
+
+    <footer>
+      <span>VPX Score Tracker</span>
+      <span>Independent third-party plugin for Visual Pinball X</span>
+    </footer>
+  </main>
+</body>
+
 </html>
