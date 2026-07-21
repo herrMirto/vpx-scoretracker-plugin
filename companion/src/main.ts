@@ -168,7 +168,7 @@ function renderTopbar(root: string, inDetail: boolean): string {
       ${inDetail ? `<button id="back" class="button secondary" type="button">← All tables</button>` : ""}
       ${root ? `<button id="show-folders" class="button secondary" type="button">Tables Folder</button>` : ""}
       ${root ? `<button id="refresh" class="button primary" type="button" ${busy ? "disabled" : ""}>${busy ? "Scanning…" : "Refresh scores"}</button>` : ""}
-      <button id="check-update" class="button ${availableUpdate ? "update-nav" : "secondary"}" type="button" ${updateBusy ? "disabled" : ""}>${updateBusy ? "Checking…" : availableUpdate ? `Update ${esc(availableUpdate.version)}` : "Updates"}</button>
+      <button id="check-update" class="button ${availableUpdate ? "update-nav" : "secondary"}" type="button" ${updateBusy ? "disabled" : ""}>${updateBusy ? "Checking…" : availableUpdate ? `Update ${esc(availableUpdate.version)}` : "Check for Updates"}</button>
     </nav>
   </header>`;
 }

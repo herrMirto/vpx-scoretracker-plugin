@@ -32,6 +32,7 @@ struct InstallConfig {
     tables_root: Option<String>,
     maps_root: Option<String>,
     version: Option<String>,
+    create_desktop_icon: Option<bool>,
 }
 
 #[derive(Debug, Default, PartialEq, Eq)]
@@ -51,6 +52,10 @@ fn launch_options(args: impl IntoIterator<Item = String>) -> LaunchOptions {
         }
     }
     options
+}
+
+fn desktop_icon_preference(saved: Option<bool>, automatic_update: bool) -> bool {
+    saved.unwrap_or(!automatic_update)
 }
 
 fn main() -> Result<(), eframe::Error> {
@@ -127,12 +132,14 @@ mod payload_tests {
             tables_root: Some("/tables".into()),
             maps_root: Some("/maps".into()),
             version: Some("0.1.0".into()),
+            create_desktop_icon: Some(true),
         };
         let value = serde_json::to_value(config).unwrap();
         assert_eq!(value["vpxRoot"], "/vpx");
         assert_eq!(value["tablesRoot"], "/tables");
         assert_eq!(value["mapsRoot"], "/maps");
         assert_eq!(value["version"], "0.1.0");
+        assert_eq!(value["createDesktopIcon"], true);
     }
 
     #[test]
@@ -161,6 +168,14 @@ mod payload_tests {
         let options = launch_options(["scoretracker-installer"].into_iter().map(str::to_owned));
         assert_eq!(options, LaunchOptions::default());
     }
+
+    #[test]
+    fn desktop_icon_is_checked_by_default_and_saved_choices_are_preserved() {
+        assert!(desktop_icon_preference(None, false));
+        assert!(!desktop_icon_preference(None, true));
+        assert!(desktop_icon_preference(Some(true), true));
+        assert!(!desktop_icon_preference(Some(false), false));
+    }
 }
 
 fn validate_payload(payload: &Path) -> Result<(), String> {
@@ -187,6 +202,7 @@ fn validate_payload(payload: &Path) -> Result<(), String> {
 fn install(
     vpx: &Path,
     tables: &Path,
+    create_desktop_icon: bool,
     mut progress: impl FnMut(f32, &str),
 ) -> Result<InstallResult, String> {
     progress(0.05, "Extracting bundled files…");
@@ -225,6 +241,7 @@ fn install(
         tables_root: Some(tables.display().to_string()),
         maps_root: Some(dest.join("maps").display().to_string()),
         version: Some(env!("CARGO_PKG_VERSION").to_owned()),
+        create_desktop_icon: Some(create_desktop_icon),
     };
     let json = serde_json::to_string_pretty(&config)
         .map_err(|e| format!("could not serialize Viewer configuration: {e}"))?;
@@ -241,7 +258,16 @@ fn install(
         ),
         Some(bundle) => {
             match companion_dest_root().and_then(|root| install_companion(&bundle, &root)) {
-                Ok(installed) => (format!("Viewer: {}", installed.display()), Some(installed)),
+                Ok(installed) => {
+                    let status = match sync_desktop_shortcut(&installed, create_desktop_icon) {
+                        Ok(()) => format!("Viewer: {}", installed.display()),
+                        Err(error) => format!(
+                            "Viewer: {}\nDesktop icon could not be updated: {error}",
+                            installed.display()
+                        ),
+                    };
+                    (status, Some(installed))
+                }
                 Err(e) => (
                     format!("{COMPANION_APP_NAME} could not be installed: {e}"),
                     None,
@@ -364,19 +390,191 @@ fn install_companion(binary: &Path, bin_dir: &Path) -> Result<PathBuf, String> {
         .map_err(|e| format!("could not mark {} executable: {e}", dest.display()))?;
     let _ = fs::remove_file(bin_dir.join("vpx-scoretracker-viewer.AppImage"));
     let _ = fs::remove_file(bin_dir.join("vpx-scoretracker-visualiser.AppImage"));
+    let icon_path = install_linux_icon(binary).ok();
     // Desktop entry, best effort: the binary runs from ~/.local/bin either way
     if let Some(home) = home_dir() {
         let apps = home.join(".local/share/applications");
         if fs::create_dir_all(&apps).is_ok() {
             let _ = fs::remove_file(apps.join("vpx-scoretracker-visualiser.desktop"));
-            let entry = format!(
-                "[Desktop Entry]\nType=Application\nName={COMPANION_APP_NAME}\nExec=\"{}\"\nCategories=Game;\nTerminal=false\n",
-                dest.display()
-            );
+            let entry = linux_desktop_entry(&dest, icon_path.as_deref());
             let _ = fs::write(apps.join("vpx-scoretracker-viewer.desktop"), entry);
         }
     }
     Ok(dest)
+}
+
+#[cfg(target_os = "linux")]
+fn install_linux_icon(payload_binary: &Path) -> Result<PathBuf, String> {
+    let source = payload_binary.with_file_name("vpx-scoretracker-viewer.png");
+    if !source.is_file() {
+        return Err("Viewer icon is not bundled".into());
+    }
+    let data_home = std::env::var_os("XDG_DATA_HOME")
+        .map(PathBuf::from)
+        .or_else(|| home_dir().map(|home| home.join(".local/share")))
+        .ok_or("cannot determine the user data directory")?;
+    let icons = data_home.join("icons/hicolor/512x512/apps");
+    fs::create_dir_all(&icons)
+        .map_err(|error| format!("could not create {}: {error}", icons.display()))?;
+    let dest = icons.join("vpx-scoretracker-viewer.png");
+    fs::copy(&source, &dest)
+        .map_err(|error| format!("could not install {}: {error}", dest.display()))?;
+    Ok(dest)
+}
+
+#[cfg(target_os = "linux")]
+fn linux_desktop_entry(executable: &Path, icon: Option<&Path>) -> String {
+    let escape = |path: &Path| {
+        path.display()
+            .to_string()
+            .replace('\\', "\\\\")
+            .replace('"', "\\\"")
+            .replace('`', "\\`")
+            .replace('$', "\\$")
+    };
+    let icon_line = icon
+        .map(|path| format!("Icon={}\n", path.display()))
+        .unwrap_or_default();
+    format!(
+        "[Desktop Entry]\nType=Application\nName={COMPANION_APP_NAME}\nExec=\"{}\"\n{icon_line}Categories=Game;\nTerminal=false\n",
+        escape(executable)
+    )
+}
+
+#[cfg(target_os = "macos")]
+fn sync_desktop_shortcut(app: &Path, create: bool) -> Result<(), String> {
+    let desktop = home_dir()
+        .ok_or("cannot determine home directory")?
+        .join("Desktop");
+    sync_macos_desktop_shortcut(app, &desktop, create)
+}
+
+#[cfg(target_os = "macos")]
+fn sync_macos_desktop_shortcut(app: &Path, desktop: &Path, create: bool) -> Result<(), String> {
+    use std::os::unix::fs::symlink;
+
+    fs::create_dir_all(desktop)
+        .map_err(|error| format!("could not create {}: {error}", desktop.display()))?;
+    let shortcut = desktop.join(format!("{COMPANION_APP_NAME}.app"));
+    remove_managed_symlink(&shortcut)?;
+    if create {
+        symlink(app, &shortcut)
+            .map_err(|error| format!("could not create {}: {error}", shortcut.display()))?;
+    }
+    Ok(())
+}
+
+#[cfg(target_os = "macos")]
+fn remove_managed_symlink(path: &Path) -> Result<(), String> {
+    match fs::symlink_metadata(path) {
+        Ok(metadata) if metadata.file_type().is_symlink() => fs::remove_file(path)
+            .map_err(|error| format!("could not replace {}: {error}", path.display())),
+        Ok(_) => Err(format!(
+            "{} already exists and was not created by ScoreTracker",
+            path.display()
+        )),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(format!("could not inspect {}: {error}", path.display())),
+    }
+}
+
+#[cfg(target_os = "windows")]
+fn sync_desktop_shortcut(app: &Path, create: bool) -> Result<(), String> {
+    let script = r#"
+$ErrorActionPreference = 'Stop'
+$desktop = [Environment]::GetFolderPath('Desktop')
+if ([string]::IsNullOrWhiteSpace($desktop)) { throw 'Windows Desktop folder was not found' }
+$shortcut = Join-Path $desktop 'VPX Scoretracker Viewer.lnk'
+if ($env:SCORETRACKER_CREATE_DESKTOP_ICON -eq '1') {
+    $shell = New-Object -ComObject WScript.Shell
+    $link = $shell.CreateShortcut($shortcut)
+    $link.TargetPath = $env:SCORETRACKER_SHORTCUT_TARGET
+    $link.WorkingDirectory = Split-Path $env:SCORETRACKER_SHORTCUT_TARGET
+    $link.Save()
+} else {
+    Remove-Item -LiteralPath $shortcut -Force -ErrorAction SilentlyContinue
+}
+"#;
+    let status = Command::new("powershell")
+        .args([
+            "-NoProfile",
+            "-NonInteractive",
+            "-WindowStyle",
+            "Hidden",
+            "-Command",
+            script,
+        ])
+        .env("SCORETRACKER_SHORTCUT_TARGET", app)
+        .env(
+            "SCORETRACKER_CREATE_DESKTOP_ICON",
+            if create { "1" } else { "0" },
+        )
+        .status()
+        .map_err(|error| format!("could not run PowerShell: {error}"))?;
+    status
+        .success()
+        .then_some(())
+        .ok_or_else(|| "PowerShell could not update the Desktop shortcut".into())
+}
+
+#[cfg(target_os = "linux")]
+fn sync_desktop_shortcut(app: &Path, create: bool) -> Result<(), String> {
+    use std::os::unix::fs::PermissionsExt;
+
+    let desktop = linux_desktop_dir()?;
+    fs::create_dir_all(&desktop)
+        .map_err(|error| format!("could not create {}: {error}", desktop.display()))?;
+    let shortcut = desktop.join("VPX Scoretracker Viewer.desktop");
+    let _ = fs::remove_file(desktop.join("VPX Scoretracker Visualiser.desktop"));
+    if !create {
+        return match fs::remove_file(&shortcut) {
+            Ok(()) => Ok(()),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+            Err(error) => Err(format!("could not remove {}: {error}", shortcut.display())),
+        };
+    }
+
+    let icon = installed_linux_icon();
+    fs::write(&shortcut, linux_desktop_entry(app, icon.as_deref()))
+        .map_err(|error| format!("could not create {}: {error}", shortcut.display()))?;
+    fs::set_permissions(&shortcut, fs::Permissions::from_mode(0o755))
+        .map_err(|error| format!("could not mark {} executable: {error}", shortcut.display()))?;
+    let _ = Command::new("gio")
+        .args([
+            "set",
+            shortcut.to_string_lossy().as_ref(),
+            "metadata::trusted",
+            "true",
+        ])
+        .status();
+    Ok(())
+}
+
+#[cfg(target_os = "linux")]
+fn installed_linux_icon() -> Option<PathBuf> {
+    let data_home = std::env::var_os("XDG_DATA_HOME")
+        .map(PathBuf::from)
+        .or_else(|| home_dir().map(|home| home.join(".local/share")))?;
+    let icon = data_home.join("icons/hicolor/512x512/apps/vpx-scoretracker-viewer.png");
+    icon.is_file().then_some(icon)
+}
+
+#[cfg(target_os = "linux")]
+fn linux_desktop_dir() -> Result<PathBuf, String> {
+    if let Some(path) = std::env::var_os("XDG_DESKTOP_DIR") {
+        return Ok(PathBuf::from(path));
+    }
+    if let Ok(output) = Command::new("xdg-user-dir").arg("DESKTOP").output() {
+        if output.status.success() {
+            let path = String::from_utf8_lossy(&output.stdout).trim().to_owned();
+            if !path.is_empty() {
+                return Ok(PathBuf::from(path));
+            }
+        }
+    }
+    Ok(home_dir()
+        .ok_or("cannot determine home directory")?
+        .join("Desktop"))
 }
 
 #[cfg(not(target_os = "macos"))]
@@ -458,6 +656,7 @@ enum InstallEvent {
 struct InstallerApp {
     vpx: String,
     tables: String,
+    create_desktop_icon: bool,
     update_mode: bool,
     automatic_update: bool,
     mounted_volume: Option<PathBuf>,
@@ -479,6 +678,8 @@ impl InstallerApp {
         cc.egui_ctx.set_style(style);
 
         let remembered = read_install_config().unwrap_or_default();
+        let create_desktop_icon =
+            desktop_icon_preference(remembered.create_desktop_icon, launch.automatic_update);
         let update_mode = remembered.version.is_some();
         let vpx = remembered
             .vpx_root
@@ -500,6 +701,7 @@ impl InstallerApp {
         let mut app = Self {
             vpx,
             tables,
+            create_desktop_icon,
             update_mode,
             automatic_update: launch.automatic_update,
             mounted_volume: launch.mounted_volume,
@@ -512,7 +714,7 @@ impl InstallerApp {
                 Self::existing_dir(&app.tables),
             ) {
                 (Some(vpx), Some(tables)) if resolve_plugins_dir(&vpx).is_some() => {
-                    Self::install_screen(vpx, tables, true)
+                    Self::install_screen(vpx, tables, true, app.create_desktop_icon)
                 }
                 _ => Screen::Failed(
                     "The saved VPX or tables folder is no longer available. Run the installer manually to choose the folders again."
@@ -523,7 +725,12 @@ impl InstallerApp {
         app
     }
 
-    fn install_screen(vpx: PathBuf, tables: PathBuf, update: bool) -> Screen {
+    fn install_screen(
+        vpx: PathBuf,
+        tables: PathBuf,
+        update: bool,
+        create_desktop_icon: bool,
+    ) -> Screen {
         let (sender, receiver) = mpsc::channel();
         thread::spawn(move || {
             // Give the Viewer a moment to exit before its installed bundle or
@@ -531,7 +738,7 @@ impl InstallerApp {
             if update {
                 thread::sleep(Duration::from_millis(750));
             }
-            let result = install(&vpx, &tables, |fraction, message| {
+            let result = install(&vpx, &tables, create_desktop_icon, |fraction, message| {
                 let _ = sender.send(InstallEvent::Progress(fraction, message.to_owned()));
             });
             let _ = sender.send(InstallEvent::Finished(result));
@@ -632,6 +839,10 @@ impl InstallerApp {
         });
         ui.add_space(8.0);
 
+        ui.checkbox(&mut self.create_desktop_icon, "Create Desktop icon");
+        ui.weak("Adds a shortcut for VPX Scoretracker Viewer to your Desktop.");
+        ui.add_space(8.0);
+
         let ready = plugins_dir.is_some() && tables_dir.is_some();
         if ui
             .add_enabled(
@@ -649,7 +860,7 @@ impl InstallerApp {
         {
             let vpx = Self::existing_dir(&self.vpx).expect("checked by `ready`");
             let tables = tables_dir.expect("checked by `ready`");
-            self.screen = Self::install_screen(vpx, tables, false);
+            self.screen = Self::install_screen(vpx, tables, false, self.create_desktop_icon);
         }
     }
 
@@ -1225,6 +1436,33 @@ mod tests {
         fs::write(dest.join("stale-file"), b"old").unwrap();
         let dest = install_companion(&bundle, &apps).unwrap();
         assert!(!dest.join("stale-file").exists());
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn creates_and_removes_the_macos_desktop_shortcut() {
+        let root = test_root("desktop-shortcut");
+        let app = root.join(format!("Applications/{COMPANION_APP_NAME}.app"));
+        fs::create_dir_all(&app).unwrap();
+        let desktop = root.join("Desktop");
+        let shortcut = desktop.join(format!("{COMPANION_APP_NAME}.app"));
+
+        sync_macos_desktop_shortcut(&app, &desktop, true).unwrap();
+        assert_eq!(fs::read_link(&shortcut).unwrap(), app);
+
+        sync_macos_desktop_shortcut(&app, &desktop, true).unwrap();
+        assert!(shortcut
+            .symlink_metadata()
+            .unwrap()
+            .file_type()
+            .is_symlink());
+
+        sync_macos_desktop_shortcut(&app, &desktop, false).unwrap();
+        assert!(!shortcut.exists());
+
+        fs::create_dir_all(&shortcut).unwrap();
+        assert!(sync_macos_desktop_shortcut(&app, &desktop, false).is_err());
+        assert!(shortcut.is_dir());
         fs::remove_dir_all(root).unwrap();
     }
 }

@@ -311,6 +311,7 @@ jobs:
             cp -R "companion/src-tauri/target/release/bundle/macos/VPX Scoretracker Viewer.app" installer-payload/
           else
             cp companion/src-tauri/target/release/vpx-scoretracker-viewer installer-payload/
+            cp companion/src-tauri/icons/icon.png installer-payload/vpx-scoretracker-viewer.png
           fi
 
       - name: Compile self-contained installer
