@@ -1,17 +1,17 @@
-# ScoreTracker Plugin
+# VPX ScoreTracker Plugin
 
-A third-party [Visual Pinball X](https://github.com/vpinball/vpinball) plugin that records the
+A third-party [Visual Pinball](https://github.com/vpinball/vpinball) plugin that records the
 scores of played PinMAME games to a `scores.json` file. It is developed and distributed
 independently of the vpinball project. The installer places the plugin in the correct VPX location;
 no vpinball source changes are required.
 
 While a game runs, the plugin periodically decodes the machine's NVRAM (and, on platforms that
 keep live game state in volatile memory, main CPU RAM) using a pinned snapshot of the
-[PinMAME NVRAM maps](https://github.com/herrMirto/pinmame-nvram-maps). When the game is over, the
+[PinMAME NVRAM maps](https://github.com/herrMirto/pinmame-nvram-maps). When the game is over(after the 'Match' screen), the
 per-player scores, game duration and selected `game_state` values are appended to `scores.json`.
 
 The plugin has no effect for tables without a PinMAME controller or for ROMs without a
-`game_state` block in their map.
+`game_state` block in their map(mostly EM tables and Original ones)
 
 ## How it works
 
@@ -20,12 +20,6 @@ The plugin has no effect for tables without a PinMAME controller or for ROMs wit
   `PinmameReadMainCPUByte` — both read-only).
 - On `OnGameStart` (controller event), the ROM id is looked up in the maps `index.json`; if a map
   exists, it is parsed once together with its platform description.
-- The machine state is polled on the main thread via `RunOnMainThread` at the configured interval
-  (250 ms by default) — no extra threads. When the NVRAM snapshot has not changed, no decoding
-  happens; nothing at all runs while no machine is active.
-- The map's `game_state.game_over` flag drives the session lifecycle. Since this flag can also be
-  raised between balls (end-of-ball bonus, ball search), a game-over is only confirmed after the
-  flag stays asserted for 25 s; games shorter than 30 s are considered table resumes and ignored.
 - The confirmed game is appended to `scores.json` with an atomic write (temporary file + rename).
   An unreadable existing file is moved aside (`scores.json.broken.<timestamp>`), never deleted.
 
@@ -33,10 +27,7 @@ The plugin has no effect for tables without a PinMAME controller or for ROMs wit
 
 | Setting | Default | Description |
 |---|---|---|
-| `Enable` | `0` | Enable the plugin. |
-| `nvram_maps_folder` | *(empty)* | Folder with the NVRAM maps (`index.json`, `maps/`, `platforms/`). When empty, the maps installed with the plugin (`plugins/scoretracker/maps`) are used. |
-| `PollIntervalMs` | `250` | Interval used to inspect the machine state (50–5000 ms). |
-| `OutputFolder` | *(empty)* | Folder where `scores.json` is written. When empty, it is written next to the table file. |
+| `Enable` | `1` | Enable the plugin. |
 
 ## scores.json format
 
@@ -55,21 +46,7 @@ The plugin has no effect for tables without a PinMAME controller or for ROMs wit
 }
 ```
 
-`scores` holds the best value seen per player during the session (the instantaneous score at
-game-over can lag the final bonus). On platforms providing `game_state.final_scores`, that
-ROM-frozen snapshot is used instead for the players it covers.
-
-## Building
-
-The plugin builds against a vpinball checkout used purely as an SDK (headers +
-`third-party/runtime-libs` libpinmame); the checkout is never modified.
-
-- **Standalone (macOS)**: `./build-standalone.sh [vpinball-checkout] [nvram-maps-checkout]`
-  compiles the plugin and installs it (plus, optionally, the maps) straight into the
-  `VPinballX*.app/Contents/PlugIns/scoretracker` folder in the app bundle found under the
-  checkout's `build/` folder.
-- **In-tree (all platforms)**: see the header of `CMakeLists_plugin_ScoreTracker.txt` for
-  building as part of a vpinball CMake build without changing any vpinball source file.
+`scores` holds all scores seen per player during the session. 
 
 ## Maps
 
@@ -116,8 +93,11 @@ Manual installation of a locally built `scoretracker` folder also works.
 
 ## Updates
 
-The Viewer checks for stable updates daily, or on demand through **Updates**. Close VPX, then choose
-**Update and restart** to update the Viewer, plugin, and bundled maps together.
+You can update the VPX Score Tracker plugin directly from the Viewer app, using the 'Check for Updates' button. Click on **Update and restart** to update the Viewer, plugin, and bundled maps together.
+
+## Uninstall
+
+The uninstall at the moment is manual, so you need to delete the scoretracker folder from the plugins folder, the binary of the Viewer and disable the plugin in VPinballX.ini.
 
 ## License
 
