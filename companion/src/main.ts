@@ -60,6 +60,8 @@ interface ChartTarget {
   name: string;
   initials: string;
   rank: number;
+  place: number;
+  champion: boolean;
 }
 
 let snapshot: ScanSnapshot | null = null;
@@ -446,19 +448,36 @@ function renderTableDetail(table: TableHistory): string {
 
 function machineBoardTargets(table: TableHistory): ChartTarget[] {
   if (nvram?.rom === table.rom) {
-    const targets = nvram.highScores
+    const entries = nvram.highScores
       .filter((entry) => !entry.label.toLowerCase().includes("buy-in") && !entry.shortLabel?.toLowerCase().startsWith("bi"))
-      .filter((entry) => entry.score > 0)
+      .filter((entry) => entry.score > 0);
+    const firstPlaceIndex = entries.findIndex((entry) => isFirstPlaceLabel(`${entry.label} ${entry.shortLabel ?? ""}`));
+    let place = 0;
+    const targets = entries
       .map((entry, index) => ({
         score: entry.score,
         label: entry.shortLabel || entry.label,
         name: entry.label,
         initials: entry.initials,
         rank: index + 1,
+        champion: isChampionLabel(`${entry.label} ${entry.shortLabel ?? ""}`) || (firstPlaceIndex > 0 && index < firstPlaceIndex),
+        place: 0,
+      }))
+      .map((target) => ({
+        ...target,
+        place: target.champion ? 0 : ++place,
       }));
     if (targets.length) return targets;
   }
-  return [{ score: table.best, label: "Personal record", name: "Personal record", initials: "", rank: 0 }];
+  return [{ score: table.best, label: "Personal record", name: "Personal record", initials: "", rank: 0, place: 0, champion: false }];
+}
+
+function isChampionLabel(value: string): boolean {
+  return /grand\s*champion|\bgc\b/i.test(value);
+}
+
+function isFirstPlaceLabel(value: string): boolean {
+  return /(?:^|\W)(?:1st|first|#?1)(?:\W|$)/i.test(value);
 }
 
 function renderProgressChart(table: TableHistory): string {
@@ -521,7 +540,7 @@ function renderChartLeaderboard(targets: ChartTarget[]): string {
   return `<aside class="chart-leaderboard" aria-label="Machine leaderboard">
     <div class="leaderboard-heading"><div><p class="eyebrow">Machine board</p><h3>High scores</h3></div><span>From NVRAM</span></div>
     <ol>${machineTargets.map((target) => `<li class="leaderboard-rank-${target.rank}">
-      <span class="trophy-cell">${target.rank <= 3 ? trophyIcon(target.rank) : `<span class="rank-number">${target.rank}</span>`}</span>
+      <span class="trophy-cell">${target.champion ? crownIcon() : target.place <= 3 ? trophyIcon(target.place) : `<span class="rank-number">${target.place}</span>`}</span>
       <span class="leaderboard-player"><strong>${esc(target.initials || "—")}</strong><small>${esc(target.name)}</small></span>
       <strong class="leaderboard-score">${number(target.score)}</strong>
     </li>`).join("")}</ol>
@@ -534,8 +553,15 @@ function trophyIcon(rank: number): string {
   </svg>`;
 }
 
+function crownIcon(): string {
+  return `<svg class="crown" viewBox="0 0 24 24" role="img" aria-label="Grand Champion crown">
+    <path d="M3 6 7.5 10 12 4l4.5 6L21 6l-2 11H5L3 6Zm3 13h12v2H6v-2Z"></path>
+    <circle class="crown-jewel" cx="12" cy="13" r="1.35"></circle>
+  </svg>`;
+}
+
 function renderScoreHistory(entries: ScoreEntry[]): string {
-  return `<div class="score-history">${[...entries].reverse().map((entry) => `<div class="score-row"><span><strong>${number(entry.score)}</strong><small>${date(entry.date)}</small></span><span>${duration(entry.duration)}</span></div>`).join("")}</div>`;
+  return `<div class="score-history">${[...entries].reverse().map((entry) => `<div class="score-row"><span><strong>${number(entry.score)}</strong><small>${date(entry.date)}</small></span><span class="score-row-meta">${entry.game.signed ? `<span class="signed-label" title="Verified ScoreTracker signature">signed</span>` : ""}<span>${duration(entry.duration)}</span></span></div>`).join("")}</div>`;
 }
 
 function stat(label: string, value: string, context: string): string {

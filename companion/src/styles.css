@@ -212,9 +212,11 @@ h1 { margin: 0; font: 750 clamp(39px, 6vw, 68px)/.98 var(--display-font); letter
 .chart-leaderboard li { min-height: 59px; padding: 9px 0; display: grid; grid-template-columns: 34px minmax(0, 1fr) auto; align-items: center; gap: 10px; border-bottom: 1px solid var(--border-soft); }
 .trophy-cell { width: 30px; display: grid; place-items: center; }
 .trophy { width: 23px; height: 23px; fill: currentColor; filter: drop-shadow(0 1px 1px rgba(20,25,28,.14)); }
-.trophy-1 { color: var(--accent); }
-.trophy-2 { color: #7f848e; }
-.trophy-3 { color: #3f4249; }
+.trophy-1 { color: #d4af37; }
+.trophy-2 { color: #a7a9ac; }
+.trophy-3 { color: #b87333; }
+.crown { width: 25px; height: 25px; color: #d4af37; fill: currentColor; filter: drop-shadow(0 1px 1px rgba(20,25,28,.18)); }
+.crown-jewel { fill: #6f52b5; }
 .rank-number { width: 23px; height: 23px; display: grid; place-items: center; color: var(--muted); border: 1px solid var(--border); border-radius: 50%; font: 700 10px ui-monospace, SFMono-Regular, Menlo, monospace; }
 .leaderboard-player { min-width: 0; display: flex; flex-direction: column; gap: 3px; }
 .leaderboard-player strong { font: 800 12px ui-monospace, SFMono-Regular, Menlo, monospace; letter-spacing: .08em; }
@@ -229,6 +231,8 @@ h1 { margin: 0; font: 750 clamp(39px, 6vw, 68px)/.98 var(--display-font); letter
 .score-row > span:first-child { display: flex; flex-direction: column; gap: 5px; }
 .score-row strong { color: var(--score); font: 700 15px ui-monospace, SFMono-Regular, Menlo, monospace; }
 .score-row small, .score-row > span:last-child { color: var(--muted); font-size: 10px; }
+.score-row-meta { display: flex; align-items: center; gap: 10px; }
+.signed-label { padding: 3px 7px; color: #237a45; border: 1px solid #35a85f; border-radius: 999px; font-size: 8px; font-weight: 800; letter-spacing: .06em; line-height: 1; text-transform: uppercase; }
 .full-history { margin-top: 18px; }
 
 .setup-hero { margin-bottom: 30px; }

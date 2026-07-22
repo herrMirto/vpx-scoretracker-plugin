@@ -8,6 +8,34 @@
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_C_STANDARD 99)
 
+include(FetchContent)
+cmake_policy(PUSH)
+if(POLICY CMP0135)
+   cmake_policy(SET CMP0135 NEW)
+endif()
+FetchContent_Declare(monocypher
+   URL https://monocypher.org/download/monocypher-4.0.2.tar.gz
+   URL_HASH SHA512=bf275d4c53ff94af6cdc723a4e002e9f080f4d1436c86c76bb37870b34807f1d7b32331d8ff8a1aeb369e946f3769021e03e63efac25b82efc5abf54dc084714
+)
+FetchContent_MakeAvailable(monocypher)
+cmake_policy(POP)
+
+set(SCORETRACKER_SIGNING_SEED_HEX "$ENV{SCORETRACKER_SIGNING_SEED_HEX}" CACHE STRING "Ed25519 signing seed injected by release CI")
+mark_as_advanced(SCORETRACKER_SIGNING_SEED_HEX)
+set(SCORETRACKER_SIGNING_ENABLED 0)
+if(SCORETRACKER_SIGNING_SEED_HEX)
+   string(LENGTH "${SCORETRACKER_SIGNING_SEED_HEX}" SCORETRACKER_SIGNING_SEED_LENGTH)
+   if(NOT SCORETRACKER_SIGNING_SEED_LENGTH EQUAL 64 OR SCORETRACKER_SIGNING_SEED_HEX MATCHES "[^0-9a-fA-F]")
+      message(FATAL_ERROR "SCORETRACKER_SIGNING_SEED_HEX must contain exactly 64 hexadecimal characters")
+   endif()
+   set(SCORETRACKER_SIGNING_ENABLED 1)
+endif()
+configure_file(
+   "${CMAKE_SOURCE_DIR}/plugins/scoretracker/ScoreSigningConfig.h.in"
+   "${CMAKE_CURRENT_BINARY_DIR}/scoretracker-generated/ScoreSigningConfig.h"
+   @ONLY
+)
+
 set(SCORETRACKER_PLUGIN_SOURCES
    plugins/scoretracker/common.cpp
    plugins/scoretracker/common.h
@@ -16,6 +44,10 @@ set(SCORETRACKER_PLUGIN_SOURCES
    plugins/scoretracker/NvramTracker.cpp
    plugins/scoretracker/ScoresFileWriter.h
    plugins/scoretracker/ScoresFileWriter.cpp
+   plugins/scoretracker/ScoreSignature.h
+   plugins/scoretracker/ScoreSignature.cpp
+   ${monocypher_SOURCE_DIR}/src/monocypher.c
+   ${monocypher_SOURCE_DIR}/src/optional/monocypher-ed25519.c
 )
 
 # The PinMAME NVRAM maps consumed by the plugin
@@ -49,6 +81,9 @@ if(BUILD_SHARED)
    add_library(ScoreTrackerPlugin MODULE ${SCORETRACKER_PLUGIN_SOURCES})
 
    target_include_directories(ScoreTrackerPlugin PUBLIC
+      ${CMAKE_CURRENT_BINARY_DIR}/scoretracker-generated
+      ${monocypher_SOURCE_DIR}/src
+      ${monocypher_SOURCE_DIR}/src/optional
       ${CMAKE_SOURCE_DIR}/third-party/include
       plugins
       plugins/scoretracker
@@ -124,6 +159,9 @@ if(BUILD_STATIC)
    add_library(ScoreTrackerPlugin STATIC ${SCORETRACKER_PLUGIN_SOURCES})
 
    target_include_directories(ScoreTrackerPlugin PUBLIC
+      ${CMAKE_CURRENT_BINARY_DIR}/scoretracker-generated
+      ${monocypher_SOURCE_DIR}/src
+      ${monocypher_SOURCE_DIR}/src/optional
       ${CMAKE_SOURCE_DIR}/third-party/include
       plugins
       plugins/scoretracker

@@ -5,6 +5,7 @@ use std::{
 };
 
 use chrono::{SecondsFormat, Utc};
+use ed25519_dalek::{Signature, Verifier, VerifyingKey};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use sha2::{Digest, Sha256};
@@ -39,6 +40,15 @@ struct SourceGame {
     game_duration: Option<i64>,
     #[serde(default)]
     game_state: Option<Value>,
+    #[serde(default)]
+    signature: Option<SourceSignature>,
+}
+
+#[derive(Debug, Deserialize)]
+struct SourceSignature {
+    algorithm: String,
+    key_id: String,
+    value: String,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -54,7 +64,13 @@ pub struct GameRecord {
     source_index: usize,
     vpx_file_name: Option<String>,
     vpx_file_hash: Option<String>,
+    signed: bool,
 }
+
+const SIGNATURE_ALGORITHM: &str = "ed25519";
+const SIGNATURE_KEY_ID: &str = "scoretracker-release-v1";
+const SIGNATURE_PUBLIC_KEY_HEX: &str =
+    "73a0a766bcaaeccbbd1692b43d8920ba2b372e29d49d99214118a40fedab799b";
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -179,6 +195,7 @@ fn read_source(path: &Path, root: &Path) -> Result<Vec<GameRecord>, String> {
         .into_iter()
         .enumerate()
         .filter_map(|(source_index, mut game)| {
+            let signed = verify_game_signature(&game);
             game.scores.retain(|score| *score > 0);
             if game.scores.is_empty() {
                 return None;
@@ -194,9 +211,61 @@ fn read_source(path: &Path, root: &Path) -> Result<Vec<GameRecord>, String> {
                 source_index,
                 vpx_file_name: vpx_file_name.clone(),
                 vpx_file_hash: vpx_file_hash.clone(),
+                signed,
             })
         })
         .collect())
+}
+
+fn signature_payload(game: &SourceGame) -> String {
+    let mut payload = String::from("scoretracker.game.v1\n");
+    payload.push_str(&format!("date {}\n{}\n", game.date.len(), game.date));
+    payload.push_str(&format!("rom {}\n{}\n", game.rom.len(), game.rom));
+    payload.push_str(&format!(
+        "duration {}\nscores {}\n",
+        game.game_duration.unwrap_or_default(),
+        game.scores.len()
+    ));
+    for score in &game.scores {
+        payload.push_str(&format!("score {score}\n"));
+    }
+    payload
+}
+
+fn decode_hex<const SIZE: usize>(value: &str) -> Option<[u8; SIZE]> {
+    if value.len() != SIZE * 2 {
+        return None;
+    }
+    let mut output = [0_u8; SIZE];
+    for (index, byte) in output.iter_mut().enumerate() {
+        *byte = u8::from_str_radix(&value[index * 2..index * 2 + 2], 16).ok()?;
+    }
+    Some(output)
+}
+
+fn verify_game_signature(game: &SourceGame) -> bool {
+    let Some(signature) = &game.signature else {
+        return false;
+    };
+    if signature.algorithm != SIGNATURE_ALGORITHM || signature.key_id != SIGNATURE_KEY_ID {
+        return false;
+    }
+
+    let Some(public_key) = decode_hex::<32>(SIGNATURE_PUBLIC_KEY_HEX) else {
+        return false;
+    };
+    let Some(signature_bytes) = decode_hex::<64>(&signature.value) else {
+        return false;
+    };
+    let Ok(verifying_key) = VerifyingKey::from_bytes(&public_key) else {
+        return false;
+    };
+    verifying_key
+        .verify(
+            signature_payload(game).as_bytes(),
+            &Signature::from_bytes(&signature_bytes),
+        )
+        .is_ok()
 }
 
 fn find_matching_vpx(scores_path: &Path) -> Option<PathBuf> {
@@ -302,7 +371,29 @@ mod tests {
             Some("Attack from Mars.vpx")
         );
         assert_eq!(snapshot.games[0].vpx_file_hash, None);
+        assert!(!snapshot.games[0].signed);
         assert!(snapshot.warnings.is_empty());
+    }
+
+    #[test]
+    fn verifies_signed_history_and_rejects_altered_scores() {
+        let temp = tempdir().expect("temporary directory");
+        let signature = "478766c78d4c177c97a945ba2f713c1fb273364a945d1a40030f36a1f3bd1a1a4a80569d90de46459f643ee1a65d6080016e589e2fa1ecc58d5474d06ef09106";
+        let signed = format!(
+            r#"{{"version":1,"games":[{{"date":"2026-07-10T10:00:00Z","rom":"afm_113b","scores":[123456],"game_duration":90,"signature":{{"algorithm":"ed25519","key_id":"scoretracker-release-v1","value":"{signature}"}}}}]}}"#
+        );
+        fs::write(temp.path().join("scores.json"), &signed).expect("signed fixture");
+
+        let snapshot = scan(temp.path().to_str().expect("UTF-8 path")).expect("valid scan");
+        assert!(snapshot.games[0].signed);
+
+        fs::write(
+            temp.path().join("scores.json"),
+            signed.replace("123456", "123457"),
+        )
+        .expect("altered fixture");
+        let snapshot = scan(temp.path().to_str().expect("UTF-8 path")).expect("valid scan");
+        assert!(!snapshot.games[0].signed);
     }
 
     #[test]
