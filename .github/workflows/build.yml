@@ -116,21 +116,7 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - label: Windows x64
-            runner: windows-2022
-            platform: windows
-            arch: x64
-            artifact: scoretracker-installer-windows-x64.exe
-          - label: Linux x64
-            runner: ubuntu-22.04
-            platform: linux
-            arch: x64
-            artifact: scoretracker-installer-linux-x64
-          - label: Linux ARM64
-            runner: ubuntu-24.04-arm
-            platform: linux
-            arch: arm64
-            artifact: scoretracker-installer-linux-arm64
+          # Temporarily build only the platform currently under active testing.
           - label: macOS ARM64
             runner: macos-15
             platform: macos
@@ -145,6 +131,26 @@ jobs:
       - uses: actions/checkout@v6
         with:
           ref: ${{ inputs.source_ref || github.sha }}
+
+      - name: Validate score signing key
+        if: github.event_name != 'pull_request'
+        shell: bash
+        env:
+          SCORETRACKER_SIGNING_SEED_HEX: ${{ secrets.SCORETRACKER_SIGNING_SEED_HEX }}
+        run: |
+          if [[ ! "$SCORETRACKER_SIGNING_SEED_HEX" =~ ^[0-9a-fA-F]{64}$ ]]; then
+            echo "::error::SCORETRACKER_SIGNING_SEED_HEX must be a GitHub Actions secret containing a 32-byte Ed25519 seed as 64 hexadecimal characters."
+            exit 1
+          fi
+          private_der="$RUNNER_TEMP/scoretracker-signing-key.der"
+          printf '%s' "302e020100300506032b657004220420${SCORETRACKER_SIGNING_SEED_HEX}" | xxd -r -p > "$private_der"
+          public_der="$(openssl pkey -in "$private_der" -inform DER -pubout -outform DER | xxd -p -c 1000)"
+          rm -f "$private_der"
+          expected_public_key="73a0a766bcaaeccbbd1692b43d8920ba2b372e29d49d99214118a40fedab799b"
+          if [[ "${public_der: -64}" != "$expected_public_key" ]]; then
+            echo "::error::SCORETRACKER_SIGNING_SEED_HEX does not match the public verification key embedded in ScoreTracker."
+            exit 1
+          fi
 
       - name: Configure macOS signing credentials
         if: matrix.platform == 'macos' && github.event_name != 'pull_request'
@@ -294,7 +300,7 @@ jobs:
         shell: bash
         run: |
           mkdir -p vpinball-src/plugins/scoretracker
-          cp ScoreTrackerPlugin.cpp NvramTracker.cpp NvramTracker.h ScoresFileWriter.cpp ScoresFileWriter.h common.cpp common.h plugin.cfg vpinball-src/plugins/scoretracker/
+          cp ScoreTrackerPlugin.cpp NvramTracker.cpp NvramTracker.h ScoresFileWriter.cpp ScoresFileWriter.h ScoreSignature.cpp ScoreSignature.h ScoreSigningConfig.h.in common.cpp common.h plugin.cfg vpinball-src/plugins/scoretracker/
           cp CMakeLists_plugin_ScoreTracker.txt vpinball-src/make/
           cat > vpinball-src/CMakeLists.txt <<'EOF'
           cmake_minimum_required(VERSION 3.19)
@@ -312,6 +318,8 @@ jobs:
       - name: Build plugin (Windows)
         if: matrix.platform == 'windows'
         shell: pwsh
+        env:
+          SCORETRACKER_SIGNING_SEED_HEX: ${{ secrets.SCORETRACKER_SIGNING_SEED_HEX }}
         run: |
           $ErrorActionPreference = 'Stop'
           $PSNativeCommandUseErrorActionPreference = $true
@@ -321,6 +329,8 @@ jobs:
       - name: Build plugin (Unix)
         if: matrix.platform != 'windows'
         shell: bash
+        env:
+          SCORETRACKER_SIGNING_SEED_HEX: ${{ secrets.SCORETRACKER_SIGNING_SEED_HEX }}
         run: |
           cmake -S vpinball-src -B vpinball-src/build -DCMAKE_BUILD_TYPE=Release
           cmake --build vpinball-src/build --target ScoreTrackerPlugin --config Release

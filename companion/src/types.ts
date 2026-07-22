@@ -9,6 +9,7 @@ export interface GameRecord {
   sourceIndex: number;
   vpxFileName: string | null;
   vpxFileHash: string | null;
+  signed: boolean;
 }
 
 export interface ScanWarning {

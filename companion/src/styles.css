@@ -229,6 +229,8 @@ h1 { margin: 0; font: 750 clamp(39px, 6vw, 68px)/.98 var(--display-font); letter
 .score-row > span:first-child { display: flex; flex-direction: column; gap: 5px; }
 .score-row strong { color: var(--score); font: 700 15px ui-monospace, SFMono-Regular, Menlo, monospace; }
 .score-row small, .score-row > span:last-child { color: var(--muted); font-size: 10px; }
+.score-row-meta { display: flex; align-items: center; gap: 10px; }
+.signed-label { padding: 3px 7px; color: #237a45; border: 1px solid #35a85f; border-radius: 999px; font-size: 8px; font-weight: 800; letter-spacing: .06em; line-height: 1; text-transform: uppercase; }
 .full-history { margin-top: 18px; }
 
 .setup-hero { margin-bottom: 30px; }

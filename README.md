@@ -22,6 +22,9 @@ The plugin has no effect for tables without a PinMAME controller or for ROMs wit
   exists, it is parsed once together with its platform description.
 - The confirmed game is appended to `scores.json` with an atomic write (temporary file + rename).
   An unreadable existing file is moved aside (`scores.json.broken.<timestamp>`), never deleted.
+- Official release builds add an Ed25519 signature to each new game. The Viewer verifies the score
+  fields locally and marks valid records as `signed`; older and locally built records remain usable
+  without the label.
 
 ## Settings (`[Plugin.ScoreTracker]` in VPinballX.ini)
 
@@ -40,13 +43,30 @@ The plugin has no effect for tables without a PinMAME controller or for ROMs wit
       "rom": "taf_l7",
       "scores": [12345678, 9876543],
       "game_duration": 310,
-      "game_state": { "credits": 2, "player_count": 2 }
+      "game_state": { "credits": 2, "player_count": 2 },
+      "signature": {
+        "algorithm": "ed25519",
+        "key_id": "scoretracker-release-v1",
+        "value": "<128 hexadecimal characters>"
+      }
     }
   ]
 }
 ```
 
 `scores` holds all scores seen per player during the session. 
+
+The signature covers `date`, `rom`, `scores`, and `game_duration`. It is a provenance marker, not
+tamper-proof DRM: the release plugin must contain signing capability so it can work offline, and a
+determined person can extract or replace that capability. The private seed is kept out of the source
+tree in the `SCORETRACKER_SIGNING_SEED_HEX` GitHub Actions secret and is injected only into official
+release builds. Pull-request and local builds intentionally write unsigned records.
+
+To configure a new release key, generate a 32-byte Ed25519 seed, store its 64-character hexadecimal
+form as the `SCORETRACKER_SIGNING_SEED_HEX` repository secret, and update
+`kScoreSignaturePublicKeyHex` in `ScoreSignature.h` plus `SIGNATURE_PUBLIC_KEY_HEX` in
+`companion/src-tauri/src/scores.rs` with its public key. Changing keys also requires a new `key_id`
+and retaining the previous public key in the Viewer if old signatures must continue to verify.
 
 ## Maps
 
@@ -102,4 +122,5 @@ The uninstall at the moment is manual, so you need to delete the scoretracker fo
 ## License
 
 ScoreTracker is available under the [MIT License](LICENSE). The bundled NVRAM maps retain their
-LGPL-3.0 license.
+LGPL-3.0 license. Release builds use the portable
+[Monocypher](https://monocypher.org/) Ed25519 implementation under its BSD-2-Clause/CC0 dual license.

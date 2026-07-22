@@ -535,7 +535,7 @@ function trophyIcon(rank: number): string {
 }
 
 function renderScoreHistory(entries: ScoreEntry[]): string {
-  return `<div class="score-history">${[...entries].reverse().map((entry) => `<div class="score-row"><span><strong>${number(entry.score)}</strong><small>${date(entry.date)}</small></span><span>${duration(entry.duration)}</span></div>`).join("")}</div>`;
+  return `<div class="score-history">${[...entries].reverse().map((entry) => `<div class="score-row"><span><strong>${number(entry.score)}</strong><small>${date(entry.date)}</small></span><span class="score-row-meta">${entry.game.signed ? `<span class="signed-label" title="Verified ScoreTracker signature">signed</span>` : ""}<span>${duration(entry.duration)}</span></span></div>`).join("")}</div>`;
 }
 
 function stat(label: string, value: string, context: string): string {

@@ -1,6 +1,7 @@
 // license:GPLv3+
 
 #include "ScoresFileWriter.h"
+#include "ScoreSignature.h"
 
 #include <chrono>
 #include <ctime>
@@ -40,7 +41,8 @@ string ScoresFileWriter::BrokenBackupSuffix()
 nlohmann::json ScoresFileWriter::BuildGameObject(const CompletedGameRecord& record)
 {
    nlohmann::json game;
-   game["date"] = CurrentUtcTimestamp();
+   const string date = CurrentUtcTimestamp();
+   game["date"] = date;
    if (!record.rom.empty())
       game["rom"] = record.rom;
    game["scores"] = record.scores;
@@ -48,6 +50,17 @@ nlohmann::json ScoresFileWriter::BuildGameObject(const CompletedGameRecord& reco
 
    if (record.gameState.is_object() && !record.gameState.empty())
       game["game_state"] = record.gameState;
+
+   const ScoreSignatureFields fields { date, record.rom, record.scores, record.gameDuration };
+   string signature;
+   if (SignScore(fields, signature))
+   {
+      game["signature"] = {
+         { "algorithm", kScoreSignatureAlgorithm },
+         { "key_id", kScoreSignatureKeyId },
+         { "value", signature }
+      };
+   }
 
    return game;
 }
