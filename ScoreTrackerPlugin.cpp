@@ -27,6 +27,7 @@ static NvramTracker* tracker = nullptr;
 static string activeGameId;
 static bool pollActive = false;
 static bool pollScheduled = false;
+static bool gameOverNotificationShown = false;
 
 MSGPI_STRING_VAL_SETTING(mapsFolderProp, "nvram_maps_folder", "NVRAM Maps Folder",
    "Folder with the PinMAME NVRAM maps (index.json, maps/, platforms/). When empty, the maps shipped with the plugin are used.", true, "", 1024);
@@ -49,6 +50,10 @@ static void OnPoll(void* userData)
    if (!pollActive || tracker == nullptr)
       return;
    tracker->Poll();
+   const bool isGameOver = tracker->IsGameOver();
+   if (isGameOver && !gameOverNotificationShown && vpxApi != nullptr)
+      vpxApi->PushNotification("Game Over", 3000);
+   gameOverNotificationShown = isGameOver;
    SchedulePoll();
 }
 
@@ -63,6 +68,7 @@ static void SchedulePoll()
 static void StopTracker()
 {
    pollActive = false;
+   gameOverNotificationShown = false;
    activeGameId.clear();
    if (tracker != nullptr)
    {

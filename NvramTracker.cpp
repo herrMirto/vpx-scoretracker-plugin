@@ -594,6 +594,7 @@ bool NvramTracker::Start(const string& gameId, const string& mapsPath, const str
    m_hasFinalScoresBaseline = false;
    m_hasLastState = false;
    m_gameOverLast = false;
+   m_isGameOver = false;
    m_gameOverPending = false;
    m_gameOverAnomalies = 0;
    m_ignoreGameOver = false;
@@ -724,6 +725,7 @@ void NvramTracker::Poll()
    }
    if (m_ignoreGameOver)
       isGameOver = false;
+   m_isGameOver = isGameOver;
    m_prevPlayerScores = m_playerScores;
 
    // A new game zeroes the score area, and that is the only unambiguous session boundary

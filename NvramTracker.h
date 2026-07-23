@@ -95,6 +95,8 @@ public:
    // Periodic inspection of the machine state; does nothing when no machine is running.
    void Poll();
 
+   bool IsGameOver() const { return m_isGameOver; }
+
 private:
    // Mapping and parsing helpers
    bool LoadMap(const string& gameId);
@@ -179,6 +181,7 @@ private:
    bool m_ignoreGameOver = false;
    bool m_hasLastState = false;
    bool m_gameOverLast = false;
+   bool m_isGameOver = false;
    bool m_gameOverPending = false;
    std::chrono::steady_clock::time_point m_gameOverSince;
    bool m_summarySent = false;
