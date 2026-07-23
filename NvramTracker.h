@@ -175,6 +175,9 @@ private:
 
    // Session tracking
    std::chrono::steady_clock::time_point m_sessionStartRealTime;
+   // Last time any decoded player score changed; game-over only confirms after the scores
+   // have been stable for kScoreStableConfirmSeconds (see Poll).
+   std::chrono::steady_clock::time_point m_scoresStableSince;
    vector<int64_t> m_highestScores;
    std::unordered_map<string, int64_t> m_maxGameStateValues;
    vector<int64_t> m_prevPlayerScores;

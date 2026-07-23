@@ -12,11 +12,13 @@
 namespace ScoreTracker
 {
 
-// Game-over confirmation debounce. A "no ball in play" flag (e.g. Stern SAM 0x02110904 bit 0x40)
-// is ALSO set between balls during the end-of-ball bonus / ball search, which can exceed a couple
-// of seconds (Metallica). A pending game-over is cancelled the instant a ball relaunches, so this
-// only needs to exceed the longest between-ball pause to avoid finalizing the game mid-play.
-static constexpr int kGameOverConfirmSeconds = 25;
+// A game-over reading only confirms the game once the live scores have also been unchanged for
+// this long. Score stability -- not continuous flag assertion -- is the arbiter because the
+// between-ball phases that also assert "no ball in play" style flags keep changing the score
+// area (end-of-ball bonus count-up), while some platforms' flags flap between polls in attract
+// mode and would never stay asserted through a long debounce. Same rule and window as the
+// field-proven vpinleaders-client Python monitor (NVRAM_GAME_END_STABLE_SEC).
+static constexpr int kScoreStableConfirmSeconds = 8;
 // Ignore "games" shorter than this. Resuming a table reloads the previous game's score from
 // NVRAM, which can briefly look like a live game; a real game always lasts longer.
 static constexpr int kMinGameDurationSeconds = 30;
@@ -586,6 +588,7 @@ bool NvramTracker::Start(const string& gameId, const string& mapsPath, const str
    m_scoreSavedUserData = scoreSavedUserData;
 
    m_sessionStartRealTime = std::chrono::steady_clock::now();
+   m_scoresStableSince = m_sessionStartRealTime;
    m_nvram.clear();
    m_playerScores.clear();
    m_decodedValues.clear();
@@ -673,11 +676,12 @@ void NvramTracker::Poll()
          m_nvram[i] = m_nvramBuffer[i].currStat;
    }
 
-   // If NVRAM has not changed and there are no RAM-mapped fields, nothing can have moved:
-   // only check whether a pending game-over reached its confirmation delay
+   // If NVRAM has not changed and there are no RAM-mapped fields, nothing can have moved (the
+   // scores are provably stable too): only check whether an asserted game-over may now confirm
    if (!nvramChanged && !m_hasRamFields && m_hasLastState)
    {
-      if (m_gameOverPending && !m_gameOverLast && std::chrono::steady_clock::now() - m_gameOverSince >= std::chrono::seconds(kGameOverConfirmSeconds))
+      if (m_gameOverPending && !m_gameOverLast && m_hasBeenInPlay
+         && std::chrono::steady_clock::now() - (m_scoresDesc.empty() ? m_gameOverSince : m_scoresStableSince) >= std::chrono::seconds(kScoreStableConfirmSeconds))
       {
          LOGI("Game play for rom %s is over", m_gameId.c_str());
          if (!m_summarySent)
@@ -727,12 +731,16 @@ void NvramTracker::Poll()
    }
    if (m_ignoreGameOver)
       isGameOver = false;
+   // Score-stability clock: any movement in any player score (including the zeroing at game
+   // start) restarts the confirmation window below.
+   if (m_prevPlayerScores != m_playerScores)
+      m_scoresStableSince = std::chrono::steady_clock::now();
    m_prevPlayerScores = m_playerScores;
 
    // A new game zeroes the score area, and that is the only unambiguous session boundary
    // available here: game_over also deasserts when a ball merely relaunches after the
-   // end-of-ball bonus, which is why confirming it needs kGameOverConfirmSeconds. Starting the
-   // next game inside that window -- routine between back-to-back games -- deasserts game_over
+   // end-of-ball bonus, which is why confirming it needs the score-stability window. Starting
+   // the next game inside that window -- routine between back-to-back games -- deasserts game_over
    // and cancels the pending confirmation below, so the finished game is never confirmed, never
    // written, and never resets the session: its peak scores and player_count then bleed into the
    // new game. Observed on afm_113b, where two games were reported as one record and a 1-player
@@ -765,9 +773,10 @@ void NvramTracker::Poll()
       m_hasBeenInPlay = false;
    }
 
-   // Raw lifecycle flags can briefly toggle during display and ball-state transitions. Only
-   // confirm game-over after it remains asserted for the confirmation delay; a transient must
-   // never finalize or reset a session.
+   // Raw lifecycle flags can briefly toggle during display and ball-state transitions; a
+   // transient must never finalize or reset a session. m_gameOverPending only bookmarks when
+   // the flag first asserted so FinalizeSession can exclude the confirmation wait from the
+   // reported duration -- confirmation itself is gated on score stability below.
    bool sessionReset = false;
    if (!isGameOver)
    {
@@ -833,8 +842,13 @@ void NvramTracker::Poll()
       }
    }
 
-   // Handle confirmed game over
-   const bool gameOverConfirmed = isGameOver && m_gameOverPending && std::chrono::steady_clock::now() - m_gameOverSince >= std::chrono::seconds(kGameOverConfirmSeconds);
+   // Handle confirmed game over: the flag reads asserted now and no score has moved for the
+   // stability window. The flag is not required to have stayed asserted the whole window --
+   // platforms with a flapping attract-mode flag could otherwise never confirm. Maps without
+   // live score descriptors have no stability signal to lean on (the clock would read stable
+   // forever), so there the flag itself must hold asserted for the whole window instead.
+   const auto confirmSince = m_scoresDesc.empty() ? m_gameOverSince : m_scoresStableSince;
+   const bool gameOverConfirmed = isGameOver && m_gameOverPending && std::chrono::steady_clock::now() - confirmSince >= std::chrono::seconds(kScoreStableConfirmSeconds);
    if (gameOverConfirmed && m_hasBeenInPlay && !m_gameOverLast)
    {
       LOGI("Game play for rom %s is over", m_gameId.c_str());
