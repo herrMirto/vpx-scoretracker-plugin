@@ -177,7 +177,7 @@ bool NotificationOverlay::Draw()
    FillRoundedRect(surface, inner, kCornerRadius - 3, background);
 
    constexpr std::string_view message = "Score Saved";
-   constexpr int scale = 5;
+   constexpr int scale = 4;
    constexpr int textWidth = static_cast<int>(message.size()) * 6 * scale - scale;
    constexpr int textHeight = 7 * scale;
    DrawText(surface, message, (kWidth - textWidth) / 2, (kHeight - textHeight) / 2,
