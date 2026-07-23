@@ -575,12 +575,15 @@ vector<int64_t> NvramTracker::BuildFinalScoresSnapshot(const vector<int64_t>& pl
    return snapshot;
 }
 
-bool NvramTracker::Start(const string& gameId, const string& mapsPath, const string& tablePath, const string& outputPath)
+bool NvramTracker::Start(const string& gameId, const string& mapsPath, const string& tablePath,
+   const string& outputPath, ScoreSavedCallback scoreSavedCallback, void* scoreSavedUserData)
 {
    m_gameId = gameId;
    m_mapsPath = mapsPath;
    m_tablePath = tablePath;
    m_outputPath = outputPath;
+   m_scoreSavedCallback = scoreSavedCallback;
+   m_scoreSavedUserData = scoreSavedUserData;
 
    m_sessionStartRealTime = std::chrono::steady_clock::now();
    m_nvram.clear();
@@ -594,7 +597,6 @@ bool NvramTracker::Start(const string& gameId, const string& mapsPath, const str
    m_hasFinalScoresBaseline = false;
    m_hasLastState = false;
    m_gameOverLast = false;
-   m_isGameOver = false;
    m_gameOverPending = false;
    m_gameOverAnomalies = 0;
    m_ignoreGameOver = false;
@@ -725,7 +727,6 @@ void NvramTracker::Poll()
    }
    if (m_ignoreGameOver)
       isGameOver = false;
-   m_isGameOver = isGameOver;
    m_prevPlayerScores = m_playerScores;
 
    // A new game zeroes the score area, and that is the only unambiguous session boundary
@@ -910,7 +911,8 @@ void NvramTracker::FinalizeSession(const vector<int64_t>& finalScores, bool writ
    record.scores = bestScores;
    record.gameDuration = duration;
    record.gameState = BuildCompletedGameState();
-   ScoresFileWriter::AppendCompletedGame(record);
+   if (ScoresFileWriter::AppendCompletedGame(record) && m_scoreSavedCallback != nullptr)
+      m_scoreSavedCallback(m_scoreSavedUserData);
 }
 
 }

@@ -48,7 +48,7 @@ DEFINES=(-DScoreTrackerPlugin_EXPORTS)
 COMMON_FLAGS=(-O3 -DNDEBUG -arch "$ARCH" -mmacosx-version-min=14.0 -fPIC)
 
 echo "Compiling C++ sources..."
-for src in ScoreTrackerPlugin NvramTracker ScoresFileWriter ScoreSignature common; do
+for src in ScoreTrackerPlugin NotificationOverlay NvramTracker ScoresFileWriter ScoreSignature common; do
   /usr/bin/c++ -std=gnu++20 "${COMMON_FLAGS[@]}" "${DEFINES[@]}" "${INCLUDES[@]}" \
     -c "$PLUGIN_DIR/$src.cpp" -o "$WORK_DIR/$src.cpp.o"
 done
@@ -56,9 +56,9 @@ done
 echo "Linking scoretracker-plugin.dylib..."
 /usr/bin/c++ -O3 -DNDEBUG -arch "$ARCH" -mmacosx-version-min=14.0 -bundle -Wl,-headerpad_max_install_names \
   -o "$WORK_DIR/scoretracker-plugin.dylib" \
-  "$WORK_DIR/ScoreTrackerPlugin.cpp.o" "$WORK_DIR/NvramTracker.cpp.o" "$WORK_DIR/ScoresFileWriter.cpp.o" "$WORK_DIR/ScoreSignature.cpp.o" "$WORK_DIR/common.cpp.o" \
+  "$WORK_DIR/ScoreTrackerPlugin.cpp.o" "$WORK_DIR/NotificationOverlay.cpp.o" "$WORK_DIR/NvramTracker.cpp.o" "$WORK_DIR/ScoresFileWriter.cpp.o" "$WORK_DIR/ScoreSignature.cpp.o" "$WORK_DIR/common.cpp.o" \
   -L"$VPINBALL_DIR/third-party/runtime-libs/macos-$ARCH" \
-  -Wl,-rpath,@executable_path/../Frameworks -lpinmame
+  -Wl,-rpath,@executable_path/../Frameworks -lpinmame -lSDL3
 
 DEST="$APP_BUNDLE/Contents/PlugIns/scoretracker"
 mkdir -p "$DEST"

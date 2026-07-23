@@ -2,6 +2,7 @@
 
 #include "common.h"
 #include "NvramTracker.h"
+#include "NotificationOverlay.h"
 
 #include <filesystem>
 
@@ -27,12 +28,27 @@ static NvramTracker* tracker = nullptr;
 static string activeGameId;
 static bool pollActive = false;
 static bool pollScheduled = false;
-static bool gameOverNotificationShown = false;
+static NotificationOverlay notificationOverlay;
 
 MSGPI_STRING_VAL_SETTING(mapsFolderProp, "nvram_maps_folder", "NVRAM Maps Folder",
    "Folder with the PinMAME NVRAM maps (index.json, maps/, platforms/). When empty, the maps shipped with the plugin are used.", true, "", 1024);
 MSGPI_INT_VAL_SETTING(pollIntervalMsProp, "PollIntervalMs", "Polling Interval (ms)", "Interval used to inspect the machine state. Higher values reduce overhead.", true, 50, 5000, 250);
 MSGPI_STRING_VAL_SETTING(outputFolderProp, "OutputFolder", "Scores Output Folder", "Folder where scores.json is written. When empty, it is written next to the table file.", true, "", 1024);
+MSGPI_BOOL_VAL_SETTING(notificationsProp, "Notifications", "Notifications",
+   "Show a pop-up over the playfield when a score is saved.", true, true);
+
+static void HideNotification(void* userData)
+{
+   notificationOverlay.Hide();
+}
+
+static void OnScoreSaved(void* userData)
+{
+   if (!notificationsProp_Val || msgApi == nullptr)
+      return;
+   if (notificationOverlay.ShowScoreSaved())
+      msgApi->RunOnMainThread(endpointId, 3.0, HideNotification, nullptr);
+}
 
 static string ResolveMapsPath()
 {
@@ -50,10 +66,6 @@ static void OnPoll(void* userData)
    if (!pollActive || tracker == nullptr)
       return;
    tracker->Poll();
-   const bool isGameOver = tracker->IsGameOver();
-   if (isGameOver && !gameOverNotificationShown && vpxApi != nullptr)
-      vpxApi->PushNotification("Game Over", 3000);
-   gameOverNotificationShown = isGameOver;
    SchedulePoll();
 }
 
@@ -68,7 +80,6 @@ static void SchedulePoll()
 static void StopTracker()
 {
    pollActive = false;
-   gameOverNotificationShown = false;
    activeGameId.clear();
    if (tracker != nullptr)
    {
@@ -116,7 +127,7 @@ static void OnGameStart(const unsigned int eventId, void* userData, void* msgDat
 
    LOGI("Tracking scores for rom %s using map %s", gameId.c_str(), mapDetail.c_str());
    tracker = new NvramTracker();
-   if (!tracker->Start(gameId, mapsPath, tablePath, outputFolderProp_Val))
+   if (!tracker->Start(gameId, mapsPath, tablePath, outputFolderProp_Val, OnScoreSaved))
    {
       LOGE("NVRAM map exists but could not be loaded for %s", gameId.c_str());
       delete tracker;
@@ -151,6 +162,7 @@ MSGPI_EXPORT void MSGPIAPI ScoreTrackerPluginLoad(const uint32_t sessionId, cons
    msgApi->RegisterSetting(endpointId, &mapsFolderProp);
    msgApi->RegisterSetting(endpointId, &pollIntervalMsProp);
    msgApi->RegisterSetting(endpointId, &outputFolderProp);
+   msgApi->RegisterSetting(endpointId, &notificationsProp);
 
    msgApi->BroadcastMsg(endpointId, getVpxApiId = msgApi->GetMsgID(VPXPI_NAMESPACE, VPXPI_MSG_GET_API), &vpxApi);
 
@@ -162,6 +174,7 @@ MSGPI_EXPORT void MSGPIAPI ScoreTrackerPluginLoad(const uint32_t sessionId, cons
 MSGPI_EXPORT void MSGPIAPI ScoreTrackerPluginUnload()
 {
    StopTracker();
+   notificationOverlay.Hide();
 
    msgApi->UnsubscribeMsg(onGameStartId, OnGameStart, nullptr);
    msgApi->UnsubscribeMsg(onGameEndId, OnGameEnd, nullptr);

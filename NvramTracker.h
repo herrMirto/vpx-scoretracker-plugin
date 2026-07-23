@@ -72,6 +72,8 @@ struct Descriptor
 class NvramTracker final
 {
 public:
+   using ScoreSavedCallback = void (*)(void* userData);
+
    enum class MapStatus
    {
       Available,
@@ -86,7 +88,9 @@ public:
    static MapStatus ProbeMap(const string& gameId, const string& mapsPath, string& detail);
 
    // Returns true when monitoring started (a valid JSON map exists for the gameId).
-   bool Start(const string& gameId, const string& mapsPath, const string& tablePath, const string& outputPath);
+   bool Start(const string& gameId, const string& mapsPath, const string& tablePath,
+      const string& outputPath, ScoreSavedCallback scoreSavedCallback = nullptr,
+      void* scoreSavedUserData = nullptr);
 
    // Finalizes the session: if a played game was not yet persisted (VPX exited before the
    // game-over was confirmed), it is written as an exit fallback.
@@ -94,8 +98,6 @@ public:
 
    // Periodic inspection of the machine state; does nothing when no machine is running.
    void Poll();
-
-   bool IsGameOver() const { return m_isGameOver; }
 
 private:
    // Mapping and parsing helpers
@@ -135,6 +137,8 @@ private:
    string m_mapsPath;
    string m_tablePath;
    string m_outputPath;
+   ScoreSavedCallback m_scoreSavedCallback = nullptr;
+   void* m_scoreSavedUserData = nullptr;
 
    // Loaded map data
    nlohmann::json m_mapData;
@@ -181,7 +185,6 @@ private:
    bool m_ignoreGameOver = false;
    bool m_hasLastState = false;
    bool m_gameOverLast = false;
-   bool m_isGameOver = false;
    bool m_gameOverPending = false;
    std::chrono::steady_clock::time_point m_gameOverSince;
    bool m_summarySent = false;
