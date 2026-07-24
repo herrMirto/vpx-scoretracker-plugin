@@ -32,6 +32,8 @@ struct ScoresDocument {
 #[derive(Debug, Deserialize)]
 struct SourceGame {
     #[serde(default)]
+    score_id: Option<i64>,
+    #[serde(default)]
     date: String,
     #[serde(default)]
     rom: String,
@@ -54,6 +56,7 @@ struct SourceSignature {
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct GameRecord {
+    score_id: Option<i64>,
     date: String,
     rom: String,
     scores: Vec<i64>,
@@ -167,7 +170,7 @@ fn read_source(path: &Path, root: &Path) -> Result<Vec<GameRecord>, String> {
     let document: ScoresDocument =
         serde_json::from_reader(BufReader::new(file)).map_err(|error| error.to_string())?;
 
-    if document.version != 1 {
+    if document.version != 1 && document.version != 2 {
         return Err(format!(
             "unsupported scores schema version {}",
             document.version
@@ -201,6 +204,7 @@ fn read_source(path: &Path, root: &Path) -> Result<Vec<GameRecord>, String> {
                 return None;
             }
             Some(GameRecord {
+                score_id: game.score_id,
                 date: game.date,
                 rom: game.rom,
                 scores: game.scores,
@@ -340,6 +344,77 @@ fn display_source(path: &Path, root: &Path) -> String {
         .into_owned()
 }
 
+/// Resolve a scores.json path from a scan's `source` field, rejecting anything outside the
+/// tables folder. Shared by the read-side hash lookup and the remove command.
+fn resolve_scores_path(tables_root: &str, score_source: &str) -> Result<PathBuf, String> {
+    let root = PathBuf::from(tables_root)
+        .canonicalize()
+        .map_err(|error| format!("could not resolve tables folder: {error}"))?;
+    let scores_path = root
+        .join(score_source)
+        .canonicalize()
+        .map_err(|error| format!("could not resolve score source: {error}"))?;
+    if !scores_path.starts_with(&root)
+        || scores_path
+            .file_name()
+            .map_or(true, |name| name != "scores.json")
+    {
+        return Err("score source must be a scores.json file inside the tables folder".to_owned());
+    }
+    Ok(scores_path)
+}
+
+/// Permanently delete one game from a scores.json file. The game is located by its stable
+/// `score_id` when present, falling back to the array position for legacy records written
+/// before score_id existed. `source_index` is verified against `score_id` when both are known
+/// so a stale UI (history changed since the last scan) fails loudly instead of deleting the
+/// wrong row. All other games and fields are preserved verbatim.
+pub fn remove_game(
+    tables_root: &str,
+    score_source: &str,
+    source_index: usize,
+    score_id: Option<i64>,
+) -> Result<(), String> {
+    let scores_path = resolve_scores_path(tables_root, score_source)?;
+
+    let contents = fs::read_to_string(&scores_path).map_err(|error| error.to_string())?;
+    let mut document: Value = serde_json::from_str(&contents).map_err(|error| error.to_string())?;
+    let games = document
+        .get_mut("games")
+        .and_then(Value::as_array_mut)
+        .ok_or_else(|| "scores.json has no games array".to_owned())?;
+
+    let stale = || "the history changed since it was loaded; refresh and try again".to_owned();
+
+    let target = if let Some(id) = score_id {
+        // Prefer the stable id; if the file has ids at all, only an exact id match is trusted.
+        match games
+            .iter()
+            .position(|game| game.get("score_id").and_then(Value::as_i64) == Some(id))
+        {
+            Some(index) => index,
+            None => return Err(stale()),
+        }
+    } else {
+        // Legacy record with no id: fall back to the array position, but refuse if that slot
+        // has since gained an id (meaning the file was rewritten and the index is stale).
+        if source_index >= games.len()
+            || games[source_index].get("score_id").is_some()
+        {
+            return Err(stale());
+        }
+        source_index
+    };
+
+    games.remove(target);
+
+    let serialized = serde_json::to_string_pretty(&document).map_err(|error| error.to_string())?;
+    let tmp_path = scores_path.with_file_name("scores.json.tmp");
+    fs::write(&tmp_path, format!("{serialized}\n")).map_err(|error| error.to_string())?;
+    fs::rename(&tmp_path, &scores_path).map_err(|error| error.to_string())?;
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use std::fs;
@@ -444,6 +519,69 @@ mod tests {
         let snapshot = scan(temp.path().to_str().expect("UTF-8 path")).expect("valid scan");
         assert_eq!(snapshot.games.len(), 1);
         assert_eq!(snapshot.games[0].scores, vec![4200]);
+    }
+
+    #[test]
+    fn removes_game_by_score_id_and_preserves_others() {
+        let temp = tempdir().expect("temporary directory");
+        let table = temp.path().join("Attack from Mars");
+        fs::create_dir(&table).expect("table directory");
+        fs::write(
+            table.join("scores.json"),
+            r#"{"version":2,"games":[{"score_id":1,"date":"2026-07-10T10:00:00Z","rom":"afm_113b","scores":[111]},{"score_id":2,"date":"2026-07-10T11:00:00Z","rom":"afm_113b","scores":[222]}]}"#,
+        )
+        .expect("scores fixture");
+
+        super::remove_game(
+            temp.path().to_str().expect("UTF-8 path"),
+            "Attack from Mars/scores.json",
+            0,
+            Some(1),
+        )
+        .expect("removal");
+
+        let snapshot = scan(temp.path().to_str().expect("UTF-8 path")).expect("rescan");
+        assert_eq!(snapshot.games.len(), 1);
+        assert_eq!(snapshot.games[0].scores, vec![222]);
+        assert_eq!(snapshot.games[0].score_id, Some(2));
+    }
+
+    #[test]
+    fn removes_legacy_game_by_index_when_no_id() {
+        let temp = tempdir().expect("temporary directory");
+        fs::write(
+            temp.path().join("scores.json"),
+            r#"{"version":1,"games":[{"date":"2026-07-10T10:00:00Z","rom":"demo","scores":[111]},{"date":"2026-07-10T11:00:00Z","rom":"demo","scores":[222]}]}"#,
+        )
+        .expect("scores fixture");
+
+        super::remove_game(temp.path().to_str().expect("UTF-8 path"), "scores.json", 0, None)
+            .expect("removal");
+
+        let snapshot = scan(temp.path().to_str().expect("UTF-8 path")).expect("rescan");
+        assert_eq!(snapshot.games.len(), 1);
+        assert_eq!(snapshot.games[0].scores, vec![222]);
+    }
+
+    #[test]
+    fn refuses_stale_id_removal() {
+        let temp = tempdir().expect("temporary directory");
+        fs::write(
+            temp.path().join("scores.json"),
+            r#"{"version":2,"games":[{"score_id":5,"date":"2026-07-10T10:00:00Z","rom":"demo","scores":[111]}]}"#,
+        )
+        .expect("scores fixture");
+
+        let result = super::remove_game(
+            temp.path().to_str().expect("UTF-8 path"),
+            "scores.json",
+            0,
+            Some(99),
+        );
+        assert!(result.is_err());
+        // Nothing was deleted.
+        let snapshot = scan(temp.path().to_str().expect("UTF-8 path")).expect("rescan");
+        assert_eq!(snapshot.games.len(), 1);
     }
 
     #[test]

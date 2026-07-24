@@ -81,6 +81,9 @@ companion exposes no NVRAM write command and does not decode unrelated machine s
 - Rust performs filesystem access; the webview does not receive unrestricted filesystem APIs.
 - The user explicitly chooses the tables root using a native directory picker.
 - Scan commands canonicalize the selected root, do not follow directory symlinks, and are read-only.
+- The only write path is the user-initiated Remove action, which deletes one game from a
+  `scores.json` inside the tables root (path re-validated the same way as scans) and rewrites the
+  file atomically via a temp file and rename. It never touches any other file.
 - NVRAM access is read-only and limited to decoding mapped machine high scores.
 - No network listener is started in v1.
 - Outbound access is restricted to the VPinPlay API and static wheel images hosted by VPinMediaDB

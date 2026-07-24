@@ -25,7 +25,9 @@ suitable for a future cabinet mode without requiring a separate frontend.
 ### Game discovery
 
 - **COMP-010:** The app recursively discovers `scores.json` files beneath the configured root.
-- **COMP-011:** It reads ScoreTracker schema version 1 and ignores unknown fields.
+- **COMP-011:** It reads ScoreTracker schema versions 1 and 2 and ignores unknown fields.
+- **COMP-011a:** It can permanently remove a single game from its `scores.json`, matching the
+  record by `score_id` (schema v2) or array position (legacy v1), preserving all other games.
 - **COMP-012:** One malformed or unsupported file does not prevent valid files from loading.
 - **COMP-013:** Each warning identifies its source without exposing an unnecessary stack trace.
 - **COMP-014:** Scanning is read-only and does not follow directory symlinks.
@@ -110,6 +112,6 @@ The scaffold is complete when it can be developed on the current platform and co
 
 1. A Tauri 2 Rust application and Vite/TypeScript frontend.
 2. Native tables-directory selection.
-3. A read-only Rust command that scans schema-v1 `scores.json` files.
+3. Rust commands that scan schema v1/v2 `scores.json` files and remove a single game on request.
 4. A responsive page showing scan totals and recent games.
 5. Focused Rust tests for valid and malformed source files.

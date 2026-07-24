@@ -233,6 +233,10 @@ h1 { margin: 0; font: 750 clamp(39px, 6vw, 68px)/.98 var(--display-font); letter
 .score-row small, .score-row > span:last-child { color: var(--muted); font-size: 10px; }
 .score-row-meta { display: flex; align-items: center; gap: 10px; }
 .signed-label { padding: 3px 7px; color: #237a45; border: 1px solid #35a85f; border-radius: 999px; font-size: 8px; font-weight: 800; letter-spacing: .06em; line-height: 1; text-transform: uppercase; }
+.score-remove { padding: 4px 10px; color: var(--muted); background: transparent; border: 1px solid var(--border-soft); border-radius: 999px; font-size: 9px; font-weight: 700; letter-spacing: .05em; line-height: 1; text-transform: uppercase; cursor: pointer; opacity: 0; transition: opacity .12s ease, color .12s ease, border-color .12s ease; }
+.score-row:hover .score-remove, .score-remove:focus-visible { opacity: 1; }
+.score-remove:hover { color: #b3261e; border-color: #e0897f; }
+.score-remove:disabled { cursor: default; opacity: .4; }
 .full-history { margin-top: 18px; }
 
 .setup-hero { margin-bottom: 30px; }

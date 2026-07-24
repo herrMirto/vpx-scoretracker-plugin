@@ -1,4 +1,5 @@
 export interface GameRecord {
+  scoreId: number | null;
   date: string;
   rom: string;
   scores: number[];

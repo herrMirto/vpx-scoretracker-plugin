@@ -25,6 +25,20 @@ async fn resolve_vpx_hash(
 }
 
 #[tauri::command]
+async fn remove_game(
+    tables_root: String,
+    score_source: String,
+    source_index: usize,
+    score_id: Option<i64>,
+) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        scores::remove_game(&tables_root, &score_source, source_index, score_id)
+    })
+    .await
+    .map_err(|error| format!("remove game task failed: {error}"))?
+}
+
+#[tauri::command]
 fn load_nvram(
     tables_root: String,
     maps_root: String,
@@ -74,6 +88,7 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .invoke_handler(tauri::generate_handler![
             scan_scores,
+            remove_game,
             resolve_vpx_hash,
             resolve_maps_root,
             read_seed_config,

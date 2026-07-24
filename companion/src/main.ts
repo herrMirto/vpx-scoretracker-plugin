@@ -561,7 +561,7 @@ function crownIcon(): string {
 }
 
 function renderScoreHistory(entries: ScoreEntry[]): string {
-  return `<div class="score-history">${[...entries].reverse().map((entry) => `<div class="score-row"><span><strong>${number(entry.score)}</strong><small>${date(entry.date)}</small></span><span class="score-row-meta">${entry.game.signed ? `<span class="signed-label" title="Verified ScoreTracker signature">signed</span>` : ""}<span>${duration(entry.duration)}</span></span></div>`).join("")}</div>`;
+  return `<div class="score-history">${[...entries].reverse().map((entry) => `<div class="score-row"><span><strong>${number(entry.score)}</strong><small>${date(entry.date)}</small></span><span class="score-row-meta">${entry.game.signed ? `<span class="signed-label" title="Verified ScoreTracker signature">signed</span>` : ""}<span>${duration(entry.duration)}</span><button class="score-remove" type="button" data-source="${esc(entry.game.source)}" data-index="${entry.game.sourceIndex}" data-score-id="${entry.game.scoreId ?? ""}" title="Remove this game from history" aria-label="Remove this game from history">Remove</button></span></div>`).join("")}</div>`;
 }
 
 function stat(label: string, value: string, context: string): string {
@@ -628,6 +628,9 @@ function wireEvents(): void {
     image.addEventListener("load", updateArtworkState, { once: true });
     image.addEventListener("error", updateArtworkState, { once: true });
     if (image.complete) updateArtworkState();
+  });
+  document.querySelectorAll<HTMLButtonElement>(".score-remove").forEach((button) => {
+    button.addEventListener("click", () => removeGame(button));
   });
   document.querySelector("#choose-root")?.addEventListener("click", chooseRoot);
   document.querySelector("#show-folders")?.addEventListener("click", openFolders);
@@ -740,6 +743,27 @@ async function scanConfiguredRoot(): Promise<void> {
     busy = false;
     nvramRom = "";
     nvram = null;
+    render();
+  }
+}
+
+async function removeGame(button: HTMLButtonElement): Promise<void> {
+  if (busy) return;
+  const tablesRoot = localStorage.getItem(TABLES_ROOT_KEY);
+  if (!tablesRoot) return;
+  const scoreSource = button.dataset.source ?? "";
+  const sourceIndex = Number(button.dataset.index ?? "0");
+  const rawId = button.dataset.scoreId ?? "";
+  const scoreId = rawId === "" ? null : Number(rawId);
+  if (!window.confirm("Remove this game from your history? It is permanently deleted from scores.json and cannot be undone.")) {
+    return;
+  }
+  button.disabled = true;
+  try {
+    await invoke("remove_game", { tablesRoot, scoreSource, sourceIndex, scoreId });
+    await scanConfiguredRoot();
+  } catch (error) {
+    fatalError = error instanceof Error ? error.message : String(error);
     render();
   }
 }
