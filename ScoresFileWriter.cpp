@@ -108,11 +108,24 @@ bool ScoresFileWriter::AppendCompletedGame(const CompletedGameRecord& record)
 
    if (!root.is_object())
       root = nlohmann::json::object();
-   root["version"] = 1;
+   root["version"] = 2;
    if (!root.contains("games") || !root["games"].is_array())
       root["games"] = nlohmann::json::array();
 
-   root["games"].push_back(BuildGameObject(record));
+   // Every game carries a stable, never-reused score_id so the companion can remove a specific
+   // record unambiguously. Backfill any legacy game that predates this field, then hand the new
+   // game the next id after the current maximum.
+   int64_t maxId = 0;
+   for (const auto& game : root["games"])
+      if (game.is_object() && game.contains("score_id") && game["score_id"].is_number_integer())
+         maxId = std::max(maxId, game["score_id"].get<int64_t>());
+   for (auto& game : root["games"])
+      if (game.is_object() && !(game.contains("score_id") && game["score_id"].is_number_integer()))
+         game["score_id"] = ++maxId;
+
+   nlohmann::json gameObject = BuildGameObject(record);
+   gameObject["score_id"] = ++maxId;
+   root["games"].push_back(std::move(gameObject));
 
    {
       std::ofstream out(tmpPath, std::ios::trunc);

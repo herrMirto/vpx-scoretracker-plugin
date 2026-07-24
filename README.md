@@ -36,9 +36,10 @@ The plugin has no effect for tables without a PinMAME controller or for ROMs wit
 
 ```json
 {
-  "version": 1,
+  "version": 2,
   "games": [
     {
+      "score_id": 1,
       "date": "2026-07-03T18:30:12Z",
       "rom": "taf_l7",
       "scores": [12345678, 9876543],
@@ -54,7 +55,12 @@ The plugin has no effect for tables without a PinMAME controller or for ROMs wit
 }
 ```
 
-`scores` holds all scores seen per player during the session. 
+`scores` holds all scores seen per player during the session.
+
+`score_id` (added in version 2) is a per-file, monotonically increasing integer that never
+repeats, even after a game is removed. It gives the companion Viewer a stable handle to delete a
+specific record. It is not covered by the signature. Files written by an older plugin (version 1,
+no `score_id`) are read as-is and gain ids the next time the plugin appends a game.
 
 The signature covers `date`, `rom`, `scores`, and `game_duration`. It is a provenance marker, not
 tamper-proof DRM: the release plugin must contain signing capability so it can work offline, and a
