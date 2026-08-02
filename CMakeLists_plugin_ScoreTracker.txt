@@ -40,8 +40,6 @@ set(SCORETRACKER_PLUGIN_SOURCES
    plugins/scoretracker/common.cpp
    plugins/scoretracker/common.h
    plugins/scoretracker/ScoreTrackerPlugin.cpp
-   plugins/scoretracker/NotificationOverlay.h
-   plugins/scoretracker/NotificationOverlay.cpp
    plugins/scoretracker/NvramTracker.h
    plugins/scoretracker/NvramTracker.cpp
    plugins/scoretracker/ScoresFileWriter.h
@@ -103,9 +101,9 @@ if(BUILD_SHARED)
          OUTPUT_NAME "scoretracker-plugin"
       )
       if(ARCH STREQUAL "x64")
-         target_link_libraries(ScoreTrackerPlugin pinmame64 SDL3)
+         target_link_libraries(ScoreTrackerPlugin pinmame64)
       else()
-         target_link_libraries(ScoreTrackerPlugin pinmame SDL3)
+         target_link_libraries(ScoreTrackerPlugin pinmame)
       endif()
    else()
       set_target_properties(ScoreTrackerPlugin PROPERTIES
@@ -127,7 +125,7 @@ if(BUILD_SHARED)
       target_link_directories(ScoreTrackerPlugin PUBLIC
          ${CMAKE_SOURCE_DIR}/third-party/runtime-libs/${PLATFORM}-${ARCH}
       )
-      target_link_libraries(ScoreTrackerPlugin PUBLIC pinmame SDL3)
+      target_link_libraries(ScoreTrackerPlugin PUBLIC pinmame)
    endif()
 
    add_custom_command(TARGET ScoreTrackerPlugin POST_BUILD
@@ -173,5 +171,4 @@ if(BUILD_STATIC)
       PREFIX ""
       OUTPUT_NAME "scoretracker-plugin"
    )
-   target_link_libraries(ScoreTrackerPlugin PUBLIC SDL3)
 endif()

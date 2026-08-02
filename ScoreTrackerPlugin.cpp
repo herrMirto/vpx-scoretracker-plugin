@@ -2,7 +2,6 @@
 
 #include "common.h"
 #include "NvramTracker.h"
-#include "NotificationOverlay.h"
 
 #include <algorithm>
 #include <filesystem>
@@ -36,7 +35,6 @@ static NvramTracker* tracker = nullptr;
 static string activeGameId;
 static bool pollActive = false;
 static bool pollScheduled = false;
-static NotificationOverlay notificationOverlay;
 
 MSGPI_STRING_VAL_SETTING(mapsFolderProp, "nvram_maps_folder", "NVRAM Maps Folder",
    "Folder with the PinMAME NVRAM maps (index.json, maps/, platforms/). When empty, the maps shipped with the plugin are used.", true, "", 1024);
@@ -45,17 +43,11 @@ MSGPI_STRING_VAL_SETTING(outputFolderProp, "OutputFolder", "Scores Output Folder
 MSGPI_BOOL_VAL_SETTING(notificationsProp, "Notifications", "Notifications",
    "Show a pop-up over the playfield when a score is saved.", true, true);
 
-static void HideNotification(void* userData)
-{
-   notificationOverlay.Hide();
-}
-
 static void OnScoreSaved(void* userData)
 {
-   if (!notificationsProp_Val || msgApi == nullptr)
+   if (!notificationsProp_Val || vpxApi == nullptr || vpxApi->PushNotification == nullptr)
       return;
-   if (notificationOverlay.ShowScoreSaved())
-      msgApi->RunOnMainThread(endpointId, 3.0, HideNotification, nullptr);
+   vpxApi->PushNotification("Score Saved", 3000);
 }
 
 static string ResolveMapsPath()
@@ -260,7 +252,6 @@ MSGPI_EXPORT void MSGPIAPI ScoreTrackerPluginLoad(const uint32_t sessionId, cons
 MSGPI_EXPORT void MSGPIAPI ScoreTrackerPluginUnload()
 {
    StopTracker();
-   notificationOverlay.Hide();
 
 #if defined(CTLPI_CONTROLLERS_ON_CHG_MSG)
    msgApi->UnsubscribeMsg(onControllersChangedId, OnControllersChanged, nullptr);

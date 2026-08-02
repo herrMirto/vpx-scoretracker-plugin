@@ -122,7 +122,7 @@ jobs:
             arch: x64
             artifact: scoretracker-installer-windows-x64.exe
           - label: Linux x64
-            runner: ubuntu-22.04
+            runner: ubuntu-24.04
             platform: linux
             arch: x64
             artifact: scoretracker-installer-linux-x64
@@ -314,7 +314,7 @@ jobs:
         shell: bash
         run: |
           mkdir -p vpinball-src/plugins/scoretracker
-          cp ScoreTrackerPlugin.cpp NotificationOverlay.cpp NotificationOverlay.h NvramTracker.cpp NvramTracker.h ScoresFileWriter.cpp ScoresFileWriter.h ScoreSignature.cpp ScoreSignature.h ScoreSigningConfig.h.in common.cpp common.h plugin.cfg vpinball-src/plugins/scoretracker/
+          cp ScoreTrackerPlugin.cpp NvramTracker.cpp NvramTracker.h ScoresFileWriter.cpp ScoresFileWriter.h ScoreSignature.cpp ScoreSignature.h ScoreSigningConfig.h.in common.cpp common.h plugin.cfg vpinball-src/plugins/scoretracker/
           cp CMakeLists_plugin_ScoreTracker.txt vpinball-src/make/
           cat > vpinball-src/CMakeLists.txt <<'EOF'
           cmake_minimum_required(VERSION 3.19)
