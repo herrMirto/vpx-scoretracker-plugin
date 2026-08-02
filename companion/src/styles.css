@@ -191,19 +191,24 @@ h1 { margin: 0; font: 750 clamp(39px, 6vw, 68px)/.98 var(--display-font); letter
 .detail-stats { grid-template-columns: repeat(3, minmax(0, 1fr)); }
 .chart-panel { margin: 4px 0 18px; border-top: 3px solid var(--accent); }
 .progress-layout { display: grid; grid-template-columns: minmax(0, 1fr) 330px; }
-.chart-wrap { min-width: 0; padding: 14px 20px 20px; border-right: 1px solid var(--border); }
+.chart-wrap { min-width: 0; padding: 18px 20px 22px; border-right: 1px solid var(--border); }
 .progress-chart { display: block; width: 100%; max-height: 350px; overflow: visible; }
-.chart-grid line { stroke: #e1e5e6; stroke-width: 1; }
-.chart-grid text, .axis-date { fill: var(--muted); font: 10px ui-monospace, SFMono-Regular, Menlo, monospace; }
+.chart-plot-background { fill: #f3f6ff; }
+.chart-grid line { stroke: #ccd6f5; stroke-width: 1; }
+.chart-grid text { fill: #3e4654; font: 700 14px ui-monospace, SFMono-Regular, Menlo, monospace; }
+.axis-date { fill: #4d5563; font: 700 12.5px ui-monospace, SFMono-Regular, Menlo, monospace; }
 .record-line { stroke: var(--target-line); stroke-width: 1.25; stroke-dasharray: 5 6; }
 .record-label { fill: var(--data); font: 700 8.5px ui-monospace, SFMono-Regular, Menlo, monospace; letter-spacing: .04em; }
-.score-line { fill: none; stroke: var(--data); stroke-width: 3; stroke-linejoin: round; stroke-linecap: round; }
+.score-area { fill: #dfe7ff; fill-opacity: .74; stroke: none; }
+.score-line { fill: none; stroke: var(--data); stroke-width: 3.5; stroke-linejoin: round; stroke-linecap: round; }
 .score-dots circle { stroke-width: 3; }
 .progress-chart .score-point { stroke: var(--data); }
 .progress-chart .latest-score-point { fill: var(--data); stroke: var(--surface); stroke-width: 3.5; }
-.personal-best-line { stroke: var(--target-line); stroke-width: 1.1; stroke-dasharray: 4 5; }
-.personal-best-label { fill: var(--muted); font: 700 8.5px ui-monospace, SFMono-Regular, Menlo, monospace; letter-spacing: .025em; }
-.latest-score-label { fill: var(--text); font: 700 9px ui-monospace, SFMono-Regular, Menlo, monospace; letter-spacing: .015em; }
+.personal-best-line { stroke: #697180; stroke-width: 1.4; stroke-dasharray: 5 5; }
+.personal-best-label { fill: #4d5563; font: 700 12.5px ui-monospace, SFMono-Regular, Menlo, monospace; letter-spacing: .01em; }
+.latest-score-callout rect { fill: var(--data); }
+.latest-score-date { fill: #ffffff; font: 700 10px ui-monospace, SFMono-Regular, Menlo, monospace; letter-spacing: .035em; text-transform: uppercase; }
+.latest-score-label { fill: #ffffff; font: 700 15px ui-monospace, SFMono-Regular, Menlo, monospace; letter-spacing: .005em; }
 .chart-leaderboard { min-width: 0; padding: 20px; background: var(--surface-soft); }
 .leaderboard-heading { min-height: 45px; display: flex; align-items: flex-start; justify-content: space-between; gap: 10px; }
 .leaderboard-heading h3 { margin: 0; font: 750 19px/1 var(--display-font); }

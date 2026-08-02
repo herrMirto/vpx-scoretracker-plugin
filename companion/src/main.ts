@@ -481,7 +481,7 @@ function isFirstPlaceLabel(value: string): boolean {
 }
 
 function renderProgressChart(table: TableHistory): string {
-  const width = 1000, height = 320, left = 148, right = 32, top = 38, bottom = 52;
+  const width = 900, height = 320, left = 150, right = 28, top = 38, bottom = 52;
   const chartWidth = width - left - right, chartHeight = height - top - bottom;
   const scores = table.entries.map((entry) => entry.score);
   const scoreMin = Math.min(...scores);
@@ -501,6 +501,9 @@ function renderProgressChart(table: TableHistory): string {
   const x = (index: number) => left + (table.entries.length === 1 ? chartWidth / 2 : (index / (table.entries.length - 1)) * chartWidth);
   const y = (score: number) => top + chartHeight - ((score - axisMin) / (axisMax - axisMin)) * chartHeight;
   const points = table.entries.map((entry, index) => `${x(index).toFixed(1)},${y(entry.score).toFixed(1)}`).join(" ");
+  const area = table.entries.length > 1
+    ? `${points} ${x(table.entries.length - 1).toFixed(1)},${y(axisMin).toFixed(1)} ${x(0).toFixed(1)},${y(axisMin).toFixed(1)}`
+    : "";
   const tickValues: number[] = [];
   for (let value = axisMin; value <= axisMax + step / 2; value += step) tickValues.push(Math.round(value));
   const labels = tickValues.map((value) => `<g><line x1="${left}" y1="${y(value)}" x2="${width - right}" y2="${y(value)}"></line><text x="${left - 14}" y="${y(value) + 4}" text-anchor="end">${number(value)}</text></g>`).join("");
@@ -509,24 +512,33 @@ function renderProgressChart(table: TableHistory): string {
     return `<circle class="score-point${latest}" cx="${x(index)}" cy="${y(entry.score)}" r="${latest ? 7 : 6}" tabindex="0" data-score="${entry.score}" data-date="${esc(date(entry.date))}"><title>${date(entry.date)} — ${number(entry.score)}</title></circle>`;
   }).join("");
   const firstDate = table.entries[0]?.date ?? "", lastDate = table.entries.at(-1)?.date ?? "";
-  const bestLine = table.entries.length > 1 && table.latest.score !== table.best
-    ? `<g class="personal-best"><line class="personal-best-line" x1="${left}" y1="${y(table.best)}" x2="${width - right}" y2="${y(table.best)}"></line>
-      <text class="personal-best-label" x="${width - right}" y="${Math.max(15, y(table.best) - 8)}" text-anchor="end">Personal best · ${number(table.best)}</text></g>`
+  const previousBest = table.entries.length > 1
+    ? Math.max(...table.entries.slice(0, -1).map((entry) => entry.score))
+    : null;
+  const bestLineLabel = previousBest !== null && table.latest.score > previousBest ? "Previous best" : "Personal best";
+  const bestLine = previousBest !== null && table.latest.score !== previousBest
+    ? `<g class="personal-best"><line class="personal-best-line" x1="${left}" y1="${y(previousBest)}" x2="${width - right}" y2="${y(previousBest)}"></line>
+      <text class="personal-best-label" x="${width - right - 8}" y="${Math.max(18, y(previousBest) - 10)}" text-anchor="end">${bestLineLabel} · ${number(previousBest)}</text></g>`
     : "";
   const dateIndexes = table.entries.length <= 6
     ? table.entries.map((_, index) => index)
     : [0, Math.floor((table.entries.length - 1) / 2), table.entries.length - 1];
   const dateLabels = dateIndexes.map((index) => `<text class="axis-date" x="${x(index)}" y="${height - 15}" text-anchor="${index === 0 ? "start" : index === table.entries.length - 1 ? "end" : "middle"}">${date(table.entries[index].date, false)}</text>`).join("");
   const latestY = y(table.latest.score);
-  const latestLabelY = latestY < top + 20 ? latestY + 24 : latestY - 13;
+  const latestCalloutWidth = 194;
+  const latestCalloutX = Math.max(left + 8, Math.min(width - right - latestCalloutWidth, x(table.entries.length - 1) - latestCalloutWidth - 8));
+  const latestCalloutY = latestY < top + 60 ? latestY + 12 : latestY - 58;
   const line = table.entries.length > 1
     ? `<polyline class="score-line" points="${points}" vector-effect="non-scaling-stroke"></polyline>`
     : "";
   return `<div class="chart-wrap"><svg class="progress-chart" viewBox="0 0 ${width} ${height}" role="img" aria-labelledby="chart-title chart-desc">
     <title id="chart-title">Personal score progression for ${esc(table.name)}</title><desc id="chart-desc">${table.entries.length} ${table.entries.length === 1 ? "score" : "scores"} from ${date(firstDate, false)} to ${date(lastDate, false)}. Latest score: ${number(table.latest.score)}. Personal best: ${number(table.best)}.</desc>
-    <g class="chart-grid">${labels}</g>${bestLine}
+    <rect class="chart-plot-background" x="${left}" y="${top}" width="${chartWidth}" height="${chartHeight}" rx="3"></rect>
+    <g class="chart-grid">${labels}</g>${area ? `<polygon class="score-area" points="${area}"></polygon>` : ""}${bestLine}
     ${line}<g class="score-dots">${dots}</g>
-    <text class="latest-score-label" x="${x(table.entries.length - 1) - 12}" y="${latestLabelY}" text-anchor="end">${number(table.latest.score)}</text>
+    <g class="latest-score-callout"><rect x="${latestCalloutX}" y="${latestCalloutY}" width="${latestCalloutWidth}" height="46" rx="3"></rect>
+      <text class="latest-score-date" x="${latestCalloutX + 12}" y="${latestCalloutY + 17}">Latest · ${esc(date(table.latest.date, false))}</text>
+      <text class="latest-score-label" x="${latestCalloutX + 12}" y="${latestCalloutY + 36}">${number(table.latest.score)}</text></g>
     ${dateLabels}
   </svg></div>`;
 }
