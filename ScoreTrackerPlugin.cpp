@@ -4,7 +4,9 @@
 #include "NvramTracker.h"
 #include "NotificationOverlay.h"
 
+#include <algorithm>
 #include <filesystem>
+#include <vector>
 
 #include "plugins/MsgPlugin.h"
 #include "plugins/ControllerPlugin.h"
@@ -20,8 +22,14 @@ static uint32_t endpointId = 0;
 static VPXPluginAPI* vpxApi = nullptr;
 
 static unsigned int getVpxApiId = 0;
+#if defined(CTLPI_CONTROLLERS_ON_CHG_MSG)
+static unsigned int onControllersChangedId = 0;
+static unsigned int getControllersId = 0;
+static unsigned int getPinmameMachineStateId = 0;
+#else
 static unsigned int onGameStartId = 0;
 static unsigned int onGameEndId = 0;
+#endif
 static unsigned int onVpxGameEndId = 0;
 
 static NvramTracker* tracker = nullptr;
@@ -89,14 +97,12 @@ static void StopTracker()
    }
 }
 
-static void OnGameStart(const unsigned int eventId, void* userData, void* msgData)
+static void StartTrackerForGame(const string& gameId)
 {
-   const CtlOnGameStateChgMsg* msg = static_cast<const CtlOnGameStateChgMsg*>(msgData);
-   if (msg == nullptr || msg->gameId == nullptr || msg->gameId[0] == '\0')
+   if (gameId.empty())
       return;
-   const string gameId(msg->gameId);
 
-   // A controller may broadcast the same game start more than once
+   // Controller source changes can be broadcast more than once for the same running machine.
    if (tracker != nullptr && activeGameId == gameId)
       return;
 
@@ -139,12 +145,82 @@ static void OnGameStart(const unsigned int eventId, void* userData, void* msgDat
    SchedulePoll();
 }
 
+#if defined(CTLPI_CONTROLLERS_ON_CHG_MSG)
+
+// PinMAME-specific machine information message. The build only imports libpinmame.h, so keep this
+// small wire definition local instead of depending on PinMAME's optional plugin header as well.
+struct PinmameMachineStateMsg
+{
+   int version;
+   const char* game;
+   const char* rom;
+   uint64_t hardwareGen;
+};
+
+static string ResolvePinmameRom(const ControllerDef& controller)
+{
+   PinmameMachineStateMsg state { 1, nullptr, nullptr, 0 };
+   msgApi->SendMsg(endpointId, getPinmameMachineStateId, controller.endpointId, &state);
+   if (state.rom != nullptr && state.rom[0] != '\0')
+      return state.rom;
+
+   // Older providers may enumerate the controller without implementing GetMachineState. In that
+   // case, use the requested game id after removing PinMAME's controller namespace prefix.
+   const string enumeratedId = controller.gameId != nullptr ? controller.gameId : "";
+   static constexpr char kPinmameGamePrefix[] = "pinmame::";
+   if (enumeratedId.rfind(kPinmameGamePrefix, 0) == 0)
+      return enumeratedId.substr(sizeof(kPinmameGamePrefix) - 1);
+   return enumeratedId;
+}
+
+static void RefreshControllers()
+{
+   GetControllersMsg query { 0, 0, nullptr };
+   msgApi->BroadcastMsg(endpointId, getControllersId, &query);
+   if (query.count == 0)
+      return;
+
+   vector<ControllerDef> controllers(query.count);
+   query = { static_cast<unsigned int>(controllers.size()), 0, controllers.data() };
+   msgApi->BroadcastMsg(endpointId, getControllersId, &query);
+
+   const unsigned int count = std::min(query.count, static_cast<unsigned int>(controllers.size()));
+   for (unsigned int i = 0; i < count; ++i)
+   {
+      if (controllers[i].gameId == nullptr)
+         continue;
+      const string enumeratedId(controllers[i].gameId);
+      if (enumeratedId.rfind("pinmame::", 0) != 0)
+         continue;
+      StartTrackerForGame(ResolvePinmameRom(controllers[i]));
+      return;
+   }
+}
+
+static void OnControllersChanged(const unsigned int eventId, void* userData, void* msgData)
+{
+   // An empty enumeration means the machine stopped. Keep the tracker alive until VPX game-end:
+   // Stop() may still need to persist the played session as an exit fallback.
+   RefreshControllers();
+}
+
+#else
+
+static void OnGameStart(const unsigned int eventId, void* userData, void* msgData)
+{
+   const CtlOnGameStateChgMsg* msg = static_cast<const CtlOnGameStateChgMsg*>(msgData);
+   if (msg != nullptr && msg->gameId != nullptr)
+      StartTrackerForGame(msg->gameId);
+}
+
 static void OnGameEnd(const unsigned int eventId, void* userData, void* msgData)
 {
    // Keep the session open: the controller can stop while the plugin has not confirmed the
    // game-over yet (its confirmation delay may still be running). The session is finalized,
    // and persisted if a game was played, when VPX ends or when another game starts.
 }
+
+#endif
 
 static void OnVpxGameEnd(const unsigned int eventId, void* userData, void* msgData) { StopTracker(); }
 
@@ -166,8 +242,18 @@ MSGPI_EXPORT void MSGPIAPI ScoreTrackerPluginLoad(const uint32_t sessionId, cons
 
    msgApi->BroadcastMsg(endpointId, getVpxApiId = msgApi->GetMsgID(VPXPI_NAMESPACE, VPXPI_MSG_GET_API), &vpxApi);
 
+#if defined(CTLPI_CONTROLLERS_ON_CHG_MSG)
+   getControllersId = msgApi->GetMsgID(CTLPI_NAMESPACE, CTLPI_CONTROLLERS_GET_MSG);
+   getPinmameMachineStateId = msgApi->GetMsgID("PinMAME", "GetMachineState");
+   msgApi->SubscribeMsg(endpointId,
+      onControllersChangedId = msgApi->GetMsgID(CTLPI_NAMESPACE, CTLPI_CONTROLLERS_ON_CHG_MSG),
+      OnControllersChanged, nullptr);
+   // A controller may already be running if ScoreTracker was loaded or enabled after PinMAME.
+   RefreshControllers();
+#else
    msgApi->SubscribeMsg(endpointId, onGameStartId = msgApi->GetMsgID(CTLPI_NAMESPACE, CTLPI_EVT_ON_GAME_START), OnGameStart, nullptr);
    msgApi->SubscribeMsg(endpointId, onGameEndId = msgApi->GetMsgID(CTLPI_NAMESPACE, CTLPI_EVT_ON_GAME_END), OnGameEnd, nullptr);
+#endif
    msgApi->SubscribeMsg(endpointId, onVpxGameEndId = msgApi->GetMsgID(VPXPI_NAMESPACE, VPXPI_EVT_ON_GAME_END), OnVpxGameEnd, nullptr);
 }
 
@@ -176,11 +262,21 @@ MSGPI_EXPORT void MSGPIAPI ScoreTrackerPluginUnload()
    StopTracker();
    notificationOverlay.Hide();
 
+#if defined(CTLPI_CONTROLLERS_ON_CHG_MSG)
+   msgApi->UnsubscribeMsg(onControllersChangedId, OnControllersChanged, nullptr);
+#else
    msgApi->UnsubscribeMsg(onGameStartId, OnGameStart, nullptr);
    msgApi->UnsubscribeMsg(onGameEndId, OnGameEnd, nullptr);
+#endif
    msgApi->UnsubscribeMsg(onVpxGameEndId, OnVpxGameEnd, nullptr);
+#if defined(CTLPI_CONTROLLERS_ON_CHG_MSG)
+   msgApi->ReleaseMsgID(onControllersChangedId);
+   msgApi->ReleaseMsgID(getControllersId);
+   msgApi->ReleaseMsgID(getPinmameMachineStateId);
+#else
    msgApi->ReleaseMsgID(onGameStartId);
    msgApi->ReleaseMsgID(onGameEndId);
+#endif
    msgApi->ReleaseMsgID(onVpxGameEndId);
    msgApi->ReleaseMsgID(getVpxApiId);
    msgApi->FlushPendingCallbacks(endpointId);
