@@ -42,6 +42,8 @@ set(SCORETRACKER_PLUGIN_SOURCES
    plugins/scoretracker/ScoreTrackerPlugin.cpp
    plugins/scoretracker/NotificationOverlay.h
    plugins/scoretracker/NotificationOverlay.cpp
+   plugins/scoretracker/B2STracker.h
+   plugins/scoretracker/B2STracker.cpp
    plugins/scoretracker/NvramTracker.h
    plugins/scoretracker/NvramTracker.cpp
    plugins/scoretracker/ScoresFileWriter.h

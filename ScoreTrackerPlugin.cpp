@@ -1,6 +1,7 @@
 // license:GPLv3+
 
 #include "common.h"
+#include "B2STracker.h"
 #include "NvramTracker.h"
 #include "NotificationOverlay.h"
 
@@ -26,6 +27,9 @@ static unsigned int getVpxApiId = 0;
 static unsigned int onControllersChangedId = 0;
 static unsigned int getControllersId = 0;
 static unsigned int getPinmameMachineStateId = 0;
+static unsigned int onStateSourcesChangedId = 0;
+static unsigned int getStateSourcesId = 0;
+static unsigned int onB2SStateChangeId = 0;
 #else
 static unsigned int onGameStartId = 0;
 static unsigned int onGameEndId = 0;
@@ -33,6 +37,7 @@ static unsigned int onGameEndId = 0;
 static unsigned int onVpxGameEndId = 0;
 
 static NvramTracker* tracker = nullptr;
+static B2STracker* b2sTracker = nullptr;
 static string activeGameId;
 static bool pollActive = false;
 static bool pollScheduled = false;
@@ -71,9 +76,12 @@ static void SchedulePoll();
 static void OnPoll(void* userData)
 {
    pollScheduled = false;
-   if (!pollActive || tracker == nullptr)
+   if (!pollActive)
       return;
-   tracker->Poll();
+   if (tracker != nullptr)
+      tracker->Poll();
+   else if (b2sTracker != nullptr)
+      b2sTracker->Poll();
    SchedulePoll();
 }
 
@@ -95,41 +103,48 @@ static void StopTracker()
       delete tracker;
       tracker = nullptr;
    }
+   if (b2sTracker != nullptr)
+   {
+      b2sTracker->Stop();
+      delete b2sTracker;
+      b2sTracker = nullptr;
+   }
 }
 
-static void StartTrackerForGame(const string& gameId)
+static string ResolveTablePath()
+{
+   if (vpxApi == nullptr)
+      return {};
+   VPXTableInfo tableInfo;
+   vpxApi->GetTableInfo(&tableInfo);
+   return tableInfo.path != nullptr ? tableInfo.path : "";
+}
+
+static bool StartNvramTrackerForGame(const string& gameId)
 {
    if (gameId.empty())
-      return;
+      return false;
 
    // Controller source changes can be broadcast more than once for the same running machine.
    if (tracker != nullptr && activeGameId == gameId)
-      return;
-
-   StopTracker();
+      return true;
 
    const string mapsPath = ResolveMapsPath();
    string mapDetail;
    const NvramTracker::MapStatus mapStatus = NvramTracker::ProbeMap(gameId, mapsPath, mapDetail);
    if (mapStatus == NvramTracker::MapStatus::NotFound)
    {
-      LOGI("No NVRAM map for %s (%s); scores will not be tracked", gameId.c_str(), mapDetail.c_str());
-      return;
+      LOGI("No NVRAM map for %s (%s); checking other score providers", gameId.c_str(), mapDetail.c_str());
+      return false;
    }
    if (mapStatus == NvramTracker::MapStatus::Error)
    {
       LOGE("Map lookup failed for %s: %s", gameId.c_str(), mapDetail.c_str());
-      return;
+      return false;
    }
 
-   string tablePath;
-   if (vpxApi != nullptr)
-   {
-      VPXTableInfo tableInfo;
-      vpxApi->GetTableInfo(&tableInfo);
-      if (tableInfo.path != nullptr)
-         tablePath = tableInfo.path;
-   }
+   StopTracker();
+   const string tablePath = ResolveTablePath();
 
    LOGI("Tracking scores for rom %s using map %s", gameId.c_str(), mapDetail.c_str());
    tracker = new NvramTracker();
@@ -138,11 +153,12 @@ static void StartTrackerForGame(const string& gameId)
       LOGE("NVRAM map exists but could not be loaded for %s", gameId.c_str());
       delete tracker;
       tracker = nullptr;
-      return;
+      return false;
    }
    activeGameId = gameId;
    pollActive = true;
    SchedulePoll();
+   return true;
 }
 
 #if defined(CTLPI_CONTROLLERS_ON_CHG_MSG)
@@ -185,15 +201,44 @@ static void RefreshControllers()
    msgApi->BroadcastMsg(endpointId, getControllersId, &query);
 
    const unsigned int count = std::min(query.count, static_cast<unsigned int>(controllers.size()));
+   const ControllerDef* pinmameController = nullptr;
+   const ControllerDef* b2sController = nullptr;
    for (unsigned int i = 0; i < count; ++i)
    {
       if (controllers[i].gameId == nullptr)
          continue;
       const string enumeratedId(controllers[i].gameId);
-      if (enumeratedId.rfind("pinmame::", 0) != 0)
-         continue;
-      StartTrackerForGame(ResolvePinmameRom(controllers[i]));
+      if (pinmameController == nullptr && enumeratedId.rfind("pinmame::", 0) == 0)
+         pinmameController = &controllers[i];
+      else if (b2sController == nullptr && enumeratedId.rfind("b2s::", 0) == 0)
+         b2sController = &controllers[i];
+   }
+
+   // NVRAM remains authoritative whenever a supported PinMAME map exists. If there is no ROM,
+   // or the ROM has no usable map, fall back to direct player scores published by B2S.
+   if (pinmameController != nullptr && StartNvramTrackerForGame(ResolvePinmameRom(*pinmameController)))
       return;
+
+   if (b2sController != nullptr)
+   {
+      const string gameId(b2sController->gameId);
+      if (b2sTracker != nullptr && b2sTracker->GetControllerEndpointId() == b2sController->endpointId
+         && b2sTracker->GetGameId() == gameId)
+         return;
+
+      StopTracker();
+      LOGI("No supported PinMAME map is active; monitoring direct B2S player scores for %s", gameId.c_str());
+      b2sTracker = new B2STracker();
+      if (!b2sTracker->Start(msgApi, endpointId, b2sController->endpointId, getStateSourcesId,
+         gameId, ResolveTablePath(), outputFolderProp_Val, OnScoreSaved))
+      {
+         delete b2sTracker;
+         b2sTracker = nullptr;
+         return;
+      }
+      activeGameId = gameId;
+      pollActive = true;
+      SchedulePoll();
    }
 }
 
@@ -204,13 +249,34 @@ static void OnControllersChanged(const unsigned int eventId, void* userData, voi
    RefreshControllers();
 }
 
+static void OnStateSourcesChanged(const unsigned int eventId, void* userData, void* msgData)
+{
+   if (b2sTracker != nullptr)
+      b2sTracker->RefreshStateSource();
+}
+
+struct B2SPluginEvent
+{
+   uint8_t type;
+   int32_t index;
+   int32_t value;
+};
+
+static void OnB2SStateChange(const unsigned int eventId, void* userData, void* msgData)
+{
+   if (b2sTracker == nullptr || msgData == nullptr)
+      return;
+   const B2SPluginEvent* event = static_cast<const B2SPluginEvent*>(msgData);
+   b2sTracker->OnB2SStateChange(event->type, event->index, event->value);
+}
+
 #else
 
 static void OnGameStart(const unsigned int eventId, void* userData, void* msgData)
 {
    const CtlOnGameStateChgMsg* msg = static_cast<const CtlOnGameStateChgMsg*>(msgData);
    if (msg != nullptr && msg->gameId != nullptr)
-      StartTrackerForGame(msg->gameId);
+      StartNvramTrackerForGame(msg->gameId);
 }
 
 static void OnGameEnd(const unsigned int eventId, void* userData, void* msgData)
@@ -245,6 +311,13 @@ MSGPI_EXPORT void MSGPIAPI ScoreTrackerPluginLoad(const uint32_t sessionId, cons
 #if defined(CTLPI_CONTROLLERS_ON_CHG_MSG)
    getControllersId = msgApi->GetMsgID(CTLPI_NAMESPACE, CTLPI_CONTROLLERS_GET_MSG);
    getPinmameMachineStateId = msgApi->GetMsgID("PinMAME", "GetMachineState");
+   getStateSourcesId = msgApi->GetMsgID(CTLPI_NAMESPACE, CTLPI_STATE_GET_SRC_MSG);
+   msgApi->SubscribeMsg(endpointId,
+      onStateSourcesChangedId = msgApi->GetMsgID(CTLPI_NAMESPACE, CTLPI_STATE_ON_SRC_CHG_MSG),
+      OnStateSourcesChanged, nullptr);
+   msgApi->SubscribeMsg(endpointId,
+      onB2SStateChangeId = msgApi->GetMsgID("B2S", "OnStateChange"),
+      OnB2SStateChange, nullptr);
    msgApi->SubscribeMsg(endpointId,
       onControllersChangedId = msgApi->GetMsgID(CTLPI_NAMESPACE, CTLPI_CONTROLLERS_ON_CHG_MSG),
       OnControllersChanged, nullptr);
@@ -264,6 +337,8 @@ MSGPI_EXPORT void MSGPIAPI ScoreTrackerPluginUnload()
 
 #if defined(CTLPI_CONTROLLERS_ON_CHG_MSG)
    msgApi->UnsubscribeMsg(onControllersChangedId, OnControllersChanged, nullptr);
+   msgApi->UnsubscribeMsg(onStateSourcesChangedId, OnStateSourcesChanged, nullptr);
+   msgApi->UnsubscribeMsg(onB2SStateChangeId, OnB2SStateChange, nullptr);
 #else
    msgApi->UnsubscribeMsg(onGameStartId, OnGameStart, nullptr);
    msgApi->UnsubscribeMsg(onGameEndId, OnGameEnd, nullptr);
@@ -273,6 +348,9 @@ MSGPI_EXPORT void MSGPIAPI ScoreTrackerPluginUnload()
    msgApi->ReleaseMsgID(onControllersChangedId);
    msgApi->ReleaseMsgID(getControllersId);
    msgApi->ReleaseMsgID(getPinmameMachineStateId);
+   msgApi->ReleaseMsgID(onStateSourcesChangedId);
+   msgApi->ReleaseMsgID(getStateSourcesId);
+   msgApi->ReleaseMsgID(onB2SStateChangeId);
 #else
    msgApi->ReleaseMsgID(onGameStartId);
    msgApi->ReleaseMsgID(onGameEndId);

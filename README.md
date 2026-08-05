@@ -1,7 +1,7 @@
 # VPX ScoreTracker Plugin
 
-A third-party [Visual Pinball](https://github.com/vpinball/vpinball) plugin that records the
-scores of played PinMAME games to a `scores.json` file. It is developed and distributed
+A third-party [Visual Pinball](https://github.com/vpinball/vpinball) plugin that records played
+scores to a `scores.json` file. It is developed and distributed
 independently of the vpinball project. The installer places the plugin in the correct VPX location;
 no vpinball source changes are required.
 
@@ -10,8 +10,9 @@ keep live game state in volatile memory, main CPU RAM) using a pinned snapshot o
 [PinMAME NVRAM maps](https://github.com/herrMirto/pinmame-nvram-maps). When the game is over(after the 'Match' screen), the
 per-player scores, game duration and selected `game_state` values are appended to `scores.json`.
 
-The plugin has no effect for tables without a PinMAME controller or for ROMs without a
-`game_state` block in their map(mostly EM tables and Original ones)
+For PinMAME tables, the plugin requires a ROM map with a `game_state` block. When no supported
+PinMAME map is active, it can instead record direct per-player scores published by an EM or
+original table through B2S's `B2SSetScorePlayer` methods.
 
 ## How it works
 
@@ -20,6 +21,8 @@ The plugin has no effect for tables without a PinMAME controller or for ROMs wit
   `PinmameReadMainCPUByte` — both read-only).
 - On `OnGameStart` (controller event), the ROM id is looked up in the maps `index.json`; if a map
   exists, it is parsed once together with its platform description.
+- If no mapped PinMAME controller is available, the plugin looks for a B2S controller and reads
+  its generic `Scores (players)` state group. Digit-only B2S score calls are not inferred.
 - The confirmed game is appended to `scores.json` with an atomic write (temporary file + rename).
   An unreadable existing file is moved aside (`scores.json.broken.<timestamp>`), never deleted.
 - Official release builds add an Ed25519 signature to each new game. The Viewer verifies the score
