@@ -12,6 +12,9 @@
 #include <string_view>
 
 #if defined(_WIN32)
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
 #include <windows.h>
 #define SCORETRACKER_SDL_CALL __cdecl
 #else
@@ -140,7 +143,7 @@ void FillRoundedRect(SDLApi& api, SDL_Surface* surface, const SDL_Rect& bounds,
    }
 }
 
-void DrawText(SDLApi& api, SDL_Surface* surface, std::string_view text, int x, int y,
+void DrawBitmapText(SDLApi& api, SDL_Surface* surface, std::string_view text, int x, int y,
    int scale, uint32_t color)
 {
    for (const char ch : text)
@@ -255,7 +258,7 @@ bool NotificationOverlay::Draw()
    constexpr int scale = 3;
    constexpr int textWidth = static_cast<int>(message.size()) * 6 * scale - scale;
    constexpr int textHeight = 7 * scale;
-   DrawText(api, surface, message, (kWidth - textWidth) / 2,
+   DrawBitmapText(api, surface, message, (kWidth - textWidth) / 2,
       (kHeight - textHeight) / 2, scale, text);
    return api.UpdateWindowSurface(m_window);
 }
