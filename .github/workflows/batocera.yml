@@ -1,0 +1,158 @@
+name: Build ScoreTracker for Batocera
+
+on:
+  push:
+    branches: [codex/batocera-support]
+  pull_request:
+  workflow_dispatch:
+
+env:
+  VPINBALL_REPO: https://github.com/vpinball/vpinball.git
+  VPINBALL_REF: master
+  PINMAME_REPO: https://github.com/vbousquet/pinmame.git
+  NVRAM_MAPS_REPO: https://github.com/herrMirto/pinmame-nvram-maps.git
+  NVRAM_MAPS_SHA: 2d886188712fe434a94910dafeb0cea27d539448
+
+jobs:
+  batocera-x86_64:
+    name: Batocera 43.1 x86-64
+    if: github.event_name != 'pull_request' || github.head_ref == 'codex/batocera-support'
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Resolve current VPX compatibility revision
+        id: revisions
+        shell: bash
+        run: |
+          VPX_SHA=$(git ls-remote "${{ env.VPINBALL_REPO }}" "refs/heads/${{ env.VPINBALL_REF }}" | cut -f1)
+          test -n "$VPX_SHA"
+          PINMAME_SHA=$(curl --fail --silent --show-error \
+            "https://raw.githubusercontent.com/vpinball/vpinball/$VPX_SHA/platforms/config.sh" \
+            | sed -n 's/^PINMAME_SHA=//p')
+          test -n "$PINMAME_SHA"
+          echo "vpx_sha=$VPX_SHA" >> "$GITHUB_OUTPUT"
+          echo "pinmame_sha=$PINMAME_SHA" >> "$GITHUB_OUTPUT"
+
+      - name: Install build tools
+        shell: bash
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y cmake musl-tools ninja-build
+
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-unknown-linux-musl
+
+      - name: Set up Node
+        uses: actions/setup-node@v6
+        with:
+          node-version: 24
+
+      - name: Build read-only web dashboard
+        shell: bash
+        run: |
+          cd companion
+          npm ci
+          npm run build:web
+
+      - name: Test and build headless server
+        shell: bash
+        run: |
+          cargo test --manifest-path batocera/server/Cargo.toml
+          cargo build --release --target x86_64-unknown-linux-musl --manifest-path batocera/server/Cargo.toml
+
+      - name: Fetch and validate pinned NVRAM maps
+        shell: bash
+        run: |
+          git clone --filter=blob:none --no-checkout "${{ env.NVRAM_MAPS_REPO }}" nvram-maps-src
+          git -C nvram-maps-src fetch --depth 1 origin "${{ env.NVRAM_MAPS_SHA }}"
+          git -C nvram-maps-src checkout --detach "${{ env.NVRAM_MAPS_SHA }}"
+          cd nvram-maps-src
+          python3 tools/update-index.py
+          git diff --ignore-space-at-eol --exit-code -- index.json
+
+      - name: Fetch current VPX and matching PinMAME
+        shell: bash
+        env:
+          VPX_SHA: ${{ steps.revisions.outputs.vpx_sha }}
+          PINMAME_SHA: ${{ steps.revisions.outputs.pinmame_sha }}
+        run: |
+          git clone --filter=blob:none --no-checkout "${{ env.VPINBALL_REPO }}" vpinball-src
+          git -C vpinball-src fetch --depth 1 origin "$VPX_SHA"
+          git -C vpinball-src checkout --detach "$VPX_SHA"
+          git clone --filter=blob:none --no-checkout "${{ env.PINMAME_REPO }}" pinmame-src
+          git -C pinmame-src fetch --depth 1 origin "$PINMAME_SHA"
+          git -C pinmame-src checkout --detach "$PINMAME_SHA"
+
+      - name: Build matching PinMAME library
+        shell: bash
+        run: |
+          cp pinmame-src/cmake/libpinmame/CMakeLists.txt pinmame-src/CMakeLists.txt
+          cmake -S pinmame-src -B pinmame-src/build \
+            -DPLATFORM=linux -DARCH=x64 -DBUILD_STATIC=OFF -DCMAKE_BUILD_TYPE=Release
+          cmake --build pinmame-src/build
+          mkdir -p vpinball-src/third-party/include vpinball-src/third-party/runtime-libs/linux-x64
+          cp pinmame-src/src/libpinmame/libpinmame.h vpinball-src/third-party/include/
+          cp pinmame-src/build/libpinmame.so vpinball-src/third-party/runtime-libs/linux-x64/
+
+      - name: Build ScoreTracker plugin for current VPX
+        shell: bash
+        env:
+          SCORETRACKER_SIGNING_SEED_HEX: ${{ secrets.SCORETRACKER_SIGNING_SEED_HEX }}
+        run: |
+          mkdir -p vpinball-src/plugins/scoretracker
+          cp ScoreTrackerPlugin.cpp NotificationOverlay.cpp NotificationOverlay.h \
+            B2STracker.cpp B2STracker.h NvramTracker.cpp NvramTracker.h \
+            ScoresFileWriter.cpp ScoresFileWriter.h ScoreSignature.cpp ScoreSignature.h \
+            ScoreSigningConfig.h.in common.cpp common.h plugin.cfg \
+            vpinball-src/plugins/scoretracker/
+          cp CMakeLists_plugin_ScoreTracker.txt vpinball-src/make/
+          cat > vpinball-src/CMakeLists.txt <<'EOF'
+          cmake_minimum_required(VERSION 3.19)
+          project(scoretracker-plugin)
+          set(CMAKE_CXX_STANDARD 20)
+          set(CMAKE_CXX_STANDARD_REQUIRED ON)
+          set(BUILD_SHARED ON)
+          set(PLATFORM linux)
+          set(ARCH x64)
+          set(PLUGINS_DIR "${CMAKE_BINARY_DIR}/plugins_output")
+          set(SCORETRACKER_FETCH_MAPS OFF CACHE BOOL "" FORCE)
+          include("${CMAKE_SOURCE_DIR}/make/CMakeLists_plugin_ScoreTracker.txt")
+          EOF
+          cmake -S vpinball-src -B vpinball-src/build -DCMAKE_BUILD_TYPE=Release
+          cmake --build vpinball-src/build --target ScoreTrackerPlugin --config Release
+
+      - name: Assemble Batocera-only package
+        shell: bash
+        env:
+          VPX_SHA: ${{ steps.revisions.outputs.vpx_sha }}
+          PINMAME_SHA: ${{ steps.revisions.outputs.pinmame_sha }}
+        run: |
+          package=dist/scoretracker-install
+          mkdir -p "$package/payload/bin" "$package/payload/plugin/maps" "$package/payload/web"
+          cp batocera/install-batocera.sh batocera/ScoreTracker batocera/README.md "$package/"
+          cp batocera/server/target/x86_64-unknown-linux-musl/release/scoretracker-server "$package/payload/bin/"
+          cp -R companion/dist/. "$package/payload/web/"
+          cp -R vpinball-src/build/plugins_output/scoretracker/. "$package/payload/plugin/"
+          cp nvram-maps-src/index.json nvram-maps-src/LICENSE "$package/payload/plugin/maps/"
+          cp -R nvram-maps-src/maps nvram-maps-src/platforms "$package/payload/plugin/maps/"
+          printf '{\n  "repository": "%s",\n  "commit": "%s"\n}\n' \
+            "${{ env.NVRAM_MAPS_REPO }}" "${{ env.NVRAM_MAPS_SHA }}" \
+            > "$package/payload/plugin/maps/source.json"
+          printf '{\n  "vpxCommit": "%s",\n  "pinmameCommit": "%s"\n}\n' \
+            "$VPX_SHA" "$PINMAME_SHA" > "$package/build-info.json"
+          chmod 755 "$package/install-batocera.sh" "$package/ScoreTracker" \
+            "$package/payload/bin/scoretracker-server"
+          tar -czf dist/scoretracker-batocera-x86_64.tar.gz -C dist scoretracker-install
+
+      - name: Upload Batocera package
+        uses: actions/upload-artifact@v7
+        with:
+          name: scoretracker-batocera-x86_64.tar.gz
+          path: dist/scoretracker-batocera-x86_64.tar.gz
+          archive: false
