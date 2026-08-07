@@ -55,6 +55,38 @@ interface VPinPlayItem {
   vpsdb?: { name?: string; manufacturer?: string; year?: string | number };
 }
 
+interface RemoteProbe {
+  status: number;
+  contentType: string | null;
+  contentLength: number | null;
+}
+
+type DiagnosticLevel = "debug" | "info" | "warn" | "error";
+
+function errorDetails(error: unknown): Record<string, unknown> {
+  if (error instanceof Error) return { name: error.name, message: error.message, stack: error.stack ?? "" };
+  return { message: String(error) };
+}
+
+function diagnostic(level: DiagnosticLevel, event: string, details: Record<string, unknown> = {}): void {
+  const consoleMethod = level === "error" ? console.error : level === "warn" ? console.warn : console.info;
+  consoleMethod(`[ScoreTracker] ${event}`, details);
+  if (WEB_MODE) return;
+  void invoke("write_diagnostic_log", { level, event, details }).catch((error) => {
+    console.warn("[ScoreTracker] diagnostic.write_failed", error);
+  });
+}
+
+async function probeRemoteUrl(url: string, reason: string): Promise<void> {
+  if (WEB_MODE) return;
+  try {
+    const probe = await invoke<RemoteProbe>("probe_remote_url", { url });
+    diagnostic("info", "media.remote_probe", { reason, url, ...probe });
+  } catch (error) {
+    diagnostic("error", "media.remote_probe_failed", { reason, url, ...errorDetails(error) });
+  }
+}
+
 async function backend<T>(command: string, args: Record<string, unknown> = {}): Promise<T> {
   if (!WEB_MODE) return invoke<T>(command, args);
 
@@ -101,6 +133,8 @@ let foldersOpen = false;
 let availableUpdate: UpdateInfo | null = null;
 let updateBusy = false;
 let updateStatus = "";
+let diagnosticLogPath = "";
+const loggedWheelResults = new Set<string>();
 
 function number(value: number): string {
   return new Intl.NumberFormat().format(value);
@@ -192,7 +226,7 @@ function renderTopbar(root: string, inDetail: boolean): string {
     </button>
     <nav class="actions" aria-label="Application actions">
       ${inDetail ? `<button id="back" class="button secondary" type="button">← All tables</button>` : ""}
-      ${root && !WEB_MODE ? `<button id="show-folders" class="button secondary" type="button">Tables Folder</button>` : ""}
+      ${root && !WEB_MODE ? `<button id="show-folders" class="button secondary" type="button">Folders & Log</button>` : ""}
       ${root ? `<button id="refresh" class="button primary" type="button" ${busy ? "disabled" : ""}>${busy ? "Scanning…" : "Refresh scores"}</button>` : ""}
       ${!WEB_MODE ? `<button id="check-update" class="button ${availableUpdate ? "update-nav" : "secondary"}" type="button" ${updateBusy ? "disabled" : ""}>${updateBusy ? "Checking…" : availableUpdate ? `Update ${esc(availableUpdate.version)}` : "Check for Updates"}</button>` : ""}
     </nav>
@@ -287,22 +321,38 @@ async function ensureTableMedia(tableList: TableHistory[]): Promise<void> {
 
   const cache = readMediaCache();
   const pending: TableHistory[] = [];
+  let cacheHits = 0;
   for (const table of tableList) {
     const cached = cache[mediaCacheKey(table)];
     if (cached && Date.now() - cached.resolvedAt < MEDIA_CACHE_MAX_AGE) {
       tableMedia.set(table.rom, cached);
+      cacheHits += 1;
+      diagnostic("debug", "media.cache_hit", {
+        table: table.name, rom: table.rom, vpsId: cached.vpsId, wheelUrl: cached.wheelUrl,
+      });
     } else {
       pending.push(table);
     }
   }
+  diagnostic("info", "media.scan_started", {
+    tables: tableList.length, cacheHits, pending: pending.length, online: navigator.onLine,
+  });
 
   for (let index = 0; index < pending.length; index += 4) {
     const chunk = pending.slice(index, index + 4);
     const resolved = await Promise.all(chunk.map(async (table) => ({ table, media: await resolveTableMedia(table) })));
     for (const { table, media } of resolved) {
-      if (!media) continue;
+      if (!media) {
+        diagnostic("warn", "media.table_unresolved", {
+          table: table.name, rom: table.rom, vpxFileName: table.vpxFileName,
+        });
+        continue;
+      }
       tableMedia.set(table.rom, media);
       cache[mediaCacheKey(table)] = media;
+      diagnostic("info", "media.table_resolved", {
+        table: table.name, rom: table.rom, vpsId: media.vpsId, wheelUrl: media.wheelUrl,
+      });
     }
   }
 
@@ -311,23 +361,44 @@ async function ensureTableMedia(tableList: TableHistory[]): Promise<void> {
 }
 
 async function resolveTableMedia(table: TableHistory): Promise<TableMedia | null> {
+  diagnostic("debug", "media.resolve_started", {
+    table: table.name,
+    rom: table.rom,
+    vpxFileName: table.vpxFileName,
+    scoreSource: table.latest.game.source,
+  });
   // The initial scan intentionally does not hash full VPX files. Most wheels can
   // be resolved from the table/VPX name without doing heavy disk I/O.
   const query = table.name.trim();
   if (query) {
     const search = await fetchVPinPlay<{ items?: VPinPlayItem[] }>(
       `/vpsdb/search?q=${encodeURIComponent(query)}&limit=30`,
+      `name search for ${table.name}`,
     );
     const best = pickBestVPinPlayItem(search?.items ?? [], table);
+    diagnostic("debug", "media.name_search", {
+      table: table.name,
+      candidates: search?.items?.length ?? 0,
+      selectedVpsId: best?.vpsId ?? null,
+      selectedName: best?.vpsdb?.name || best?.name || null,
+    });
     if (best?.vpsId) return mediaFromItem(best, best.vpsId);
   }
 
   if (table.rom) {
     const romMatches = await fetchVPinPlay<{ items?: VPinPlayItem[] }>(
       `/tables/by-rom/${encodeURIComponent(table.rom)}?limit=100`,
+      `ROM search for ${table.rom}`,
     );
     const items = romMatches?.items ?? [];
     const best = pickBestVPinPlayItem(items, table) ?? pickDominantVpsItem(items);
+    diagnostic("debug", "media.rom_search", {
+      table: table.name,
+      rom: table.rom,
+      candidates: items.length,
+      selectedVpsId: best?.vpsId ?? null,
+      selectedName: best?.vpsdb?.name || best?.name || null,
+    });
     if (best?.vpsId) return mediaFromItem(best, best.vpsId);
   }
 
@@ -338,15 +409,25 @@ async function resolveTableMedia(table: TableHistory): Promise<TableMedia | null
   if (tablesRoot && scoreSource) {
     try {
       table.vpxFileHash = await backend<string | null>("resolve_vpx_hash", { tablesRoot, scoreSource });
-    } catch {
+      diagnostic("debug", "media.vpx_hash", {
+        table: table.name, scoreSource, hash: table.vpxFileHash,
+      });
+    } catch (error) {
       table.vpxFileHash = null;
+      diagnostic("error", "media.vpx_hash_failed", {
+        table: table.name, scoreSource, ...errorDetails(error),
+      });
     }
   }
   if (table.vpxFileHash) {
     const match = await fetchVPinPlay<{ vpsId?: string | null; altvpsid?: string | null }>(
       `/tables/by-filehash/${encodeURIComponent(table.vpxFileHash)}`,
+      `file hash search for ${table.name}`,
     );
     const vpsId = match?.altvpsid || match?.vpsId;
+    diagnostic("debug", "media.hash_search", {
+      table: table.name, hash: table.vpxFileHash, vpsId: vpsId ?? null,
+    });
     if (vpsId) return mediaForVpsId(vpsId);
   }
   return null;
@@ -364,6 +445,7 @@ function pickDominantVpsItem(items: VPinPlayItem[]): VPinPlayItem | null {
 async function mediaForVpsId(vpsId: string): Promise<TableMedia> {
   const response = await fetchVPinPlay<{ vpsdb?: { name?: string; manufacturer?: string; year?: string | number } }>(
     `/vpsdb/${encodeURIComponent(vpsId)}`,
+    `VPS metadata for ${vpsId}`,
   );
   return mediaFromItem({ vpsId, ...(response?.vpsdb ?? {}) }, vpsId);
 }
@@ -395,6 +477,17 @@ function pickBestVPinPlayItem(items: VPinPlayItem[], table: TableHistory): VPinP
       bestScore = score;
     }
   }
+  diagnostic("debug", "media.identity_match", {
+    table: table.name,
+    vpxFileName: table.vpxFileName,
+    targets,
+    candidates: items.length,
+    bestScore,
+    accepted: bestScore >= 35,
+    bestVpsId: best?.vpsId ?? null,
+    bestName: best?.vpsdb?.name || best?.name || null,
+    bestFilename: best?.filename ?? null,
+  });
   return bestScore >= 35 ? best : null;
 }
 
@@ -421,7 +514,8 @@ function mediaCacheKey(table: TableHistory): string {
 function readMediaCache(): Record<string, TableMedia> {
   try {
     return JSON.parse(localStorage.getItem(MEDIA_CACHE_KEY) ?? "{}") as Record<string, TableMedia>;
-  } catch {
+  } catch (error) {
+    diagnostic("warn", "media.cache_read_failed", errorDetails(error));
     return {};
   }
 }
@@ -429,19 +523,39 @@ function readMediaCache(): Record<string, TableMedia> {
 function writeMediaCache(cache: Record<string, TableMedia>): void {
   try {
     localStorage.setItem(MEDIA_CACHE_KEY, JSON.stringify(cache));
-  } catch {
+  } catch (error) {
     // Media enrichment is optional; storage limits must not break local history.
+    diagnostic("warn", "media.cache_write_failed", errorDetails(error));
   }
 }
 
-async function fetchVPinPlay<T>(path: string): Promise<T | null> {
+async function fetchVPinPlay<T>(path: string, purpose: string): Promise<T | null> {
   const controller = new AbortController();
   const timeout = window.setTimeout(() => controller.abort(), 7000);
+  const url = `${VPINPLAY_API_BASE}${path}`;
+  const startedAt = performance.now();
   try {
-    const response = await fetch(`${VPINPLAY_API_BASE}${path}`, { signal: controller.signal });
-    if (!response.ok) return null;
-    return await response.json() as T;
-  } catch {
+    const response = await fetch(url, { signal: controller.signal });
+    const elapsedMs = Math.round(performance.now() - startedAt);
+    if (!response.ok) {
+      diagnostic("warn", "media.api_http_error", {
+        purpose, url, status: response.status, statusText: response.statusText, elapsedMs,
+      });
+      void probeRemoteUrl(url, `${purpose}: HTTP ${response.status}`);
+      return null;
+    }
+    try {
+      const value = await response.json() as T;
+      diagnostic("debug", "media.api_success", { purpose, url, status: response.status, elapsedMs });
+      return value;
+    } catch (error) {
+      diagnostic("error", "media.api_json_failed", { purpose, url, elapsedMs, ...errorDetails(error) });
+      return null;
+    }
+  } catch (error) {
+    const elapsedMs = Math.round(performance.now() - startedAt);
+    diagnostic("error", "media.api_request_failed", { purpose, url, elapsedMs, ...errorDetails(error) });
+    void probeRemoteUrl(url, purpose);
     return null;
   } finally {
     window.clearTimeout(timeout);
@@ -617,6 +731,7 @@ function renderFoldersModal(root: string): string {
     <section class="folders-modal panel" role="dialog" aria-modal="true" aria-labelledby="folders-title">
       <div class="modal-heading"><div><p class="eyebrow">Cabinet setup</p><h2 id="folders-title">Folders</h2></div><button id="close-folders" class="modal-close" type="button" aria-label="Close folders">×</button></div>
       <div class="folder-row"><span class="folder-number">01</span><div><h2>VPX tables</h2><p>Contains each table's <code>scores.json</code> and PinMAME NVRAM files.</p><code class="folder-path">${esc(root)}</code></div><button id="choose-root" class="button secondary" type="button">Change</button></div>
+      <div class="folder-row"><span class="folder-number">02</span><div><h2>Diagnostic log</h2><p>Send this file when table artwork or score loading fails.</p><code class="folder-path">${esc(diagnosticLogPath || "The log path will appear after application startup.")}</code></div><button id="show-log" class="button secondary" type="button">Show file</button></div>
     </section>
   </div>`;
 }
@@ -656,6 +771,18 @@ function wireEvents(): void {
     const artwork = image.closest<HTMLElement>(".wheel-art");
     const updateArtworkState = () => {
       const loaded = image.naturalWidth > 0;
+      const resultKey = `${loaded ? "loaded" : "failed"}|${image.src}`;
+      if (!loggedWheelResults.has(resultKey)) {
+        loggedWheelResults.add(resultKey);
+        diagnostic(loaded ? "info" : "error", loaded ? "media.wheel_loaded" : "media.wheel_failed", {
+          rom: artwork?.dataset.wheelRom ?? "",
+          url: image.src,
+          naturalWidth: image.naturalWidth,
+          naturalHeight: image.naturalHeight,
+          online: navigator.onLine,
+        });
+        if (!loaded) void probeRemoteUrl(image.src, `wheel image for ${artwork?.dataset.wheelRom ?? "unknown ROM"}`);
+      }
       artwork?.classList.toggle("wheel-loaded", loaded);
       artwork?.classList.toggle("wheel-missing", !loaded);
       artwork?.closest(".table-card-art")?.classList.toggle("media-missing", !loaded);
@@ -669,6 +796,11 @@ function wireEvents(): void {
     button.addEventListener("click", () => removeGame(button));
   });
   document.querySelector("#choose-root")?.addEventListener("click", chooseRoot);
+  document.querySelector("#show-log")?.addEventListener("click", () => {
+    void invoke("reveal_diagnostic_log").catch((error) => {
+      diagnostic("error", "diagnostic.reveal_failed", errorDetails(error));
+    });
+  });
   document.querySelector("#show-folders")?.addEventListener("click", openFolders);
   document.querySelector("#close-folders")?.addEventListener("click", closeFolders);
   document.querySelector("[data-close-folders]")?.addEventListener("click", (event) => {
@@ -771,11 +903,20 @@ async function scanConfiguredRoot(): Promise<void> {
   if (!tablesRoot || busy) return;
   busy = true;
   fatalError = "";
+  diagnostic("info", "scores.scan_started", { tablesRoot });
   render();
   try {
     snapshot = await backend<ScanSnapshot>("scan_scores", { tablesRoot });
+    diagnostic("info", "scores.scan_completed", {
+      tablesRoot,
+      games: snapshot.games.length,
+      sourcesScanned: snapshot.sourcesScanned,
+      vpxFilesFound: snapshot.vpxFilesFound,
+      warnings: snapshot.warnings.length,
+    });
   } catch (error) {
     fatalError = error instanceof Error ? error.message : String(error);
+    diagnostic("error", "scores.scan_failed", { tablesRoot, ...errorDetails(error) });
   } finally {
     busy = false;
     nvramRom = "";
@@ -848,6 +989,20 @@ window.addEventListener("keydown", (event) => {
   if (event.key === "Escape" && foldersOpen) closeFolders();
 });
 async function initialize(): Promise<void> {
+  if (!WEB_MODE) {
+    try {
+      diagnosticLogPath = await invoke<string>("diagnostic_log_path");
+    } catch (error) {
+      console.warn("[ScoreTracker] diagnostic.path_failed", error);
+    }
+    diagnostic("info", "application.started", {
+      logPath: diagnosticLogPath,
+      userAgent: navigator.userAgent,
+      language: navigator.language,
+      online: navigator.onLine,
+    });
+  }
+
   // Adopt installer defaults. The bundled maps path is authoritative and replaces
   // any map folder saved by older companion versions.
   try {

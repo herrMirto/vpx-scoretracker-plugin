@@ -33,3 +33,11 @@ successful matches are cached for 30 days and missing network access never block
 hashing is deferred until after history is visible and is used only when lighter name and ROM matching
 cannot identify the table. The companion only ever deletes games you remove yourself and never
 modifies `.nv` files.
+
+## Diagnostic log
+
+The desktop viewer writes a rotating `scoretracker-viewer.log` file with score scanning and table
+artwork diagnostics. Open **Folders & Log** in the viewer to reveal it. On macOS its full location
+is `~/Library/Logs/com.herrmirto.scoretracker.viewer/scoretracker-viewer.log`. The log records
+artwork matching, cache use, API responses, timeouts, wheel image loading, and a native network
+probe when WebView requests fail. The current log rotates at 2 MB and keeps one previous file.

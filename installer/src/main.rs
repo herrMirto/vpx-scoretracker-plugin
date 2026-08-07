@@ -19,7 +19,8 @@ use eframe::egui;
 use flate2::read::GzDecoder;
 use serde::{Deserialize, Serialize};
 
-const COMPANION_ID: &str = "com.antigravity.scoretracker.companion";
+const COMPANION_ID: &str = "com.herrmirto.scoretracker.viewer";
+const LEGACY_COMPANION_ID: &str = "com.antigravity.scoretracker.companion";
 const COMPANION_APP_NAME: &str = "VPX Scoretracker Viewer";
 const LEGACY_COMPANION_APP_NAME: &str = "VPX Scoretracker Visualiser";
 const EMBEDDED_PAYLOAD: &[u8] =
@@ -1274,14 +1275,14 @@ fn pref_base() -> Option<PathBuf> {
     }
 }
 
-fn companion_config_dir() -> Result<PathBuf, String> {
+fn companion_config_dir_for(identifier: &str) -> Result<PathBuf, String> {
     let dir = if cfg!(target_os = "macos") {
         home_dir()
             .ok_or("cannot determine home directory")?
             .join("Library/Application Support")
-            .join(COMPANION_ID)
+            .join(identifier)
     } else if cfg!(windows) {
-        PathBuf::from(std::env::var_os("APPDATA").ok_or("APPDATA is not set")?).join(COMPANION_ID)
+        PathBuf::from(std::env::var_os("APPDATA").ok_or("APPDATA is not set")?).join(identifier)
     } else {
         std::env::var_os("XDG_CONFIG_HOME")
             .map(PathBuf::from)
@@ -1290,15 +1291,23 @@ fn companion_config_dir() -> Result<PathBuf, String> {
                     .ok_or("cannot determine home directory")?
                     .join(".config"),
             )
-            .join(COMPANION_ID)
+            .join(identifier)
     };
     Ok(dir)
 }
 
+fn companion_config_dir() -> Result<PathBuf, String> {
+    companion_config_dir_for(COMPANION_ID)
+}
+
 fn read_install_config() -> Option<InstallConfig> {
-    let path = companion_config_dir().ok()?.join("seed.json");
-    let raw = fs::read_to_string(path).ok()?;
-    serde_json::from_str(&raw).ok()
+    [COMPANION_ID, LEGACY_COMPANION_ID]
+        .iter()
+        .find_map(|identifier| {
+            let path = companion_config_dir_for(identifier).ok()?.join("seed.json");
+            let raw = fs::read_to_string(path).ok()?;
+            serde_json::from_str(&raw).ok()
+        })
 }
 
 fn home_dir() -> Option<PathBuf> {
