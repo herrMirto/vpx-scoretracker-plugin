@@ -134,8 +134,12 @@ jobs:
           PINMAME_SHA: ${{ steps.revisions.outputs.pinmame_sha }}
         run: |
           package=dist/scoretracker-install
-          mkdir -p "$package/payload/bin" "$package/payload/plugin/maps" "$package/payload/web"
-          cp batocera/install-batocera.sh batocera/ScoreTracker batocera/README.md "$package/"
+          mkdir -p "$package/payload/bin" "$package/payload/plugin/maps" "$package/payload/web" \
+            "$package/payload/pybrowser"
+          cp batocera/install-batocera.sh batocera/ScoreTracker \
+            batocera/ScoreTracker-Pybrowser.sh batocera/README.md "$package/"
+          cp batocera/pybrowser/scoretracker_pybrowser.py \
+            batocera/pybrowser/launch-pybrowser.sh "$package/payload/pybrowser/"
           cp batocera/server/target/x86_64-unknown-linux-musl/release/scoretracker-server "$package/payload/bin/"
           cp -R companion/dist/. "$package/payload/web/"
           cp -R vpinball-src/build/plugins_output/scoretracker/. "$package/payload/plugin/"
@@ -147,6 +151,9 @@ jobs:
           printf '{\n  "vpxCommit": "%s",\n  "pinmameCommit": "%s"\n}\n' \
             "$VPX_SHA" "$PINMAME_SHA" > "$package/build-info.json"
           chmod 755 "$package/install-batocera.sh" "$package/ScoreTracker" \
+            "$package/ScoreTracker-Pybrowser.sh" \
+            "$package/payload/pybrowser/scoretracker_pybrowser.py" \
+            "$package/payload/pybrowser/launch-pybrowser.sh" \
             "$package/payload/bin/scoretracker-server"
           tar -czf dist/scoretracker-batocera-x86_64.tar.gz -C dist scoretracker-install
 

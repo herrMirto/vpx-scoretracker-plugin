@@ -65,3 +65,8 @@ vcpkg_installed/
 *.dwo
 Testing/
 .cache/
+
+# Python and packaged release output
+__pycache__/
+*.pyc
+/dist/

@@ -21,7 +21,10 @@ fail() {
 [ -f "$PAYLOAD/plugin/plugin.cfg" ] || fail "plugin payload is missing"
 [ -f "$PAYLOAD/plugin/maps/index.json" ] || fail "NVRAM maps payload is missing"
 [ -f "$PAYLOAD/web/index.html" ] || fail "web dashboard payload is missing"
+[ -f "$PAYLOAD/pybrowser/scoretracker_pybrowser.py" ] || fail "Pybrowser payload is missing"
+[ -f "$PAYLOAD/pybrowser/launch-pybrowser.sh" ] || fail "Pybrowser launcher payload is missing"
 [ -f "$SCRIPT_DIR/ScoreTracker" ] || fail "Batocera service script is missing"
+[ -f "$SCRIPT_DIR/ScoreTracker-Pybrowser.sh" ] || fail "Batocera Ports launcher is missing"
 
 echo "Installing ScoreTracker for Batocera..."
 mkdir -p "$INSTALL_ROOT" /userdata/system/services
@@ -30,15 +33,21 @@ if [ -f "$SERVICE_PATH" ]; then
     batocera-services stop "$SERVICE_NAME" >/dev/null 2>&1 || true
 fi
 
-for component in bin plugin web; do
+for component in bin plugin web pybrowser; do
     rm -rf "$INSTALL_ROOT/$component.new"
     cp -a "$PAYLOAD/$component" "$INSTALL_ROOT/$component.new"
     rm -rf "$INSTALL_ROOT/$component"
     mv "$INSTALL_ROOT/$component.new" "$INSTALL_ROOT/$component"
 done
 chmod 755 "$INSTALL_ROOT/bin/scoretracker-server"
+chmod 755 "$INSTALL_ROOT/pybrowser/scoretracker_pybrowser.py" \
+    "$INSTALL_ROOT/pybrowser/launch-pybrowser.sh"
 cp "$SCRIPT_DIR/ScoreTracker" "$SERVICE_PATH"
 chmod 755 "$SERVICE_PATH"
+
+mkdir -p /userdata/roms/ports
+cp "$SCRIPT_DIR/ScoreTracker-Pybrowser.sh" /userdata/roms/ports/ScoreTracker.sh
+chmod 755 /userdata/roms/ports/ScoreTracker.sh
 
 mkdir -p "$(dirname "$VPX_INI")"
 touch "$VPX_INI"
@@ -80,6 +89,7 @@ address="$(hostname -I 2>/dev/null | awk '{print $1}')"
 echo
 echo "ScoreTracker is installed and running."
 echo "Open this address on another device: http://$address:8080"
+echo "Native viewer: update the EmulationStation game list, then open Ports > ScoreTracker"
 echo "Health check: http://$address:8080/api/health"
 echo "Log file: $INSTALL_ROOT/scoretracker-server.log"
 echo
