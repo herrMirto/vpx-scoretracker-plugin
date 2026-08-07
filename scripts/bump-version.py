@@ -51,6 +51,16 @@ def main() -> None:
         rf"\g<1>{next_version}\g<2>",
     )
     replace_pattern(
+        "batocera/server/Cargo.toml",
+        rf'(name = "scoretracker-server"\nversion = "){re.escape(current)}(")',
+        rf"\g<1>{next_version}\g<2>",
+    )
+    replace_pattern(
+        "batocera/server/Cargo.lock",
+        rf'(name = "scoretracker-server"\nversion = "){re.escape(current)}(")',
+        rf"\g<1>{next_version}\g<2>",
+    )
+    replace_pattern(
         "companion/package.json",
         rf'("name": "vpx-scoretracker-viewer",\n  "private": true,\n  "version": "){re.escape(current)}(")',
         rf"\g<1>{next_version}\g<2>",
