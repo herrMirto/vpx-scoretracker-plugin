@@ -6,6 +6,7 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc && vite build",
+    "build:web": "tsc && VITE_SCORETRACKER_WEB=true vite build",
     "preview": "vite preview",
     "check": "tsc --noEmit",
     "tauri": "tauri"

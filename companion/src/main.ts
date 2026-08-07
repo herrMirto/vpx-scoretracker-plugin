@@ -11,6 +11,7 @@ const UPDATE_CHECK_INTERVAL = 24 * 60 * 60 * 1000;
 const VPINPLAY_API_BASE = "https://api.vpinplay.com:8888/api/v1";
 const VPINMEDIA_BASE = "https://raw.githubusercontent.com/superhac/vpinmediadb/refs/heads/main";
 const MEDIA_CACHE_MAX_AGE = 30 * 24 * 60 * 60 * 1000;
+const WEB_MODE = import.meta.env.VITE_SCORETRACKER_WEB === "true";
 const app = document.querySelector<HTMLDivElement>("#app")!;
 
 if (!app) throw new Error("Application root was not found");
@@ -52,6 +53,29 @@ interface VPinPlayItem {
   filename?: string;
   filehash?: string;
   vpsdb?: { name?: string; manufacturer?: string; year?: string | number };
+}
+
+async function backend<T>(command: string, args: Record<string, unknown> = {}): Promise<T> {
+  if (!WEB_MODE) return invoke<T>(command, args);
+
+  const query = new URLSearchParams();
+  for (const [key, value] of Object.entries(args)) {
+    if (value !== null && value !== undefined) query.set(key, String(value));
+  }
+  const endpoint = (() => {
+    switch (command) {
+      case "scan_scores": return "/api/scores";
+      case "resolve_vpx_hash": return `/api/vpx-hash?${query}`;
+      case "load_nvram": return `/api/nvram?${query}`;
+      case "read_seed_config": return "/api/config";
+      case "resolve_maps_root": return null;
+      default: throw new Error(`${command} is unavailable in the read-only dashboard`);
+    }
+  })();
+  if (endpoint === null) return String(args.path ?? "") as T;
+  const response = await fetch(endpoint, { headers: { Accept: "application/json" } });
+  if (!response.ok) throw new Error((await response.text()) || `Request failed (${response.status})`);
+  return await response.json() as T;
 }
 
 interface ChartTarget {
@@ -168,9 +192,9 @@ function renderTopbar(root: string, inDetail: boolean): string {
     </button>
     <nav class="actions" aria-label="Application actions">
       ${inDetail ? `<button id="back" class="button secondary" type="button">← All tables</button>` : ""}
-      ${root ? `<button id="show-folders" class="button secondary" type="button">Tables Folder</button>` : ""}
+      ${root && !WEB_MODE ? `<button id="show-folders" class="button secondary" type="button">Tables Folder</button>` : ""}
       ${root ? `<button id="refresh" class="button primary" type="button" ${busy ? "disabled" : ""}>${busy ? "Scanning…" : "Refresh scores"}</button>` : ""}
-      <button id="check-update" class="button ${availableUpdate ? "update-nav" : "secondary"}" type="button" ${updateBusy ? "disabled" : ""}>${updateBusy ? "Checking…" : availableUpdate ? `Update ${esc(availableUpdate.version)}` : "Check for Updates"}</button>
+      ${!WEB_MODE ? `<button id="check-update" class="button ${availableUpdate ? "update-nav" : "secondary"}" type="button" ${updateBusy ? "disabled" : ""}>${updateBusy ? "Checking…" : availableUpdate ? `Update ${esc(availableUpdate.version)}` : "Check for Updates"}</button>` : ""}
     </nav>
   </header>`;
 }
@@ -313,7 +337,7 @@ async function resolveTableMedia(table: TableHistory): Promise<TableMedia | null
   const scoreSource = table.latest.game.source;
   if (tablesRoot && scoreSource) {
     try {
-      table.vpxFileHash = await invoke<string | null>("resolve_vpx_hash", { tablesRoot, scoreSource });
+      table.vpxFileHash = await backend<string | null>("resolve_vpx_hash", { tablesRoot, scoreSource });
     } catch {
       table.vpxFileHash = null;
     }
@@ -573,7 +597,7 @@ function crownIcon(): string {
 }
 
 function renderScoreHistory(entries: ScoreEntry[]): string {
-  return `<div class="score-history">${[...entries].reverse().map((entry) => `<div class="score-row"><span><strong>${number(entry.score)}</strong><small>${date(entry.date)}</small></span><span class="score-row-meta">${entry.game.signed ? `<span class="signed-label" title="Verified ScoreTracker signature">signed</span>` : ""}<span>${duration(entry.duration)}</span><button class="score-remove" type="button" data-source="${esc(entry.game.source)}" data-index="${entry.game.sourceIndex}" data-score-id="${entry.game.scoreId ?? ""}" title="Remove this game from history" aria-label="Remove this game from history">Remove</button></span></div>`).join("")}</div>`;
+  return `<div class="score-history">${[...entries].reverse().map((entry) => `<div class="score-row"><span><strong>${number(entry.score)}</strong><small>${date(entry.date)}</small></span><span class="score-row-meta">${entry.game.signed ? `<span class="signed-label" title="Verified ScoreTracker signature">signed</span>` : ""}<span>${duration(entry.duration)}</span>${WEB_MODE ? "" : `<button class="score-remove" type="button" data-source="${esc(entry.game.source)}" data-index="${entry.game.sourceIndex}" data-score-id="${entry.game.scoreId ?? ""}" title="Remove this game from history" aria-label="Remove this game from history">Remove</button>`}</span></div>`).join("")}</div>`;
 }
 
 function stat(label: string, value: string, context: string): string {
@@ -718,7 +742,7 @@ async function ensureNvram(table: TableHistory, tablesRoot: string, mapsRoot: st
   nvramBusy = true;
   render();
   try {
-    nvram = await invoke<NvramDocument | null>("load_nvram", {
+    nvram = await backend<NvramDocument | null>("load_nvram", {
       tablesRoot,
       mapsRoot,
       rom: table.rom,
@@ -733,6 +757,7 @@ async function ensureNvram(table: TableHistory, tablesRoot: string, mapsRoot: st
 }
 
 async function chooseRoot(): Promise<void> {
+  if (WEB_MODE) return;
   const selected = await open({ directory: true, multiple: false, title: "Choose your VPX tables folder" });
   if (typeof selected !== "string") return;
   localStorage.setItem(TABLES_ROOT_KEY, selected);
@@ -748,7 +773,7 @@ async function scanConfiguredRoot(): Promise<void> {
   fatalError = "";
   render();
   try {
-    snapshot = await invoke<ScanSnapshot>("scan_scores", { tablesRoot });
+    snapshot = await backend<ScanSnapshot>("scan_scores", { tablesRoot });
   } catch (error) {
     fatalError = error instanceof Error ? error.message : String(error);
   } finally {
@@ -772,7 +797,7 @@ async function removeGame(button: HTMLButtonElement): Promise<void> {
   }
   button.disabled = true;
   try {
-    await invoke("remove_game", { tablesRoot, scoreSource, sourceIndex, scoreId });
+    await backend("remove_game", { tablesRoot, scoreSource, sourceIndex, scoreId });
     await scanConfiguredRoot();
   } catch (error) {
     fatalError = error instanceof Error ? error.message : String(error);
@@ -786,7 +811,7 @@ async function checkForUpdate(manual: boolean): Promise<void> {
   if (manual) updateStatus = "Checking GitHub Releases…";
   render();
   try {
-    availableUpdate = await invoke<UpdateInfo | null>("check_for_update");
+    availableUpdate = await backend<UpdateInfo | null>("check_for_update");
     localStorage.setItem(UPDATE_CHECK_KEY, String(Date.now()));
     updateStatus = availableUpdate
       ? ""
@@ -810,7 +835,7 @@ async function installAvailableUpdate(): Promise<void> {
   updateStatus = `Downloading and verifying ScoreTracker ${availableUpdate.version}…`;
   render();
   try {
-    await invoke("download_and_launch_update", { update: availableUpdate });
+    await backend("download_and_launch_update", { update: availableUpdate });
   } catch (error) {
     updateStatus = `Update failed: ${error instanceof Error ? error.message : String(error)}`;
     updateBusy = false;
@@ -826,7 +851,7 @@ async function initialize(): Promise<void> {
   // Adopt installer defaults. The bundled maps path is authoritative and replaces
   // any map folder saved by older companion versions.
   try {
-    const seed = await invoke<{ tablesRoot: string | null; mapsRoot: string | null } | null>("read_seed_config");
+    const seed = await backend<{ tablesRoot: string | null; mapsRoot: string | null } | null>("read_seed_config");
     if (seed?.tablesRoot && !localStorage.getItem(TABLES_ROOT_KEY)) {
       localStorage.setItem(TABLES_ROOT_KEY, seed.tablesRoot);
     }
@@ -840,7 +865,7 @@ async function initialize(): Promise<void> {
   const selectedMapsRoot = localStorage.getItem(MAPS_ROOT_KEY);
   if (selectedMapsRoot) {
     try {
-      const resolved = await invoke<string>("resolve_maps_root", { path: selectedMapsRoot });
+      const resolved = await backend<string>("resolve_maps_root", { path: selectedMapsRoot });
       localStorage.setItem(MAPS_ROOT_KEY, resolved);
     } catch (error) {
       localStorage.removeItem(MAPS_ROOT_KEY);
@@ -851,9 +876,11 @@ async function initialize(): Promise<void> {
   render();
   if (localStorage.getItem(TABLES_ROOT_KEY)) void scanConfiguredRoot();
 
-  const lastCheck = Number(localStorage.getItem(UPDATE_CHECK_KEY) ?? 0);
-  if (!Number.isFinite(lastCheck) || Date.now() - lastCheck >= UPDATE_CHECK_INTERVAL) {
-    void checkForUpdate(false);
+  if (!WEB_MODE) {
+    const lastCheck = Number(localStorage.getItem(UPDATE_CHECK_KEY) ?? 0);
+    if (!Number.isFinite(lastCheck) || Date.now() - lastCheck >= UPDATE_CHECK_INTERVAL) {
+      void checkForUpdate(false);
+    }
   }
 }
 

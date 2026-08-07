@@ -64,6 +64,7 @@ env:
 jobs:
   resolve-vpx:
     name: Resolve VPX compatibility revision
+    if: github.event_name != 'pull_request' || github.head_ref != 'codex/batocera-support'
     runs-on: ubuntu-latest
     permissions:
       contents: read

@@ -94,6 +94,13 @@ to be installed or running.
 
 See [`companion/README.md`](companion/README.md) for development instructions and feature details.
 
+### Batocera preview
+
+Batocera 43.1 x86-64 systems with a current, plugin-enabled VPX build can run a read-only version of
+the Viewer as a background web service. The dashboard is opened from a browser on another device;
+Batocera does not need a desktop UI. See [`batocera/README.md`](batocera/README.md) for the preview
+installation and service details.
+
 ## Installation
 
 Download the latest installer from [GitHub Releases](https://github.com/herrMirto/vpx-scoretracker-plugin/releases/latest).

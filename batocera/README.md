@@ -1,0 +1,49 @@
+# Batocera preview
+
+The Batocera package installs the existing VPX ScoreTracker plugin and provides two read-only
+viewers: the web dashboard for another device on the local network, and a controller-friendly
+Pygame viewer launched from EmulationStation's Ports collection.
+
+The first preview targets Batocera 43.1 x86-64 with a current, plugin-enabled VPX build. Batocera
+43.1's original VPX package predates the plugin API, so it is not compatible. The installer verifies
+that the replacement VPX installation exposes `/usr/bin/vpinball/plugins` before making changes.
+It uses Batocera's persistent user-service mechanism and stores its files under
+`/userdata/system/scoretracker`.
+
+## Install
+
+Copy `scoretracker-batocera-x86_64.tar.gz` to `/userdata/system/` on the Batocera machine, then
+connect over SSH:
+
+```sh
+cd /userdata/system
+tar -xzf scoretracker-batocera-x86_64.tar.gz
+cd /userdata/system/scoretracker-install
+./install-batocera.sh
+```
+
+The installer prints an address such as `http://192.168.1.50:8080`. Open it from a phone, tablet, or
+computer. The dashboard is deliberately read-only and should only be exposed to a trusted local
+network.
+
+After installation, refresh the EmulationStation game list and open **Ports > ScoreTracker** to use
+the native viewer. Use the directional pad to select a table, A to open its history, B to go back or
+exit, and the left shoulder button to refresh. Keyboard equivalents are the arrow keys, Enter,
+Escape, and R.
+
+The native viewer reuses local Batocera wheel, marquee, or logo artwork when available. It resolves
+media from the VPX `gamelist.xml` and standard Batocera media folders without downloading artwork.
+Tables without matching local media retain the text-only layout.
+
+## Service management
+
+```sh
+batocera-services stop ScoreTracker
+batocera-services start ScoreTracker
+tail -f /userdata/system/scoretracker/scoretracker-server.log
+```
+
+The VPX executable and bundled plugins are installed in Batocera's non-persistent system image. The
+ScoreTracker service therefore copies the persistent plugin payload into
+`/usr/bin/vpinball/plugins/scoretracker` each time the service starts. It does not use
+`batocera-save-overlay`.

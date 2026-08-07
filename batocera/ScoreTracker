@@ -1,0 +1,70 @@
+#!/bin/bash
+
+set -u
+
+INSTALL_ROOT="/userdata/system/scoretracker"
+PLUGIN_SOURCE="$INSTALL_ROOT/plugin"
+PLUGIN_DEST="/usr/bin/vpinball/plugins/scoretracker"
+SERVER="$INSTALL_ROOT/bin/scoretracker-server"
+WEB_ROOT="$INSTALL_ROOT/web"
+PID_FILE="$INSTALL_ROOT/scoretracker-server.pid"
+LOG_FILE="$INSTALL_ROOT/scoretracker-server.log"
+
+start_scoretracker() {
+    if [ ! -d "$(dirname "$PLUGIN_DEST")" ]; then
+        echo "VPX plugin directory not found: $(dirname "$PLUGIN_DEST")" >>"$LOG_FILE"
+        echo "Install a current plugin-enabled VPX build before starting ScoreTracker." >>"$LOG_FILE"
+        return 1
+    fi
+    rm -rf "$PLUGIN_DEST.new"
+    cp -a "$PLUGIN_SOURCE" "$PLUGIN_DEST.new"
+    rm -rf "$PLUGIN_DEST"
+    mv "$PLUGIN_DEST.new" "$PLUGIN_DEST"
+
+    if [ -f "$PID_FILE" ]; then
+        old_pid="$(cat "$PID_FILE" 2>/dev/null || true)"
+        if [ -n "$old_pid" ] && kill -0 "$old_pid" 2>/dev/null; then
+            return 0
+        fi
+        rm -f "$PID_FILE"
+    fi
+
+    "$SERVER" \
+        --listen 0.0.0.0:8080 \
+        --tables-root /userdata/roms/vpinball \
+        --maps-root "$PLUGIN_SOURCE/maps" \
+        --web-root "$WEB_ROOT" \
+        >>"$LOG_FILE" 2>&1 &
+    echo "$!" > "$PID_FILE"
+}
+
+stop_scoretracker() {
+    [ -f "$PID_FILE" ] || return 0
+    pid="$(cat "$PID_FILE" 2>/dev/null || true)"
+    if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then
+        kill "$pid"
+        attempts=0
+        while kill -0 "$pid" 2>/dev/null && [ "$attempts" -lt 20 ]; do
+            sleep 0.1
+            attempts=$((attempts + 1))
+        done
+    fi
+    rm -f "$PID_FILE"
+}
+
+case "${1:-}" in
+    start)
+        start_scoretracker
+        ;;
+    stop)
+        stop_scoretracker
+        ;;
+    restart)
+        stop_scoretracker
+        start_scoretracker
+        ;;
+    *)
+        echo "Usage: $0 {start|stop|restart}" >&2
+        exit 2
+        ;;
+esac
