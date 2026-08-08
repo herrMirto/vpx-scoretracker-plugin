@@ -72,12 +72,14 @@ jobs:
       source_sha: ${{ steps.revisions.outputs.source_sha }}
       vpx_sha: ${{ steps.revisions.outputs.vpx_sha }}
       pinmame_sha: ${{ steps.revisions.outputs.pinmame_sha }}
+      version: ${{ steps.package_version.outputs.version }}
     steps:
       - uses: actions/checkout@v6
         with:
           ref: ${{ inputs.source_ref || github.sha }}
 
       - name: Verify package versions
+        id: package_version
         shell: bash
         run: |
           if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
@@ -85,6 +87,7 @@ jobs:
           else
             python3 scripts/check-version.py
           fi
+          echo "version=$(tr -d '[:space:]' < VERSION)" >> "$GITHUB_OUTPUT"
 
       - name: Resolve VPX and PinMAME revisions
         id: revisions
@@ -121,26 +124,27 @@ jobs:
             runner: windows-2022
             platform: windows
             arch: x64
-            artifact: scoretracker-installer-windows-x64.exe
+            artifact_suffix: windows-x64.exe
           - label: Linux x64
             runner: ubuntu-24.04
             platform: linux
             arch: x64
-            artifact: scoretracker-installer-linux-x64
+            artifact_suffix: linux-x64
           - label: Linux ARM64
             runner: ubuntu-24.04-arm
             platform: linux
             arch: arm64
-            artifact: scoretracker-installer-linux-arm64
+            artifact_suffix: linux-arm64
           - label: macOS ARM64
             runner: macos-15
             platform: macos
             arch: arm64
-            artifact: scoretracker-installer-macos-arm64.dmg
+            artifact_suffix: macos-arm64.dmg
     runs-on: ${{ matrix.runner }}
     env:
       VPINBALL_SHA: ${{ needs.resolve-vpx.outputs.vpx_sha }}
       PINMAME_SHA: ${{ needs.resolve-vpx.outputs.pinmame_sha }}
+      ARTIFACT_NAME: scoretracker-installer-${{ needs.resolve-vpx.outputs.version }}-${{ matrix.artifact_suffix }}
 
     steps:
       - uses: actions/checkout@v6
@@ -469,10 +473,10 @@ jobs:
         run: |
           mkdir -p dist
           if [ "${{ matrix.platform }}" = windows ]; then
-            cp installer/target/release/scoretracker-installer.exe "dist/${{ matrix.artifact }}"
+            cp installer/target/release/scoretracker-installer.exe "dist/$ARTIFACT_NAME"
           elif [ "${{ matrix.platform }}" = macos ]; then
             APP="dmg-root/ScoreTracker Installer.app"
-            DMG="dist/${{ matrix.artifact }}"
+            DMG="dist/$ARTIFACT_NAME"
             mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
             cp installer/target/release/scoretracker-installer "$APP/Contents/MacOS/"
             cp installer/macos/Info.plist "$APP/Contents/"
@@ -523,8 +527,8 @@ jobs:
                 "$DMG"
             fi
           else
-            cp installer/target/release/scoretracker-installer "dist/${{ matrix.artifact }}"
-            chmod +x "dist/${{ matrix.artifact }}"
+            cp installer/target/release/scoretracker-installer "dist/$ARTIFACT_NAME"
+            chmod +x "dist/$ARTIFACT_NAME"
           fi
 
       - name: Sign Windows installer
@@ -536,7 +540,7 @@ jobs:
           password: ${{ secrets.ES_PASSWORD }}
           credential_id: ${{ secrets.ES_CREDENTIAL_ID }}
           totp_secret: ${{ secrets.ES_TOTP_SECRET }}
-          file_path: ${{ github.workspace }}\dist\${{ matrix.artifact }}
+          file_path: ${{ github.workspace }}\dist\${{ env.ARTIFACT_NAME }}
           override: true
           malware_block: false
           environment_name: PROD
@@ -546,8 +550,8 @@ jobs:
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
-          $sig = Get-AuthenticodeSignature "dist/${{ matrix.artifact }}"
-          Write-Host "dist/${{ matrix.artifact }} -> $($sig.Status)"
+          $sig = Get-AuthenticodeSignature "dist/${{ env.ARTIFACT_NAME }}"
+          Write-Host "dist/${{ env.ARTIFACT_NAME }} -> $($sig.Status)"
           Write-Host "Signer: $($sig.SignerCertificate.Subject)"
           if ($sig.Status -ne 'Valid') {
             throw "Authenticode signature is not valid: $($sig.Status)"
@@ -557,8 +561,8 @@ jobs:
         if: github.event_name != 'schedule' || inputs.publish_release
         uses: actions/upload-artifact@v7
         with:
-          name: ${{ matrix.artifact }}
-          path: dist/${{ matrix.artifact }}
+          name: ${{ env.ARTIFACT_NAME }}
+          path: dist/${{ env.ARTIFACT_NAME }}
           archive: false
 
       - name: Remove macOS signing credentials
@@ -577,9 +581,20 @@ jobs:
             "${RUNNER_TEMP}/installer-dmg-notary-log.json" \
             "${RUNNER_TEMP}/scoretracker-installer-payload.zip"
 
+  batocera:
+    name: Build Batocera installer
+    needs: resolve-vpx
+    if: github.event_name != 'pull_request'
+    uses: ./.github/workflows/batocera.yml
+    with:
+      source_ref: ${{ needs.resolve-vpx.outputs.source_sha }}
+      vpx_sha: ${{ needs.resolve-vpx.outputs.vpx_sha }}
+      pinmame_sha: ${{ needs.resolve-vpx.outputs.pinmame_sha }}
+    secrets: inherit
+
   release:
     name: Publish GitHub release
-    needs: [resolve-vpx, build]
+    needs: [resolve-vpx, build, batocera]
     runs-on: ubuntu-latest
     if: >-
       (github.event_name == 'push' && github.ref == 'refs/heads/main') ||
@@ -614,6 +629,13 @@ jobs:
         uses: actions/download-artifact@v8
         with:
           pattern: scoretracker-installer-*
+          path: dist
+          merge-multiple: true
+
+      - name: Download Batocera installer
+        uses: actions/download-artifact@v8
+        with:
+          pattern: scoretracker-batocera-*
           path: dist
           merge-multiple: true
 
@@ -665,4 +687,5 @@ jobs:
           generate_release_notes: true
           files: |
             dist/scoretracker-installer-*
+            dist/scoretracker-batocera-*
             dist/update-manifest.json

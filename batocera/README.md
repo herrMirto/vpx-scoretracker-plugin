@@ -1,10 +1,10 @@
-# Batocera preview
+# Batocera
 
 The Batocera package installs the existing VPX ScoreTracker plugin and provides two read-only
 viewers: the web dashboard for another device on the local network, and a controller-friendly
 Pygame viewer launched from EmulationStation's Ports collection.
 
-The first preview targets Batocera 43.1 x86-64 with a current, plugin-enabled VPX build. Batocera
+The package targets Batocera 43.1 x86-64 with a current, plugin-enabled VPX build. Batocera
 43.1's original VPX package predates the plugin API, so it is not compatible. The installer verifies
 that the replacement VPX installation exposes `/usr/bin/vpinball/plugins` before making changes.
 It uses Batocera's persistent user-service mechanism and stores its files under
@@ -12,15 +12,18 @@ It uses Batocera's persistent user-service mechanism and stores its files under
 
 ## Install
 
-Copy `scoretracker-batocera-x86_64.tar.gz` to `/userdata/system/` on the Batocera machine, then
-connect over SSH:
+Copy `scoretracker-batocera-VERSION-x86_64.tar.gz` to `/userdata/system/` on the Batocera machine,
+then connect over SSH:
 
 ```sh
 cd /userdata/system
-tar -xzf scoretracker-batocera-x86_64.tar.gz
+tar -xzf scoretracker-batocera-*-x86_64.tar.gz
 cd /userdata/system/scoretracker-install
 ./install-batocera.sh
 ```
+
+This single installer installs the VPX plugin and maps, the web dashboard service, and the Ports
+viewer. No separate Pybrowser package or installation step is required.
 
 The installer prints an address such as `http://192.168.1.50:8080`. Open it from a phone, tablet, or
 computer. The dashboard is deliberately read-only and should only be exposed to a trusted local

@@ -1,6 +1,6 @@
 [package]
 name = "scoretracker-server"
-version = "0.1.15"
+version = "0.1.16"
 description = "Read-only ScoreTracker web server for Batocera"
 edition = "2021"
 

@@ -8,7 +8,7 @@ function formatSize(bytes) {
 
 async function resolveLatestDownloads() {
   const status = document.querySelector("#release-status");
-  const links = [...document.querySelectorAll("[data-asset]")];
+  const links = [...document.querySelectorAll("[data-asset-template]")];
 
   try {
     const response = await fetch(RELEASE_API, {
@@ -21,7 +21,8 @@ async function resolveLatestDownloads() {
     const version = String(release.tag_name ?? "").replace(/^v/, "");
 
     for (const link of links) {
-      const asset = assets.get(link.dataset.asset);
+      const assetName = link.dataset.assetTemplate.replace("{version}", version);
+      const asset = assets.get(assetName);
       if (!asset) continue;
       link.href = asset.browser_download_url;
       const meta = link.querySelector("small");
@@ -31,7 +32,7 @@ async function resolveLatestDownloads() {
 
     if (status) status.textContent = version ? `Latest version · ${version}` : "Latest release";
   } catch {
-    if (status) status.textContent = "Latest release · direct links ready";
+    if (status) status.textContent = "Latest release · open GitHub to download";
   }
 }
 

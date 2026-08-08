@@ -1,10 +1,30 @@
 name: Build ScoreTracker for Batocera
 
 on:
-  push:
-    branches: [codex/batocera-support]
-  pull_request:
   workflow_dispatch:
+    inputs:
+      source_ref:
+        description: Git ref to build
+        required: false
+        type: string
+        default: ""
+  workflow_call:
+    inputs:
+      source_ref:
+        required: false
+        type: string
+        default: ""
+      vpx_sha:
+        required: false
+        type: string
+        default: ""
+      pinmame_sha:
+        required: false
+        type: string
+        default: ""
+    secrets:
+      SCORETRACKER_SIGNING_SEED_HEX:
+        required: false
 
 env:
   VPINBALL_REPO: https://github.com/vpinball/vpinball.git
@@ -16,23 +36,34 @@ env:
 jobs:
   batocera-x86_64:
     name: Batocera 43.1 x86-64
-    if: github.event_name != 'pull_request' || github.head_ref == 'codex/batocera-support'
     runs-on: ubuntu-24.04
     permissions:
       contents: read
 
     steps:
       - uses: actions/checkout@v6
+        with:
+          ref: ${{ inputs.source_ref || github.sha }}
+
+      - name: Verify package versions
+        shell: bash
+        run: python3 scripts/check-version.py
 
       - name: Resolve current VPX compatibility revision
         id: revisions
         shell: bash
         run: |
-          VPX_SHA=$(git ls-remote "${{ env.VPINBALL_REPO }}" "refs/heads/${{ env.VPINBALL_REF }}" | cut -f1)
+          VPX_SHA="${{ inputs.vpx_sha }}"
+          PINMAME_SHA="${{ inputs.pinmame_sha }}"
+          if [ -z "$VPX_SHA" ]; then
+            VPX_SHA=$(git ls-remote "${{ env.VPINBALL_REPO }}" "refs/heads/${{ env.VPINBALL_REF }}" | cut -f1)
+          fi
           test -n "$VPX_SHA"
-          PINMAME_SHA=$(curl --fail --silent --show-error \
-            "https://raw.githubusercontent.com/vpinball/vpinball/$VPX_SHA/platforms/config.sh" \
-            | sed -n 's/^PINMAME_SHA=//p')
+          if [ -z "$PINMAME_SHA" ]; then
+            PINMAME_SHA=$(curl --fail --silent --show-error \
+              "https://raw.githubusercontent.com/vpinball/vpinball/$VPX_SHA/platforms/config.sh" \
+              | sed -n 's/^PINMAME_SHA=//p')
+          fi
           test -n "$PINMAME_SHA"
           echo "vpx_sha=$VPX_SHA" >> "$GITHUB_OUTPUT"
           echo "pinmame_sha=$PINMAME_SHA" >> "$GITHUB_OUTPUT"
@@ -128,11 +159,14 @@ jobs:
           cmake --build vpinball-src/build --target ScoreTrackerPlugin --config Release
 
       - name: Assemble Batocera-only package
+        id: package
         shell: bash
         env:
           VPX_SHA: ${{ steps.revisions.outputs.vpx_sha }}
           PINMAME_SHA: ${{ steps.revisions.outputs.pinmame_sha }}
         run: |
+          version="$(tr -d '[:space:]' < VERSION)"
+          archive="scoretracker-batocera-${version}-x86_64.tar.gz"
           package=dist/scoretracker-install
           mkdir -p "$package/payload/bin" "$package/payload/plugin/maps" "$package/payload/web" \
             "$package/payload/pybrowser"
@@ -148,18 +182,19 @@ jobs:
           printf '{\n  "repository": "%s",\n  "commit": "%s"\n}\n' \
             "${{ env.NVRAM_MAPS_REPO }}" "${{ env.NVRAM_MAPS_SHA }}" \
             > "$package/payload/plugin/maps/source.json"
-          printf '{\n  "vpxCommit": "%s",\n  "pinmameCommit": "%s"\n}\n' \
-            "$VPX_SHA" "$PINMAME_SHA" > "$package/build-info.json"
+          printf '{\n  "version": "%s",\n  "vpxCommit": "%s",\n  "pinmameCommit": "%s"\n}\n' \
+            "$version" "$VPX_SHA" "$PINMAME_SHA" > "$package/build-info.json"
           chmod 755 "$package/install-batocera.sh" "$package/ScoreTracker" \
             "$package/ScoreTracker-Pybrowser.sh" \
             "$package/payload/pybrowser/scoretracker_pybrowser.py" \
             "$package/payload/pybrowser/launch-pybrowser.sh" \
             "$package/payload/bin/scoretracker-server"
-          tar -czf dist/scoretracker-batocera-x86_64.tar.gz -C dist scoretracker-install
+          tar -czf "dist/$archive" -C dist scoretracker-install
+          echo "archive=$archive" >> "$GITHUB_OUTPUT"
 
       - name: Upload Batocera package
         uses: actions/upload-artifact@v7
         with:
-          name: scoretracker-batocera-x86_64.tar.gz
-          path: dist/scoretracker-batocera-x86_64.tar.gz
+          name: ${{ steps.package.outputs.archive }}
+          path: dist/${{ steps.package.outputs.archive }}
           archive: false

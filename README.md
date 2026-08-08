@@ -94,12 +94,11 @@ to be installed or running.
 
 See [`companion/README.md`](companion/README.md) for development instructions and feature details.
 
-### Batocera preview
+### Batocera
 
-Batocera 43.1 x86-64 systems with a current, plugin-enabled VPX build can run a read-only version of
-the Viewer as a background web service. The dashboard is opened from a browser on another device;
-Batocera does not need a desktop UI. See [`batocera/README.md`](batocera/README.md) for the preview
-installation and service details.
+Batocera 43.1 x86-64 systems with a current, plugin-enabled VPX build use one package and installer
+for the ScoreTracker plugin, maps, background web dashboard, and controller-friendly Ports viewer.
+See [`batocera/README.md`](batocera/README.md) for installation and service details.
 
 ## Installation
 
@@ -107,10 +106,11 @@ Download the latest installer from [GitHub Releases](https://github.com/herrMirt
 
 Platform binaries:
 
-- **macOS (Apple Silicon):** `scoretracker-installer-macos-arm64.dmg`
-- **Windows (x64):** `scoretracker-installer-windows-x64.exe`
-- **Linux (x64):** `scoretracker-installer-linux-x64`
-- **Linux (ARM64):** `scoretracker-installer-linux-arm64`
+- **macOS (Apple Silicon):** `scoretracker-installer-<version>-macos-arm64.dmg`
+- **Windows (x64):** `scoretracker-installer-<version>-windows-x64.exe`
+- **Linux (x64):** `scoretracker-installer-<version>-linux-x64`
+- **Linux (ARM64):** `scoretracker-installer-<version>-linux-arm64`
+- **Batocera 43.1 (x86-64):** `scoretracker-batocera-<version>-x86_64.tar.gz`
 
 Installed Viewer locations:
 

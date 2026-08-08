@@ -54,14 +54,15 @@ fn client() -> Result<reqwest::Client, String> {
         .map_err(|error| format!("could not create update client: {error}"))
 }
 
-fn expected_asset_name() -> Result<String, String> {
-    match (std::env::consts::OS, std::env::consts::ARCH) {
-        ("windows", "x86_64") => Ok("scoretracker-installer-windows-x64.exe".into()),
-        ("linux", "x86_64") => Ok("scoretracker-installer-linux-x64".into()),
-        ("linux", "aarch64") => Ok("scoretracker-installer-linux-arm64".into()),
-        ("macos", "aarch64") => Ok("scoretracker-installer-macos-arm64.dmg".into()),
-        (os, arch) => Err(format!("updates are not published for {os}/{arch}")),
-    }
+fn expected_asset_name(version: &Version) -> Result<String, String> {
+    let suffix = match (std::env::consts::OS, std::env::consts::ARCH) {
+        ("windows", "x86_64") => "windows-x64.exe",
+        ("linux", "x86_64") => "linux-x64",
+        ("linux", "aarch64") => "linux-arm64",
+        ("macos", "aarch64") => "macos-arm64.dmg",
+        (os, arch) => return Err(format!("updates are not published for {os}/{arch}")),
+    };
+    Ok(format!("scoretracker-installer-{version}-{suffix}"))
 }
 
 fn parse_release_version(tag: &str) -> Result<Version, String> {
@@ -69,15 +70,12 @@ fn parse_release_version(tag: &str) -> Result<Version, String> {
         .map_err(|error| format!("release tag {tag:?} is not a valid version: {error}"))
 }
 
-fn select_update(
-    release: GithubRelease,
-    current: &Version,
-    asset_name: &str,
-) -> Result<Option<UpdateInfo>, String> {
+fn select_update(release: GithubRelease, current: &Version) -> Result<Option<UpdateInfo>, String> {
     let latest = parse_release_version(&release.tag_name)?;
     if latest <= *current {
         return Ok(None);
     }
+    let asset_name = expected_asset_name(&latest)?;
 
     let asset = release
         .assets
@@ -126,12 +124,13 @@ pub async fn check_for_update() -> Result<Option<UpdateInfo>, String> {
 
     let current = Version::parse(env!("CARGO_PKG_VERSION"))
         .map_err(|error| format!("invalid installed version: {error}"))?;
-    let asset_name = expected_asset_name()?;
-    select_update(release, &current, &asset_name)
+    select_update(release, &current)
 }
 
 fn validate_update(update: &UpdateInfo) -> Result<(), String> {
-    let expected_name = expected_asset_name()?;
+    let version = Version::parse(&update.version)
+        .map_err(|error| format!("invalid update version {}: {error}", update.version))?;
+    let expected_name = expected_asset_name(&version)?;
     if update.asset_name != expected_name {
         return Err(format!(
             "refusing unexpected update asset {}; expected {expected_name}",
@@ -295,17 +294,16 @@ mod tests {
     use super::*;
 
     fn release(version: &str) -> GithubRelease {
+        let version_number = Version::parse(version).unwrap();
+        let asset_name = expected_asset_name(&version_number).unwrap();
         GithubRelease {
             tag_name: format!("v{version}"),
             html_url: format!("https://github.com/{REPOSITORY}/releases/tag/v{version}"),
             body: Some("Release notes".into()),
             published_at: Some("2026-07-19T00:00:00Z".into()),
             assets: vec![GithubAsset {
-                name: expected_asset_name().unwrap(),
-                browser_download_url: format!(
-                    "{DOWNLOAD_PREFIX}v{version}/{}",
-                    expected_asset_name().unwrap()
-                ),
+                name: asset_name.clone(),
+                browser_download_url: format!("{DOWNLOAD_PREFIX}v{version}/{asset_name}"),
                 digest: Some(format!("sha256:{}", "a".repeat(64))),
                 size: 42,
             }],
@@ -322,26 +320,21 @@ mod tests {
 
     #[test]
     fn selects_a_newer_platform_release() {
-        let update = select_update(
-            release("0.2.0"),
-            &Version::new(0, 1, 0),
-            &expected_asset_name().unwrap(),
-        )
-        .unwrap()
-        .unwrap();
+        let update = select_update(release("0.2.0"), &Version::new(0, 1, 0))
+            .unwrap()
+            .unwrap();
         assert_eq!(update.version, "0.2.0");
         assert_eq!(update.current_version, "0.1.0");
         assert_eq!(update.size, 42);
+        assert_eq!(
+            update.asset_name,
+            expected_asset_name(&Version::new(0, 2, 0)).unwrap()
+        );
     }
 
     #[test]
     fn ignores_the_installed_release() {
-        let update = select_update(
-            release("0.1.0"),
-            &Version::new(0, 1, 0),
-            &expected_asset_name().unwrap(),
-        )
-        .unwrap();
+        let update = select_update(release("0.1.0"), &Version::new(0, 1, 0)).unwrap();
         assert!(update.is_none());
     }
 
@@ -353,8 +346,24 @@ mod tests {
             release_url: String::new(),
             release_notes: String::new(),
             published_at: None,
-            asset_name: expected_asset_name().unwrap(),
+            asset_name: expected_asset_name(&Version::new(0, 2, 0)).unwrap(),
             download_url: "https://example.com/update".into(),
+            digest: format!("sha256:{}", "0".repeat(64)),
+            size: 1,
+        };
+        assert!(validate_update(&update).is_err());
+    }
+
+    #[test]
+    fn rejects_an_asset_named_for_another_version() {
+        let update = UpdateInfo {
+            version: "0.2.0".into(),
+            current_version: "0.1.0".into(),
+            release_url: String::new(),
+            release_notes: String::new(),
+            published_at: None,
+            asset_name: expected_asset_name(&Version::new(0, 1, 9)).unwrap(),
+            download_url: format!("{DOWNLOAD_PREFIX}v0.2.0/not-used"),
             digest: format!("sha256:{}", "0".repeat(64)),
             size: 1,
         };

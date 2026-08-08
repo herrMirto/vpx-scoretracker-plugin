@@ -44,24 +44,29 @@
         <span id="release-status" role="status" aria-live="polite">Choose your system</span>
       </div>
       <div class="download-options" aria-label="Latest installers">
-        <a class="platform-download" data-asset="scoretracker-installer-macos-arm64.dmg" data-platform="macOS"
-          href="https://github.com/herrMirto/vpx-scoretracker-plugin/releases/latest/download/scoretracker-installer-macos-arm64.dmg">
+        <a class="platform-download" data-asset-template="scoretracker-installer-{version}-macos-arm64.dmg" data-platform="macOS"
+          href="https://github.com/herrMirto/vpx-scoretracker-plugin/releases/latest">
           <span><strong>macOS</strong><small>Apple Silicon · DMG</small></span>
           <b aria-hidden="true">↓</b>
         </a>
-        <a class="platform-download" data-asset="scoretracker-installer-windows-x64.exe" data-platform="Windows"
-          href="https://github.com/herrMirto/vpx-scoretracker-plugin/releases/latest/download/scoretracker-installer-windows-x64.exe">
+        <a class="platform-download" data-asset-template="scoretracker-installer-{version}-windows-x64.exe" data-platform="Windows"
+          href="https://github.com/herrMirto/vpx-scoretracker-plugin/releases/latest">
           <span><strong>Windows</strong><small>x64 · EXE</small></span>
           <b aria-hidden="true">↓</b>
         </a>
-        <a class="platform-download" data-asset="scoretracker-installer-linux-x64" data-platform="Linux x64"
-          href="https://github.com/herrMirto/vpx-scoretracker-plugin/releases/latest/download/scoretracker-installer-linux-x64">
+        <a class="platform-download" data-asset-template="scoretracker-installer-{version}-linux-x64" data-platform="Linux x64"
+          href="https://github.com/herrMirto/vpx-scoretracker-plugin/releases/latest">
           <span><strong>Linux</strong><small>x64 · Executable</small></span>
           <b aria-hidden="true">↓</b>
         </a>
-        <a class="platform-download" data-asset="scoretracker-installer-linux-arm64" data-platform="Linux ARM64"
-          href="https://github.com/herrMirto/vpx-scoretracker-plugin/releases/latest/download/scoretracker-installer-linux-arm64">
+        <a class="platform-download" data-asset-template="scoretracker-installer-{version}-linux-arm64" data-platform="Linux ARM64"
+          href="https://github.com/herrMirto/vpx-scoretracker-plugin/releases/latest">
           <span><strong>Linux</strong><small>ARM64 · Executable</small></span>
+          <b aria-hidden="true">↓</b>
+        </a>
+        <a class="platform-download" data-asset-template="scoretracker-batocera-{version}-x86_64.tar.gz" data-platform="Batocera"
+          href="https://github.com/herrMirto/vpx-scoretracker-plugin/releases/latest">
+          <span><strong>Batocera</strong><small>43.1 · x86-64 · TAR.GZ</small></span>
           <b aria-hidden="true">↓</b>
         </a>
       </div>
@@ -69,7 +74,7 @@
         Apple, and the Windows build is signed with a code-signing certificate, so each system can verify the
         publisher before it runs. Linux has no equivalent OS-level signing, so those installers are unsigned.</p>
       <noscript>
-        <p class="download-fallback">Direct download links remain available without JavaScript.</p>
+        <p class="download-fallback">Without JavaScript, each button opens the latest GitHub release.</p>
       </noscript>
     </section>
 
@@ -110,6 +115,10 @@
 
       <p class="linux-note"><strong>Linux:</strong> make the downloaded installer executable before opening it:
         <code>chmod +x scoretracker-installer-linux-*</code>
+      </p>
+      <p class="linux-note"><strong>Batocera:</strong> extract the archive on the Batocera machine and run
+        <code>scoretracker-install/install-batocera.sh</code>. It installs the plugin, web service, and Ports viewer
+        together.
       </p>
       <p class="config-note"><strong>Enable or disable:</strong> in <code>VPinballX.ini</code>, use
         <code>[Plugin.ScoreTracker]</code> with <code>Enable = 1</code> or <code>Enable = 0</code>, then restart VPX.
