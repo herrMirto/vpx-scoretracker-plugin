@@ -7,6 +7,8 @@ SERVICE_NAME="ScoreTracker"
 SERVICE_PATH="/userdata/system/services/$SERVICE_NAME"
 VPX_INI="/userdata/system/configs/vpinball/VPinballX.ini"
 CONFIG_PATH="$INSTALL_ROOT/scoretracker.conf"
+PORTS_ROOT="/userdata/roms/ports"
+ES_SERVICE="/etc/init.d/S31emulationstation"
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PAYLOAD="$SCRIPT_DIR/payload"
 
@@ -56,6 +58,8 @@ esac
 [ -f "$SCRIPT_DIR/ScoreTracker" ] || fail "Batocera service script is missing"
 [ -f "$SCRIPT_DIR/ScoreTracker-Pybrowser.sh" ] || fail "Batocera Ports launcher is missing"
 [ -f "$SCRIPT_DIR/update-scoretracker.sh" ] || fail "Batocera updater is missing"
+[ -f "$SCRIPT_DIR/update-ports-gamelist.py" ] || fail "Batocera gamelist helper is missing"
+[ -f "$SCRIPT_DIR/ScoreTracker.png" ] || fail "Batocera Ports icon is missing"
 [ -f "$SCRIPT_DIR/build-info.json" ] || fail "package build information is missing"
 
 echo "Installing ScoreTracker for Batocera..."
@@ -91,9 +95,23 @@ cp "$SCRIPT_DIR/build-info.json" "$INSTALL_ROOT/build-info.json"
 printf 'listen_port=%s\n' "$listen_port" > "$CONFIG_PATH.new"
 mv "$CONFIG_PATH.new" "$CONFIG_PATH"
 
-mkdir -p /userdata/roms/ports
-cp "$SCRIPT_DIR/ScoreTracker-Pybrowser.sh" /userdata/roms/ports/ScoreTracker.sh
-chmod 755 /userdata/roms/ports/ScoreTracker.sh
+mkdir -p "$PORTS_ROOT/images"
+cp "$SCRIPT_DIR/ScoreTracker-Pybrowser.sh" "$PORTS_ROOT/ScoreTracker.sh"
+chmod 755 "$PORTS_ROOT/ScoreTracker.sh"
+cp "$SCRIPT_DIR/ScoreTracker.png" "$PORTS_ROOT/images/ScoreTracker.png"
+
+es_was_running=0
+if [ -x "$ES_SERVICE" ] && command -v batocera-es-swissknife >/dev/null 2>&1 \
+    && batocera-es-swissknife --espid >/dev/null 2>&1; then
+    es_was_running=1
+    "$ES_SERVICE" stop >/dev/null 2>&1 || true
+fi
+if ! python3 "$SCRIPT_DIR/update-ports-gamelist.py" "$PORTS_ROOT/gamelist.xml"; then
+    echo "Warning: the Ports icon was installed, but gamelist.xml could not be updated." >&2
+fi
+if [ "$es_was_running" -eq 1 ]; then
+    "$ES_SERVICE" start >/dev/null 2>&1 &
+fi
 
 mkdir -p "$(dirname "$VPX_INI")"
 touch "$VPX_INI"
@@ -135,7 +153,7 @@ address="$(hostname -I 2>/dev/null | awk '{print $1}')"
 echo
 echo "ScoreTracker is installed and running."
 echo "Open this address on another device: http://$address:$listen_port"
-echo "Native viewer: update the EmulationStation game list, then open Ports > ScoreTracker"
+echo "Native viewer: update the EmulationStation game list, then open Ports > VPX ScoreTracker"
 echo "Health check: http://$address:$listen_port/api/health"
 echo "Log file: $INSTALL_ROOT/scoretracker-server.log"
 echo

@@ -38,10 +38,12 @@ The installer prints an address such as `http://192.168.1.50:8080`. Open it from
 computer. The dashboard is deliberately read-only and should only be exposed to a trusted local
 network.
 
-After installation, refresh the EmulationStation game list and open **Ports > ScoreTracker** to use
+After installation, refresh the EmulationStation game list and open **Ports > VPX ScoreTracker** to use
 the native viewer. Use the directional pad to select a table, A to open its history, B to go back or
 exit, and the left shoulder button to refresh. Keyboard equivalents are the arrow keys, Enter,
-Escape, and R.
+Escape, and R. The installer adds the VPX ScoreTracker icon and 2026 release year to the existing
+Ports gamelist while preserving play count and last-played metadata. Restart EmulationStation if
+the new metadata is not visible immediately.
 
 The native viewer reuses local Batocera wheel, marquee, or logo artwork when available. It resolves
 media from the VPX `gamelist.xml` and standard Batocera media folders without downloading artwork.

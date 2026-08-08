@@ -171,8 +171,10 @@ jobs:
           mkdir -p "$package/payload/bin" "$package/payload/plugin/maps" "$package/payload/web" \
             "$package/payload/pybrowser"
           cp batocera/install-batocera.sh batocera/update-scoretracker.sh \
+            batocera/update-ports-gamelist.py \
             batocera/ScoreTracker batocera/ScoreTracker-Pybrowser.sh \
             batocera/README.md "$package/"
+          cp companion/src-tauri/icons/icon.png "$package/ScoreTracker.png"
           cp batocera/pybrowser/scoretracker_pybrowser.py \
             batocera/pybrowser/launch-pybrowser.sh "$package/payload/pybrowser/"
           cp batocera/server/target/x86_64-unknown-linux-musl/release/scoretracker-server "$package/payload/bin/"
@@ -186,6 +188,7 @@ jobs:
           printf '{\n  "version": "%s",\n  "vpxCommit": "%s",\n  "pinmameCommit": "%s"\n}\n' \
             "$version" "$VPX_SHA" "$PINMAME_SHA" > "$package/build-info.json"
           chmod 755 "$package/install-batocera.sh" "$package/update-scoretracker.sh" \
+            "$package/update-ports-gamelist.py" \
             "$package/ScoreTracker" \
             "$package/ScoreTracker-Pybrowser.sh" \
             "$package/payload/pybrowser/scoretracker_pybrowser.py" \
