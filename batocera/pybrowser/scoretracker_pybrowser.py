@@ -6,6 +6,7 @@ from __future__ import annotations
 import json
 import os
 import queue
+import subprocess
 import threading
 import urllib.error
 import urllib.request
@@ -21,6 +22,12 @@ import pygame
 API_URL = os.environ.get("SCORETRACKER_API_URL", "http://127.0.0.1:8080").rstrip("/")
 WINDOWED = os.environ.get("SCORETRACKER_WINDOWED") == "1"
 VPINBALL_ROOT = Path(os.environ.get("SCORETRACKER_VPINBALL_ROOT", "/userdata/roms/vpinball"))
+UPDATER = Path(
+    os.environ.get(
+        "SCORETRACKER_UPDATER",
+        "/userdata/system/scoretracker/update-scoretracker.sh",
+    )
+)
 
 BG = (18, 20, 25)
 PANEL = (31, 34, 42)
@@ -274,14 +281,21 @@ class ScoreTrackerApp:
         self.media_library = LocalMediaLibrary(VPINBALL_ROOT)
         self.media_cache: dict[tuple[str, int, int], pygame.Surface | None] = {}
         self.result_queue: queue.Queue[tuple[dict[str, Any] | None, str]] = queue.Queue()
+        self.update_queue: queue.Queue[tuple[str, str]] = queue.Queue()
+        self.update_loading = False
+        self.update_version = ""
+        self.update_message = ""
+        self.update_confirm = False
+        self.updating = False
         self.axis_ready = {0: True, 1: True}
         self.refresh()
+        self.check_for_update()
 
     def px(self, value: int) -> int:
         return round(value * self.scale)
 
     def refresh(self) -> None:
-        if self.loading:
+        if self.loading or self.updating:
             return
         self.loading = True
         self.error = ""
@@ -316,28 +330,125 @@ class ScoreTrackerApp:
             if current_key:
                 self.detail = next((table for table in self.tables if table.key == current_key), None)
 
+    def check_for_update(self) -> None:
+        if self.update_loading or self.updating or not UPDATER.is_file():
+            return
+        self.update_loading = True
+
+        def check() -> None:
+            try:
+                result = subprocess.run(
+                    [str(UPDATER), "--check"],
+                    capture_output=True,
+                    text=True,
+                    timeout=45,
+                    check=False,
+                )
+                if result.returncode != 0:
+                    self.update_queue.put(("error", result.stderr.strip()))
+                    return
+                available = next(
+                    (
+                        line.partition("=")[2]
+                        for line in result.stdout.splitlines()
+                        if line.startswith("UPDATE_AVAILABLE=")
+                    ),
+                    "",
+                )
+                self.update_queue.put(("available" if available else "current", available))
+            except (OSError, subprocess.SubprocessError) as exc:
+                self.update_queue.put(("error", str(exc)))
+
+        threading.Thread(target=check, daemon=True).start()
+
+    def request_update(self) -> None:
+        if self.detail or self.updating or not self.update_version:
+            return
+        self.update_confirm = True
+
+    def install_update(self) -> None:
+        if self.updating or not self.update_version:
+            return
+        target_version = self.update_version
+        self.update_confirm = False
+        self.updating = True
+        self.update_message = f"Installing ScoreTracker {target_version}..."
+
+        def install() -> None:
+            try:
+                result = subprocess.run(
+                    [str(UPDATER), "--install"],
+                    capture_output=True,
+                    text=True,
+                    timeout=600,
+                    check=False,
+                )
+                message = (result.stderr if result.returncode else result.stdout).strip()
+                self.update_queue.put(("installed" if result.returncode == 0 else "install_error", message))
+            except (OSError, subprocess.SubprocessError) as exc:
+                self.update_queue.put(("install_error", str(exc)))
+
+        threading.Thread(target=install, daemon=True).start()
+
+    def accept_update_results(self) -> None:
+        try:
+            state, message = self.update_queue.get_nowait()
+        except queue.Empty:
+            return
+        self.update_loading = False
+        if state == "available":
+            self.update_version = message
+            self.update_message = f"ScoreTracker {message} is available. Press Y or U to update."
+        elif state == "installed":
+            installed_version = self.update_version
+            self.updating = False
+            self.update_version = ""
+            self.update_message = f"Updated to ScoreTracker {installed_version}. Restart the viewer to load its new UI."
+            self.refresh()
+        elif state == "install_error":
+            self.updating = False
+            detail = message.splitlines()[-1] if message else "unknown error"
+            self.update_message = f"Update failed: {detail}"
+        elif state == "current":
+            self.update_version = ""
+        # A failed background check should not obscure score or NVRAM warnings.
+
     def move(self, amount: int) -> None:
+        if self.update_confirm or self.updating:
+            return
         if self.detail:
             self.detail_row = max(0, min(len(self.detail.entries) - 1, self.detail_row + amount))
         elif self.tables:
             self.selected = max(0, min(len(self.tables) - 1, self.selected + amount))
 
     def activate(self) -> None:
-        if not self.detail and self.tables:
+        if self.updating:
+            return
+        if self.update_confirm:
+            self.install_update()
+        elif not self.detail and self.tables:
             self.detail = self.tables[self.selected]
             self.detail_row = 0
 
     def back(self) -> None:
-        if self.detail:
+        if self.updating:
+            return
+        if self.update_confirm:
+            self.update_confirm = False
+        elif self.detail:
             self.detail = None
         else:
             self.running = False
 
     def handle_button(self, button: int) -> None:
+        if self.updating:
+            return
         if button == 0:
             self.activate()
-        elif button in (1, 2, 3, 6):
+        elif button in (1, 2, 6):
             self.back()
+        elif button == 3:
+            self.request_update()
         elif button in (4, 9):
             self.refresh()
 
@@ -355,6 +466,8 @@ class ScoreTrackerApp:
                 self.back()
             elif event.key in (pygame.K_r, pygame.K_F5):
                 self.refresh()
+            elif event.key == pygame.K_u:
+                self.request_update()
         elif event.type == pygame.JOYHATMOTION:
             if event.value[1] > 0:
                 self.move(-1)
@@ -410,7 +523,7 @@ class ScoreTrackerApp:
         pygame.draw.rect(self.screen, BLUE, (left + self.px(13), top, self.px(7), self.px(43)))
         self.text("VPX SCORETRACKER", self.fonts.heading, WHITE, left + self.px(35), top - self.px(1))
         self.text(subtitle, self.fonts.small, MUTED, left + self.px(35), top + self.px(29))
-        status = "REFRESHING..." if self.loading else "LOCAL SCORES"
+        status = "UPDATING..." if self.updating else ("REFRESHING..." if self.loading else "LOCAL SCORES")
         self.text(status, self.fonts.small_bold, BLUE if self.loading else MUTED, width - left, top + self.px(14), "topright")
         return height
 
@@ -421,9 +534,14 @@ class ScoreTrackerApp:
         pygame.draw.rect(self.screen, (10, 11, 14), (0, y, width, footer_h))
         pygame.draw.line(self.screen, LINE, (0, y), (width, y), 1)
         left = self.px(54)
-        hint = "A / ENTER  OPEN     B / ESC  {}     LB / R  REFRESH".format(
-            "BACK" if self.detail else "EXIT"
-        )
+        if self.update_confirm:
+            hint = "A / ENTER  INSTALL UPDATE     B / ESC  CANCEL"
+        else:
+            hint = "A / ENTER  OPEN     B / ESC  {}     LB / R  REFRESH".format(
+                "BACK" if self.detail else "EXIT"
+            )
+            if self.update_version and not self.detail:
+                hint += "     Y / U  UPDATE"
         self.text(hint, self.fonts.small_bold, MUTED, left, y + self.px(18))
         self.text("SCORETRACKER PYBROWSER", self.fonts.tiny, FAINT, width - left, y + self.px(20), "topright")
 
@@ -498,7 +616,11 @@ class ScoreTrackerApp:
             self.text(format_date(table.latest.date, True), self.fonts.small, MUTED, rect.right - self.px(23), rect.y + self.px(33), "topright")
 
         warnings = self.snapshot.get("warnings", [])
-        if self.error:
+        if self.update_confirm:
+            self.draw_notice(f"Install ScoreTracker {self.update_version}? Press A to confirm or B to cancel.", BLUE)
+        elif self.update_message:
+            self.draw_notice(self.update_message, RED if self.update_message.startswith("Update failed") else BLUE)
+        elif self.error:
             self.draw_notice(self.error, RED)
         elif warnings:
             self.draw_notice(f"{len(warnings)} score source warning(s). Scores shown may be incomplete.", (224, 170, 73))
@@ -652,6 +774,7 @@ class ScoreTrackerApp:
             for event in pygame.event.get():
                 self.handle_event(event)
             self.accept_results()
+            self.accept_update_results()
             self.draw()
             self.clock.tick(60)
         pygame.quit()

@@ -6,6 +6,7 @@ INSTALL_ROOT="/userdata/system/scoretracker"
 SERVICE_NAME="ScoreTracker"
 SERVICE_PATH="/userdata/system/services/$SERVICE_NAME"
 VPX_INI="/userdata/system/configs/vpinball/VPinballX.ini"
+CONFIG_PATH="$INSTALL_ROOT/scoretracker.conf"
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PAYLOAD="$SCRIPT_DIR/payload"
 
@@ -13,6 +14,35 @@ fail() {
     echo "ScoreTracker installation failed: $*" >&2
     exit 1
 }
+
+requested_port=""
+while [ "$#" -gt 0 ]; do
+    case "$1" in
+        --listen-port)
+            [ "$#" -ge 2 ] || fail "--listen-port requires a port number"
+            requested_port="$2"
+            shift 2
+            ;;
+        --help|-h)
+            echo "Usage: $0 [--listen-port PORT]"
+            exit 0
+            ;;
+        *)
+            fail "unknown option: $1"
+            ;;
+    esac
+done
+
+saved_port=""
+if [ -f "$CONFIG_PATH" ]; then
+    saved_port="$(sed -n 's/^listen_port=//p' "$CONFIG_PATH" | tail -n 1)"
+fi
+listen_port="${requested_port:-${saved_port:-8080}}"
+case "$listen_port" in
+    ''|*[!0-9]*) fail "listen port must be a number between 1 and 65535" ;;
+esac
+[ "$listen_port" -ge 1 ] && [ "$listen_port" -le 65535 ] \
+    || fail "listen port must be between 1 and 65535"
 
 [ "$(uname -m)" = "x86_64" ] || fail "this preview supports Batocera x86-64 only"
 [ -d /userdata/system ] || fail "/userdata/system was not found; run this script on Batocera"
@@ -25,12 +55,23 @@ fail() {
 [ -f "$PAYLOAD/pybrowser/launch-pybrowser.sh" ] || fail "Pybrowser launcher payload is missing"
 [ -f "$SCRIPT_DIR/ScoreTracker" ] || fail "Batocera service script is missing"
 [ -f "$SCRIPT_DIR/ScoreTracker-Pybrowser.sh" ] || fail "Batocera Ports launcher is missing"
+[ -f "$SCRIPT_DIR/update-scoretracker.sh" ] || fail "Batocera updater is missing"
+[ -f "$SCRIPT_DIR/build-info.json" ] || fail "package build information is missing"
 
 echo "Installing ScoreTracker for Batocera..."
 mkdir -p "$INSTALL_ROOT" /userdata/system/services
 
+existing_service=0
 if [ -f "$SERVICE_PATH" ]; then
+    existing_service=1
     batocera-services stop "$SERVICE_NAME" >/dev/null 2>&1 || true
+fi
+
+if ! python3 -c 'import socket, sys; s = socket.socket(); s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1); s.bind(("0.0.0.0", int(sys.argv[1]))); s.close()' "$listen_port" 2>/dev/null; then
+    if [ "$existing_service" -eq 1 ]; then
+        batocera-services start "$SERVICE_NAME" >/dev/null 2>&1 || true
+    fi
+    fail "port $listen_port is already in use; choose another with --listen-port PORT"
 fi
 
 for component in bin plugin web pybrowser; do
@@ -44,6 +85,11 @@ chmod 755 "$INSTALL_ROOT/pybrowser/scoretracker_pybrowser.py" \
     "$INSTALL_ROOT/pybrowser/launch-pybrowser.sh"
 cp "$SCRIPT_DIR/ScoreTracker" "$SERVICE_PATH"
 chmod 755 "$SERVICE_PATH"
+cp "$SCRIPT_DIR/update-scoretracker.sh" "$INSTALL_ROOT/update-scoretracker.sh"
+chmod 755 "$INSTALL_ROOT/update-scoretracker.sh"
+cp "$SCRIPT_DIR/build-info.json" "$INSTALL_ROOT/build-info.json"
+printf 'listen_port=%s\n' "$listen_port" > "$CONFIG_PATH.new"
+mv "$CONFIG_PATH.new" "$CONFIG_PATH"
 
 mkdir -p /userdata/roms/ports
 cp "$SCRIPT_DIR/ScoreTracker-Pybrowser.sh" /userdata/roms/ports/ScoreTracker.sh
@@ -88,9 +134,9 @@ address="$(hostname -I 2>/dev/null | awk '{print $1}')"
 
 echo
 echo "ScoreTracker is installed and running."
-echo "Open this address on another device: http://$address:8080"
+echo "Open this address on another device: http://$address:$listen_port"
 echo "Native viewer: update the EmulationStation game list, then open Ports > ScoreTracker"
-echo "Health check: http://$address:8080/api/health"
+echo "Health check: http://$address:$listen_port/api/health"
 echo "Log file: $INSTALL_ROOT/scoretracker-server.log"
 echo
 echo "The service reapplies the VPX plugin at every boot because Batocera's /usr filesystem is not persistent."

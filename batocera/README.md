@@ -25,6 +25,15 @@ cd /userdata/system/scoretracker-install
 This single installer installs the VPX plugin and maps, the web dashboard service, and the Ports
 viewer. No separate Pybrowser package or installation step is required.
 
+The dashboard listens on port `8080` by default. To select another port during installation, use:
+
+```sh
+./install-batocera.sh --listen-port 8090
+```
+
+The installer refuses a port that is already in use. The selection is stored in
+`/userdata/system/scoretracker/scoretracker.conf` and is preserved by future updates.
+
 The installer prints an address such as `http://192.168.1.50:8080`. Open it from a phone, tablet, or
 computer. The dashboard is deliberately read-only and should only be exposed to a trusted local
 network.
@@ -37,6 +46,22 @@ Escape, and R.
 The native viewer reuses local Batocera wheel, marquee, or logo artwork when available. It resolves
 media from the VPX `gamelist.xml` and standard Batocera media folders without downloading artwork.
 Tables without matching local media retain the text-only layout.
+
+## Updates
+
+The Ports viewer checks for a newer compatible Batocera package when it opens. If one is available,
+use the update control shown in its footer and confirm the installation. The updater downloads the
+versioned package from this repository, verifies GitHub's SHA-256 digest, and runs the unified
+installer. It preserves the configured dashboard port.
+
+The same updater can be run over SSH:
+
+```sh
+/userdata/system/scoretracker/update-scoretracker.sh --check
+/userdata/system/scoretracker/update-scoretracker.sh --install
+```
+
+Updater output is appended to `/userdata/system/scoretracker/scoretracker-update.log`.
 
 ## Service management
 

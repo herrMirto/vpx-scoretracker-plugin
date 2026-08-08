@@ -98,6 +98,7 @@ See [`companion/README.md`](companion/README.md) for development instructions an
 
 Batocera 43.1 x86-64 systems with a current, plugin-enabled VPX build use one package and installer
 for the ScoreTracker plugin, maps, background web dashboard, and controller-friendly Ports viewer.
+The dashboard port is configurable, and the Ports viewer can install verified updates from GitHub.
 See [`batocera/README.md`](batocera/README.md) for installation and service details.
 
 ## Installation

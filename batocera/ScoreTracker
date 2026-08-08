@@ -7,8 +7,22 @@ PLUGIN_SOURCE="$INSTALL_ROOT/plugin"
 PLUGIN_DEST="/usr/bin/vpinball/plugins/scoretracker"
 SERVER="$INSTALL_ROOT/bin/scoretracker-server"
 WEB_ROOT="$INSTALL_ROOT/web"
+CONFIG_PATH="$INSTALL_ROOT/scoretracker.conf"
 PID_FILE="$INSTALL_ROOT/scoretracker-server.pid"
 LOG_FILE="$INSTALL_ROOT/scoretracker-server.log"
+
+listen_port=8080
+if [ -f "$CONFIG_PATH" ]; then
+    configured_port="$(sed -n 's/^listen_port=//p' "$CONFIG_PATH" | tail -n 1)"
+    case "$configured_port" in
+        ''|*[!0-9]*) ;;
+        *)
+            if [ "$configured_port" -ge 1 ] && [ "$configured_port" -le 65535 ]; then
+                listen_port="$configured_port"
+            fi
+            ;;
+    esac
+fi
 
 start_scoretracker() {
     if [ ! -d "$(dirname "$PLUGIN_DEST")" ]; then
@@ -30,7 +44,7 @@ start_scoretracker() {
     fi
 
     "$SERVER" \
-        --listen 0.0.0.0:8080 \
+        --listen "0.0.0.0:$listen_port" \
         --tables-root /userdata/roms/vpinball \
         --maps-root "$PLUGIN_SOURCE/maps" \
         --web-root "$WEB_ROOT" \
