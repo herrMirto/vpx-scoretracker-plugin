@@ -49,6 +49,20 @@ The native viewer reuses local Batocera wheel, marquee, or logo artwork when ava
 media from the VPX `gamelist.xml` and standard Batocera media folders without downloading artwork.
 Tables without matching local media retain the text-only layout.
 
+## Score-saved notification
+
+The plugin shows a brief “Score saved” pop-up over the playfield by default. To hide the pop-up
+without disabling score tracking, edit
+`/userdata/system/configs/vpinball/VPinballX.ini` and set:
+
+```ini
+[Plugin.ScoreTracker]
+Enable = 1
+Notifications = 0
+```
+
+Restart VPX after changing the setting.
+
 ## Updates
 
 The Ports viewer checks for a newer compatible Batocera package when it opens. If one is available,

@@ -34,6 +34,17 @@ original table through B2S's `B2SSetScorePlayer` methods.
 | Setting | Default | Description |
 |---|---|---|
 | `Enable` | `1` | Enable the plugin. |
+| `Notifications` | `1` | Show the “Score saved” pop-up over the playfield. Set to `0` to disable it. |
+
+For example, keep score tracking enabled while hiding the pop-up:
+
+```ini
+[Plugin.ScoreTracker]
+Enable = 1
+Notifications = 0
+```
+
+Restart VPX after changing `VPinballX.ini`.
 
 ## scores.json format
 
