@@ -4,7 +4,8 @@ on:
   push:
     branches: [main, "feat/*"]
     paths-ignore:
-      - README.md
+      # Documentation-only pushes must not rebuild application artifacts.
+      - "**/*.md"
       - pages/**
       - .github/workflows/pages.yml
       # A page-only release still carries synchronized version metadata, but
@@ -21,7 +22,7 @@ on:
       - companion/src-tauri/tauri.conf.json
   pull_request:
     paths-ignore:
-      - README.md
+      - "**/*.md"
       - pages/**
       - .github/workflows/pages.yml
       - .github/workflows/build.yml
