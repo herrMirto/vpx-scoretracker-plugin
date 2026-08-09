@@ -1,11 +1,13 @@
 import { invoke } from "@tauri-apps/api/core";
 import { open } from "@tauri-apps/plugin-dialog";
+import packageMetadata from "../package.json";
 import "./styles.css";
 import type { GameRecord, NvramDocument, ScanSnapshot, UpdateInfo } from "./types";
 
 const TABLES_ROOT_KEY = "scoretracker.tablesRoot";
 const MAPS_ROOT_KEY = "scoretracker.mapsRoot";
 const MEDIA_CACHE_KEY = "scoretracker.tableMedia.v1";
+const VIEWER_VERSION = packageMetadata.version;
 const UPDATE_CHECK_KEY = "scoretracker.lastUpdateCheck";
 const UPDATE_CHECK_INTERVAL = 24 * 60 * 60 * 1000;
 const VPINPLAY_API_BASE = "https://api.vpinplay.com:8888/api/v1";
@@ -222,7 +224,7 @@ function render(): void {
 function renderTopbar(root: string, inDetail: boolean): string {
   return `<header class="topbar">
     <button class="brand brand-button" id="home" type="button" aria-label="ScoreTracker home">
-      <span class="brand-stripe" aria-hidden="true"></span><span class="brand-copy"><strong>VPX ScoreTracker</strong><small>Local scores</small></span>
+      <span class="brand-stripe" aria-hidden="true"></span><span class="brand-copy"><span class="brand-title"><strong>VPX ScoreTracker</strong><span class="viewer-version">v${esc(VIEWER_VERSION)}</span></span><small>Local scores</small></span>
     </button>
     <nav class="actions" aria-label="Application actions">
       ${inDetail ? `<button id="back" class="button secondary" type="button">← All tables</button>` : ""}

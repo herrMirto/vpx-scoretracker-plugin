@@ -28,6 +28,12 @@ UPDATER = Path(
         "/userdata/system/scoretracker/update-scoretracker.sh",
     )
 )
+BUILD_INFO = Path(
+    os.environ.get(
+        "SCORETRACKER_BUILD_INFO",
+        "/userdata/system/scoretracker/build-info.json",
+    )
+)
 
 BG = (18, 20, 25)
 PANEL = (31, 34, 42)
@@ -40,6 +46,17 @@ BLUE_DARK = (43, 69, 151)
 GREEN = (70, 190, 119)
 RED = (231, 94, 88)
 LINE = (60, 65, 78)
+
+
+def installed_version() -> str:
+    try:
+        version = json.loads(BUILD_INFO.read_text(encoding="utf-8")).get("version")
+        return str(version).strip() or "unknown"
+    except (OSError, ValueError, AttributeError):
+        return "unknown"
+
+
+VIEWER_VERSION = installed_version()
 
 
 @dataclass
@@ -521,7 +538,11 @@ class ScoreTrackerApp:
         top = self.px(22)
         pygame.draw.rect(self.screen, WHITE, (left, top, self.px(7), self.px(43)))
         pygame.draw.rect(self.screen, BLUE, (left + self.px(13), top, self.px(7), self.px(43)))
-        self.text("VPX SCORETRACKER", self.fonts.heading, WHITE, left + self.px(35), top - self.px(1))
+        title = "VPX SCORETRACKER"
+        title_x = left + self.px(35)
+        self.text(title, self.fonts.heading, WHITE, title_x, top - self.px(1))
+        version_x = title_x + self.fonts.heading.size(title)[0] + self.px(11)
+        self.text(f"v{VIEWER_VERSION}", self.fonts.tiny, FAINT, version_x, top + self.px(7))
         self.text(subtitle, self.fonts.small, MUTED, left + self.px(35), top + self.px(29))
         status = "UPDATING..." if self.updating else ("REFRESHING..." if self.loading else "LOCAL SCORES")
         self.text(status, self.fonts.small_bold, BLUE if self.loading else MUTED, width - left, top + self.px(14), "topright")
