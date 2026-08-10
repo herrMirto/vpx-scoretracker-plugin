@@ -1,12 +1,13 @@
 {
   "name": "vpx-scoretracker-viewer",
   "private": true,
-  "version": "0.1.18",
+  "version": "0.1.19",
   "type": "module",
   "scripts": {
     "dev": "vite",
     "build": "tsc && vite build",
     "build:web": "tsc && VITE_SCORETRACKER_WEB=true vite build",
+    "test": "node --test tests/*.test.ts",
     "preview": "vite preview",
     "check": "tsc --noEmit",
     "tauri": "tauri"

@@ -384,6 +384,7 @@ jobs:
         run: |
           cd companion
           npm ci
+          npm test
           if [ "${{ matrix.platform }}" = windows ]; then
             npm run tauri build -- --no-bundle
           elif [ "${{ matrix.platform }}" = macos ]; then

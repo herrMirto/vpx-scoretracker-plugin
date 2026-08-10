@@ -89,6 +89,7 @@ jobs:
         run: |
           cd companion
           npm ci
+          npm test
           npm run build:web
 
       - name: Test and build headless server

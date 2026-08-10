@@ -1,12 +1,13 @@
 import { invoke } from "@tauri-apps/api/core";
 import { open } from "@tauri-apps/plugin-dialog";
 import packageMetadata from "../package.json";
+import { normalizeTableIdentity, selectVPinPlayItem, type LookupAttempt, type VPinPlayItem } from "./media-match.ts";
 import "./styles.css";
 import type { GameRecord, NvramDocument, ScanSnapshot, UpdateInfo } from "./types";
 
 const TABLES_ROOT_KEY = "scoretracker.tablesRoot";
 const MAPS_ROOT_KEY = "scoretracker.mapsRoot";
-const MEDIA_CACHE_KEY = "scoretracker.tableMedia.v1";
+const MEDIA_CACHE_KEY = "scoretracker.tableMedia.v2";
 const VIEWER_VERSION = packageMetadata.version;
 const UPDATE_CHECK_KEY = "scoretracker.lastUpdateCheck";
 const UPDATE_CHECK_INTERVAL = 24 * 60 * 60 * 1000;
@@ -45,16 +46,6 @@ interface TableMedia {
   year: string;
   wheelUrl: string;
   resolvedAt: number;
-}
-
-interface VPinPlayItem {
-  vpsId?: string;
-  name?: string;
-  manufacturer?: string;
-  year?: string | number;
-  filename?: string;
-  filehash?: string;
-  vpsdb?: { name?: string; manufacturer?: string; year?: string | number };
 }
 
 interface RemoteProbe {
@@ -369,40 +360,33 @@ async function resolveTableMedia(table: TableHistory): Promise<TableMedia | null
     vpxFileName: table.vpxFileName,
     scoreSource: table.latest.game.source,
   });
-  // The initial scan intentionally does not hash full VPX files. Most wheels can
-  // be resolved from the table/VPX name without doing heavy disk I/O.
-  const query = table.name.trim();
-  if (query) {
-    const search = await fetchVPinPlay<{ items?: VPinPlayItem[] }>(
-      `/vpsdb/search?q=${encodeURIComponent(query)}&limit=30`,
-      `name search for ${table.name}`,
-    );
-    const best = pickBestVPinPlayItem(search?.items ?? [], table);
-    diagnostic("debug", "media.name_search", {
-      table: table.name,
-      candidates: search?.items?.length ?? 0,
-      selectedVpsId: best?.vpsId ?? null,
-      selectedName: best?.vpsdb?.name || best?.name || null,
-    });
-    if (best?.vpsId) return mediaFromItem(best, best.vpsId);
-  }
-
-  if (table.rom) {
-    const romMatches = await fetchVPinPlay<{ items?: VPinPlayItem[] }>(
-      `/tables/by-rom/${encodeURIComponent(table.rom)}?limit=100`,
-      `ROM search for ${table.rom}`,
-    );
-    const items = romMatches?.items ?? [];
-    const best = pickBestVPinPlayItem(items, table) ?? pickDominantVpsItem(items);
-    diagnostic("debug", "media.rom_search", {
+  // The initial scan intentionally does not hash full VPX files. Resolve the
+  // exact PinMAME ROM before consulting user-controlled table/directory names.
+  const selection = await selectVPinPlayItem(table, {
+    byRom: async (rom) => {
+      const response = await fetchVPinPlay<{ items?: VPinPlayItem[] }>(
+        `/tables/by-rom/${encodeURIComponent(rom)}?limit=100`,
+        `ROM search for ${rom}`,
+      );
+      return response?.items ?? [];
+    },
+    byName: async (name) => {
+      const response = await fetchVPinPlay<{ items?: VPinPlayItem[] }>(
+        `/vpsdb/search?q=${encodeURIComponent(name)}&limit=30`,
+        `name search for ${name}`,
+      );
+      return response?.items ?? [];
+    },
+  }, (attempt: LookupAttempt) => {
+    diagnostic("debug", attempt.source === "rom" ? "media.rom_search" : "media.name_search", {
       table: table.name,
       rom: table.rom,
-      candidates: items.length,
-      selectedVpsId: best?.vpsId ?? null,
-      selectedName: best?.vpsdb?.name || best?.name || null,
+      candidates: attempt.items.length,
+      selectedVpsId: attempt.selected?.vpsId ?? null,
+      selectedName: attempt.selected?.vpsdb?.name || attempt.selected?.name || null,
     });
-    if (best?.vpsId) return mediaFromItem(best, best.vpsId);
-  }
+  });
+  if (selection?.item.vpsId) return mediaFromItem(selection.item, selection.item.vpsId);
 
   // Exact file hashing is an expensive last resort. It runs in a blocking worker
   // on the Rust side, after local scores are already visible.
@@ -435,15 +419,6 @@ async function resolveTableMedia(table: TableHistory): Promise<TableMedia | null
   return null;
 }
 
-function pickDominantVpsItem(items: VPinPlayItem[]): VPinPlayItem | null {
-  const counts = new Map<string, number>();
-  for (const item of items) {
-    if (item.vpsId) counts.set(item.vpsId, (counts.get(item.vpsId) ?? 0) + 1);
-  }
-  const winner = [...counts.entries()].sort((left, right) => right[1] - left[1])[0]?.[0];
-  return winner ? items.find((item) => item.vpsId === winner) ?? null : null;
-}
-
 async function mediaForVpsId(vpsId: string): Promise<TableMedia> {
   const response = await fetchVPinPlay<{ vpsdb?: { name?: string; manufacturer?: string; year?: string | number } }>(
     `/vpsdb/${encodeURIComponent(vpsId)}`,
@@ -462,51 +437,6 @@ function mediaFromItem(item: VPinPlayItem, vpsId: string): TableMedia {
     wheelUrl: `${VPINMEDIA_BASE}/${encodeURIComponent(vpsId)}/wheel.png`,
     resolvedAt: Date.now(),
   };
-}
-
-function pickBestVPinPlayItem(items: VPinPlayItem[], table: TableHistory): VPinPlayItem | null {
-  const targets = [table.name, table.vpxFileName?.replace(/\.vpx$/i, "")]
-    .filter((value): value is string => Boolean(value))
-    .map(normalizeTableIdentity);
-  let best: VPinPlayItem | null = null;
-  let bestScore = 0;
-  for (const item of items) {
-    const name = normalizeTableIdentity(item.vpsdb?.name || item.name || "");
-    const filename = normalizeTableIdentity((item.filename || "").replace(/\.vpx$/i, ""));
-    const score = Math.max(...targets.map((target) => identityScore(target, name, filename)));
-    if (score > bestScore) {
-      best = item;
-      bestScore = score;
-    }
-  }
-  diagnostic("debug", "media.identity_match", {
-    table: table.name,
-    vpxFileName: table.vpxFileName,
-    targets,
-    candidates: items.length,
-    bestScore,
-    accepted: bestScore >= 35,
-    bestVpsId: best?.vpsId ?? null,
-    bestName: best?.vpsdb?.name || best?.name || null,
-    bestFilename: best?.filename ?? null,
-  });
-  return bestScore >= 35 ? best : null;
-}
-
-function identityScore(target: string, name: string, filename: string): number {
-  if (!target || !name) return 0;
-  if (filename && target === filename) return 120;
-  if (target === name) return 100;
-  if (target.startsWith(name) || name.startsWith(target)) return 75;
-  if (target.includes(name) || name.includes(target)) return 55;
-  const targetTokens = new Set(target.split(" ").filter((token) => token.length > 2));
-  const nameTokens = new Set(name.split(" ").filter((token) => token.length > 2));
-  const shared = [...targetTokens].filter((token) => nameTokens.has(token)).length;
-  return targetTokens.size ? (shared / targetTokens.size) * 50 : 0;
-}
-
-function normalizeTableIdentity(value: string): string {
-  return value.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
 }
 
 function mediaCacheKey(table: TableHistory): string {
