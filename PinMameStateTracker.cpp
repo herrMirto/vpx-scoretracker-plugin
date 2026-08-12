@@ -10,8 +10,6 @@
 #include <fstream>
 #include <unordered_map>
 
-#include "pinmame/PinMAMEPlugin.h"
-
 namespace ScoreTracker
 {
 
@@ -234,11 +232,24 @@ bool PinMameStateTracker::RefreshStateSource()
          StateBinding binding;
       };
       std::unordered_map<string, vector<Candidate>> gameStates;
+      uint32_t gameStateGroupId = 0;
+      bool hasGameStateGroup = false;
+      for (unsigned int groupIndex = 0; groupIndex < source.nGroups; ++groupIndex)
+      {
+         const StateGroupDef& group = source.groupDefs[groupIndex];
+         if (group.name != nullptr && std::strcmp(group.name, "Game States") == 0)
+         {
+            gameStateGroupId = group.id;
+            hasGameStateGroup = true;
+            break;
+         }
+      }
+      if (!hasGameStateGroup)
+         continue;
       for (unsigned int stateIndex = 0; stateIndex < source.nStates; ++stateIndex)
       {
          const StateDef& state = source.stateDefs[stateIndex];
-         if ((state.id.groupId & PMPI_GROUP_MASK) != PMPI_GROUP_GAMESTATE
-            || state.name == nullptr)
+         if (state.id.groupId != gameStateGroupId || state.name == nullptr)
             continue;
          const int integerTypes = CTLPI_STATE_TYPE_UINT8 | CTLPI_STATE_TYPE_UINT16
             | CTLPI_STATE_TYPE_UINT32 | CTLPI_STATE_TYPE_UINT64 | CTLPI_STATE_TYPE_INT8
