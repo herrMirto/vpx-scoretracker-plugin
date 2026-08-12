@@ -5,7 +5,6 @@
 #include <chrono>
 #include <cstdint>
 #include <unordered_map>
-#include <utility>
 
 #include <nlohmann/json.hpp>
 
@@ -48,7 +47,6 @@ public:
    bool RefreshStateSource();
 
    uint32_t GetControllerEndpointId() const { return m_controllerEndpointId; }
-   const string& GetGameId() const { return m_gameId; }
 
 private:
    struct StateBinding
@@ -69,7 +67,7 @@ private:
       StateBinding binding;
    };
 
-   bool LoadSchema();
+   bool LoadSchema(const string& mapsPath);
    bool ReadInteger(const StateBinding& binding, int64_t& value) const;
    bool ReadSnapshot();
    static string ReadLabel(const nlohmann::json& descriptor);
@@ -87,7 +85,6 @@ private:
    StateSrcId m_stateSource { };
 
    string m_gameId;
-   string m_mapsPath;
    string m_tablePath;
    string m_outputPath;
    ScoreSavedCallback m_scoreSavedCallback = nullptr;
@@ -115,7 +112,6 @@ private:
    int m_gameOverAnomalies = 0;
    bool m_ignoreGameOver = false;
    bool m_hasFinalScoresBaseline = false;
-   bool m_gameOverLast = false;
    bool m_gameOverPending = false;
    bool m_summarySent = false;
    bool m_hasBeenInPlay = false;

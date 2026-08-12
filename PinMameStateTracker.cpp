@@ -9,6 +9,7 @@
 #include <filesystem>
 #include <fstream>
 #include <unordered_map>
+#include <utility>
 
 namespace ScoreTracker
 {
@@ -73,9 +74,9 @@ string PinMameStateTracker::ReadLabel(const nlohmann::json& descriptor)
    return descriptor["label"].get<string>();
 }
 
-bool PinMameStateTracker::LoadSchema()
+bool PinMameStateTracker::LoadSchema(const string& mapsPath)
 {
-   const std::filesystem::path mapsRoot(m_mapsPath);
+   const std::filesystem::path mapsRoot(mapsPath);
    std::ifstream indexFile(mapsRoot / "index.json");
    if (!indexFile.is_open())
       return false;
@@ -160,13 +161,12 @@ bool PinMameStateTracker::Start(const MsgPluginAPI* msgApi, uint32_t endpointId,
    m_controllerEndpointId = controllerEndpointId;
    m_getStateSourcesId = getStateSourcesId;
    m_gameId = gameId;
-   m_mapsPath = mapsPath;
    m_tablePath = tablePath;
    m_outputPath = outputPath;
    m_scoreSavedCallback = scoreSavedCallback;
    m_scoreSavedUserData = scoreSavedUserData;
 
-   if (!LoadSchema())
+   if (!LoadSchema(mapsPath))
       return false;
 
    m_sessionStartRealTime = std::chrono::steady_clock::now();
@@ -182,7 +182,6 @@ bool PinMameStateTracker::Start(const MsgPluginAPI* msgApi, uint32_t endpointId,
    m_gameOverAnomalies = 0;
    m_ignoreGameOver = false;
    m_hasFinalScoresBaseline = false;
-   m_gameOverLast = false;
    m_gameOverPending = false;
    m_summarySent = false;
    m_hasBeenInPlay = false;
@@ -532,7 +531,6 @@ void PinMameStateTracker::Poll()
             m_hasFinalScoresBaseline = true;
          }
       }
-      m_gameOverLast = false;
       m_hasBeenInPlay = true;
    }
    else if (!m_gameOverPending)
@@ -568,7 +566,7 @@ void PinMameStateTracker::Poll()
    const bool gameOverConfirmed = isGameOver && m_gameOverPending
       && std::chrono::steady_clock::now() - confirmSince
          >= std::chrono::seconds(kScoreStableConfirmSeconds);
-   if (gameOverConfirmed && m_hasBeenInPlay && !m_gameOverLast)
+   if (gameOverConfirmed && m_hasBeenInPlay)
    {
       LOGI("Game play for rom %s is over", m_gameId.c_str());
       if (!m_summarySent)
@@ -579,7 +577,6 @@ void PinMameStateTracker::Poll()
          FinalizeSession(finalScores, true, authoritativeCount);
          m_summarySent = true;
       }
-      m_gameOverLast = true;
       m_hasBeenInPlay = false;
    }
 }
