@@ -2,6 +2,7 @@
 
 #pragma once
 
+#include <cstdarg>
 #include <filesystem>
 
 #include <string>

@@ -61,6 +61,9 @@ env:
   PINMAME_REPO: https://github.com/vbousquet/pinmame.git
   NVRAM_MAPS_REPO: https://github.com/herrMirto/pinmame-nvram-maps.git
   NVRAM_MAPS_SHA: 2d886188712fe434a94910dafeb0cea27d539448
+  # Developer branches build unsigned packages. Expensive platform signing and
+  # notarization are reserved for runs that can actually publish from main.
+  PACKAGE_SIGNING: ${{ github.ref == 'refs/heads/main' && (github.event_name == 'push' || inputs.publish_release) }}
 
 jobs:
   resolve-vpx:
@@ -173,7 +176,7 @@ jobs:
           fi
 
       - name: Configure macOS signing credentials
-        if: matrix.platform == 'macos' && github.event_name != 'pull_request'
+        if: matrix.platform == 'macos' && env.PACKAGE_SIGNING == 'true'
         shell: bash
         env:
           APPLE_CERTIFICATE_BASE64: ${{ secrets.APPLE_CERTIFICATE_BASE64 }}
@@ -421,7 +424,7 @@ jobs:
       # installer .exe is signed after packaging below. The eSigner action
       # derives the OTP from ES_TOTP_SECRET, so signing runs fully headless.
       - name: Sign embedded Windows companion
-        if: matrix.platform == 'windows' && github.event_name != 'pull_request'
+        if: matrix.platform == 'windows' && env.PACKAGE_SIGNING == 'true'
         uses: sslcom/esigner-codesign@v1.3.2
         with:
           command: sign
@@ -435,7 +438,7 @@ jobs:
           environment_name: PROD
 
       - name: Sign and notarize embedded macOS payload
-        if: matrix.platform == 'macos' && github.event_name != 'pull_request'
+        if: matrix.platform == 'macos' && env.PACKAGE_SIGNING == 'true'
         shell: bash
         run: |
           set -euo pipefail
@@ -485,7 +488,7 @@ jobs:
             cp companion/src-tauri/icons/icon.icns "$APP/Contents/Resources/"
             chmod +x "$APP/Contents/MacOS/scoretracker-installer"
 
-            if [ "${{ github.event_name }}" = pull_request ]; then
+            if [ "$PACKAGE_SIGNING" != true ]; then
               codesign --force --deep --sign - "$APP"
             else
               codesign \
@@ -512,7 +515,7 @@ jobs:
               "$DMG"
             hdiutil verify "$DMG"
 
-            if [ "${{ github.event_name }}" != pull_request ]; then
+            if [ "$PACKAGE_SIGNING" = true ]; then
               codesign \
                 --force \
                 --timestamp \
@@ -534,7 +537,7 @@ jobs:
           fi
 
       - name: Sign Windows installer
-        if: matrix.platform == 'windows' && github.event_name != 'pull_request'
+        if: matrix.platform == 'windows' && env.PACKAGE_SIGNING == 'true'
         uses: sslcom/esigner-codesign@v1.3.2
         with:
           command: sign
@@ -548,7 +551,7 @@ jobs:
           environment_name: PROD
 
       - name: Verify Windows signature
-        if: matrix.platform == 'windows' && github.event_name != 'pull_request'
+        if: matrix.platform == 'windows' && env.PACKAGE_SIGNING == 'true'
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
@@ -568,7 +571,7 @@ jobs:
           archive: false
 
       - name: Remove macOS signing credentials
-        if: always() && matrix.platform == 'macos' && github.event_name != 'pull_request'
+        if: always() && matrix.platform == 'macos' && env.PACKAGE_SIGNING == 'true'
         shell: bash
         run: |
           if [ -n "${APPLE_KEYCHAIN_PATH:-}" ]; then
@@ -599,8 +602,8 @@ jobs:
     needs: [resolve-vpx, build, batocera]
     runs-on: ubuntu-latest
     if: >-
-      (github.event_name == 'push' && github.ref == 'refs/heads/main') ||
-      inputs.publish_release
+      github.ref == 'refs/heads/main' &&
+      (github.event_name == 'push' || inputs.publish_release)
     permissions:
       contents: write
     steps:
