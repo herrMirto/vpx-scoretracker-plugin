@@ -5,10 +5,11 @@ scores to a `scores.json` file. It is developed and distributed
 independently of the vpinball project. The installer places the plugin in the correct VPX location;
 no vpinball source changes are required.
 
-While a game runs, the plugin periodically decodes the machine's NVRAM (and, on platforms that
-keep live game state in volatile memory, main CPU RAM) using a pinned snapshot of the
-[PinMAME NVRAM maps](https://github.com/herrMirto/pinmame-nvram-maps). When the game is over(after the 'Match' screen), the
-per-player scores, game duration and selected `game_state` values are appended to `scores.json`.
+While a game runs, PinMAME decodes its internal machine memory using a
+[PinMAME memory map](https://github.com/herrMirto/pinmame-nvram-maps). The plugin reads those
+decoded values through VPX's generic Controller state API. When the game is over (after the
+“Match” screen), the per-player scores, game duration and selected `game_state` values are appended
+to `scores.json`.
 
 For PinMAME tables, the plugin requires a ROM map with a `game_state` block. When no supported
 PinMAME map is active, it can instead record direct per-player scores published by an EM or
@@ -17,10 +18,13 @@ original table through B2S's `B2SSetScorePlayer` methods.
 ## How it works
 
 - The plugin registers through VPX's public plugin API (`MsgPlugin`/`ControllerPlugin`/`VPXPlugin`
-  headers) and reads machine memory through the libpinmame API (`PinmameGetNVRAM`,
-  `PinmameReadMainCPUByte` — both read-only).
-- On `OnGameStart` (controller event), the ROM id is looked up in the maps `index.json`; if a map
-  exists, it is parsed once together with its platform description.
+  headers) and discovers the PinMAME `Game States` source through `GetStateSrc`.
+- On `OnGameStart` (controller event), the ROM id is looked up in the maps `index.json`. The plugin
+  reads only the `game_state` labels and session metadata; PinMAME owns all address resolution,
+  memory access, encoding, scaling and decoding.
+- Each poll calls the source's generic `GetState` function for scores, `game_over`, `player_count`
+  and the other mapped numeric game-state values. The Inspector plugin is not a dependency; it is
+  another consumer of the same API.
 - If no mapped PinMAME controller is available, the plugin looks for a B2S controller and reads
   its generic `Scores (players)` state group. Digit-only B2S score calls are not inferred.
 - The confirmed game is appended to `scores.json` with an atomic write (temporary file + rename).
@@ -92,9 +96,15 @@ and retaining the previous public key in the Viewer if old signatures must conti
 
 Releases include a pinned snapshot of
 [herrMirto/pinmame-nvram-maps](https://github.com/herrMirto/pinmame-nvram-maps) in the plugin-default
-maps folder (`plugins/scoretracker/maps`), so users do not download or select maps separately. The
-exact source commit is recorded in `maps/source.json`. The `nvram_maps_folder` setting remains an
-advanced development override. The maps are LGPL-3.0 and their license is installed alongside them.
+maps folder (`plugins/scoretracker/maps`), so users do not download or select maps separately.
+PinMAME uses the map to decode memory; ScoreTracker uses the matching schema to identify and order
+the published values and to retain metadata such as `final_scores_order`. The exact source commit is
+recorded in `maps/source.json`. The `nvram_maps_folder` setting remains an advanced development
+override. The maps are LGPL-3.0 and their license is installed alongside them.
+
+The desktop installer also synchronizes this snapshot to the configured PinMAME
+`memmaps` directory and sets a platform-default `PinMAMEPath` when it is empty. The Batocera
+installer performs the equivalent setup under `/userdata/system/configs/vpinball/pinmame/memmaps`.
 
 ## Companion app: VPX Scoretracker Viewer
 

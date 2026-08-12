@@ -139,7 +139,7 @@ jobs:
         run: |
           mkdir -p vpinball-src/plugins/scoretracker
           cp ScoreTrackerPlugin.cpp NotificationOverlay.cpp NotificationOverlay.h \
-            B2STracker.cpp B2STracker.h NvramTracker.cpp NvramTracker.h \
+            B2STracker.cpp B2STracker.h PinMameStateTracker.cpp PinMameStateTracker.h \
             ScoresFileWriter.cpp ScoresFileWriter.h ScoreSignature.cpp ScoreSignature.h \
             ScoreSigningConfig.h.in common.cpp common.h plugin.cfg \
             vpinball-src/plugins/scoretracker/

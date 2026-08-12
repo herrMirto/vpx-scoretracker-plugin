@@ -15,6 +15,7 @@ const VPINPLAY_API_BASE = "https://api.vpinplay.com:8888/api/v1";
 const VPINMEDIA_BASE = "https://raw.githubusercontent.com/superhac/vpinmediadb/refs/heads/main";
 const MEDIA_CACHE_MAX_AGE = 30 * 24 * 60 * 60 * 1000;
 const WEB_MODE = import.meta.env.VITE_SCORETRACKER_WEB === "true";
+const TABLE_LETTERS = [..."ABCDEFGHIJKLMNOPQRSTUVWXYZ"];
 const app = document.querySelector<HTMLDivElement>("#app")!;
 
 if (!app) throw new Error("Application root was not found");
@@ -127,6 +128,7 @@ let availableUpdate: UpdateInfo | null = null;
 let updateBusy = false;
 let updateStatus = "";
 let diagnosticLogPath = "";
+let tableLetterFilter: string | null = null;
 const loggedWheelResults = new Set<string>();
 
 function number(value: number): string {
@@ -256,6 +258,14 @@ function formatBytes(bytes: number): string {
 function renderOverview(tableList: TableHistory[]): string {
   const games = snapshot?.games ?? [];
   const totalTime = games.reduce((sum, game) => sum + (game.gameDuration ?? 0), 0);
+  const availableLetters = new Set(tableList.map(tableInitial).filter((letter) => letter !== null));
+  if (tableLetterFilter && !availableLetters.has(tableLetterFilter)) tableLetterFilter = null;
+  const visibleTables = tableLetterFilter
+    ? tableList.filter((table) => tableInitial(table) === tableLetterFilter)
+    : tableList;
+  const tableDescription = tableLetterFilter
+    ? `${visibleTables.length} ${visibleTables.length === 1 ? "table" : "tables"} beginning with ${tableLetterFilter} · Most recent first`
+    : "Most recent first · Select a table for its complete history";
 
   return `<section class="stats" aria-label="History summary">
       ${stat("Completed games", number(games.length), "Valid scores recorded")}
@@ -263,8 +273,35 @@ function renderOverview(tableList: TableHistory[]): string {
       ${stat("Tables found", number(snapshot?.vpxFilesFound ?? 0), "VPX files discovered")}
       ${stat("Recorded time", duration(totalTime), "Across all sessions")}
     </section>
-    <section class="section-heading"><div><p class="eyebrow">Recently played</p><h2>Table progress</h2></div><span>Most recent first · Select a table for its complete history</span></section>
-    ${tableList.length ? `<section class="table-grid">${tableList.map(renderTableCard).join("")}</section>` : renderEmptyHistory()}`;
+    ${tableList.length ? `<div class="overview-browser">
+      <div class="overview-table-list">
+        <section class="section-heading"><div><p class="eyebrow">Recently played</p><h2>Table progress</h2></div><span>${esc(tableDescription)}</span></section>
+        <section class="table-grid">${visibleTables.map(renderTableCard).join("")}</section>
+      </div>
+      ${renderAlphabetFilter(availableLetters)}
+    </div>` : renderEmptyHistory()}`;
+}
+
+function tableInitial(table: TableHistory): string | null {
+  const initial = displayName(table)
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .trim()
+    .charAt(0)
+    .toUpperCase();
+  return TABLE_LETTERS.includes(initial) ? initial : null;
+}
+
+function renderAlphabetFilter(availableLetters: Set<string>): string {
+  const letterButton = (letter: string) => {
+    const selected = tableLetterFilter === letter;
+    const available = availableLetters.has(letter);
+    return `<button class="alphabet-letter${selected ? " selected" : ""}" type="button" data-table-letter="${letter}" aria-label="Show tables beginning with ${letter}" aria-pressed="${selected}" ${available ? "" : "disabled"}>${letter}</button>`;
+  };
+  return `<nav class="alphabet-filter" aria-label="Filter tables alphabetically">
+    <button class="alphabet-all${tableLetterFilter === null ? " selected" : ""}" type="button" data-table-letter="" aria-label="Show all tables" aria-pressed="${tableLetterFilter === null}">All</button>
+    ${TABLE_LETTERS.map(letterButton).join("")}
+  </nav>`;
 }
 
 function renderTableCard(table: TableHistory): string {
@@ -699,6 +736,16 @@ function areaPath(points: string, height: number): string {
 
 function wireEvents(): void {
   wireScorePointTooltips();
+  document.querySelectorAll<HTMLButtonElement>("[data-table-letter]").forEach((button) => {
+    button.addEventListener("click", () => {
+      tableLetterFilter = button.dataset.tableLetter || null;
+      render();
+      document.querySelector(".section-heading")?.scrollIntoView({
+        behavior: window.matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth",
+        block: "start",
+      });
+    });
+  });
   document.querySelectorAll<HTMLImageElement>(".wheel-image").forEach((image) => {
     const artwork = image.closest<HTMLElement>(".wheel-art");
     const updateArtworkState = () => {

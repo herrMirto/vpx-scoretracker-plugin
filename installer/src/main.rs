@@ -227,9 +227,11 @@ fn install(
     }
     copy_dir(&payload, &dest)?;
 
-    progress(0.58, "Enabling the plugin…");
+    progress(0.52, "Enabling the plugin…");
     if let Some(ini) = find_ini(vpx) {
         enable_in_ini(&ini)?;
+        progress(0.60, "Installing PinMAME decoded-state maps…");
+        install_pinmame_memmaps(&ini, &dest.join("maps"), vpx)?;
     }
 
     progress(0.68, "Writing Viewer configuration…");
@@ -1334,6 +1336,114 @@ fn copy_dir(from: &Path, to: &Path) -> Result<(), String> {
     Ok(())
 }
 
+fn ini_value(ini: &Path, section: &str, key: &str) -> Option<String> {
+    let text = fs::read_to_string(ini).ok()?;
+    let target_section = format!("[{section}]").to_ascii_lowercase();
+    let target_key = key.to_ascii_lowercase();
+    let mut in_section = false;
+    for line in text.lines() {
+        let trimmed = line.trim();
+        if trimmed.starts_with('[') {
+            in_section = trimmed.to_ascii_lowercase() == target_section;
+            continue;
+        }
+        if !in_section || trimmed.starts_with(';') || trimmed.starts_with('#') {
+            continue;
+        }
+        let Some((name, value)) = trimmed.split_once('=') else {
+            continue;
+        };
+        if name.trim().to_ascii_lowercase() == target_key {
+            return Some(value.trim().trim_matches('"').to_owned());
+        }
+    }
+    None
+}
+
+fn set_ini_value(ini: &Path, section: &str, key: &str, value: &str) -> Result<(), String> {
+    let text = fs::read_to_string(ini)
+        .map_err(|error| format!("could not read {}: {error}", ini.display()))?;
+    let target_section = format!("[{section}]");
+    let mut out: Vec<String> = Vec::with_capacity(text.lines().count() + 4);
+    let mut in_section = false;
+    let mut section_seen = false;
+    let mut value_written = false;
+    for line in text.lines() {
+        let trimmed = line.trim();
+        if trimmed.starts_with('[') {
+            if in_section && !value_written {
+                out.push(format!("{key} = {value}"));
+                value_written = true;
+            }
+            in_section = trimmed.eq_ignore_ascii_case(&target_section);
+            section_seen |= in_section;
+            out.push(line.to_owned());
+            continue;
+        }
+        if in_section && !value_written {
+            if let Some((name, _)) = trimmed.split_once('=') {
+                if name.trim().eq_ignore_ascii_case(key) {
+                    out.push(format!("{key} = {value}"));
+                    value_written = true;
+                    continue;
+                }
+            }
+        }
+        out.push(line.to_owned());
+    }
+    if section_seen && !value_written {
+        out.push(format!("{key} = {value}"));
+    }
+    if !section_seen {
+        if !out.last().is_none_or(String::is_empty) {
+            out.push(String::new());
+        }
+        out.push(target_section);
+        out.push(format!("{key} = {value}"));
+    }
+    fs::write(ini, format!("{}\n", out.join("\n")))
+        .map_err(|error| format!("could not write {}: {error}", ini.display()))
+}
+
+fn default_pinmame_root(vpx: &Path) -> Result<PathBuf, String> {
+    #[cfg(target_os = "windows")]
+    return Ok(resolve_vpx_location(vpx)
+        .ok_or("could not resolve the Visual Pinball installation")?
+        .join("pinmame"));
+    #[cfg(not(target_os = "windows"))]
+    {
+        let _ = vpx;
+        Ok(home_dir()
+            .ok_or("cannot determine home directory")?
+            .join(".pinmame"))
+    }
+}
+
+fn install_pinmame_memmaps(ini: &Path, maps: &Path, vpx: &Path) -> Result<PathBuf, String> {
+    let configured = ini_value(ini, "Plugin.PinMAME", "PinMAMEPath")
+        .filter(|value| !value.trim().is_empty())
+        .map(PathBuf::from);
+    let pinmame_root = match configured {
+        Some(path) if path.is_absolute() => path,
+        Some(path) => resolve_vpx_location(vpx)
+            .ok_or("could not resolve the Visual Pinball installation")?
+            .join(path),
+        None => {
+            let path = default_pinmame_root(vpx)?;
+            set_ini_value(
+                ini,
+                "Plugin.PinMAME",
+                "PinMAMEPath",
+                &path.to_string_lossy(),
+            )?;
+            path
+        }
+    };
+    let memmaps = pinmame_root.join("memmaps");
+    copy_dir(maps, &memmaps)?;
+    Ok(memmaps)
+}
+
 /// Set Enable = 1 in the [Plugin.ScoreTracker] section, creating either as needed.
 /// Everything else in the ini is preserved byte for byte.
 fn enable_in_ini(ini: &Path) -> Result<(), String> {
@@ -1472,6 +1582,38 @@ mod tests {
         fs::create_dir_all(&shortcut).unwrap();
         assert!(sync_macos_desktop_shortcut(&app, &desktop, false).is_err());
         assert!(shortcut.is_dir());
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn installs_maps_in_the_configured_pinmame_memmaps_folder() {
+        let root = test_root("pinmame-memmaps");
+        let app = root.join("VPinballX_BGFX.app");
+        create_vpx_app(&app);
+        let maps = root.join("scoretracker-maps");
+        fs::create_dir_all(maps.join("maps/dataeast")).unwrap();
+        fs::create_dir_all(maps.join("platforms")).unwrap();
+        fs::write(maps.join("index.json"), b"{}\n").unwrap();
+        fs::write(maps.join("maps/dataeast/tomy.json"), b"{}\n").unwrap();
+        let pinmame = root.join("shared-pinmame");
+        let ini = root.join("VPinballX.ini");
+        fs::write(
+            &ini,
+            format!(
+                "[Plugin.PinMAME]\nPinMAMEPath = {}\n\n[Plugin.ScoreTracker]\nEnable = 1\n",
+                pinmame.display()
+            ),
+        )
+        .unwrap();
+
+        let installed = install_pinmame_memmaps(&ini, &maps, &app).unwrap();
+        assert_eq!(installed, pinmame.join("memmaps"));
+        assert!(installed.join("index.json").is_file());
+        assert!(installed.join("maps/dataeast/tomy.json").is_file());
+        assert_eq!(
+            ini_value(&ini, "Plugin.PinMAME", "PinMAMEPath"),
+            Some(pinmame.display().to_string())
+        );
         fs::remove_dir_all(root).unwrap();
     }
 }

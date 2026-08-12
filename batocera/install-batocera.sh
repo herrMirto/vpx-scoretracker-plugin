@@ -6,6 +6,7 @@ INSTALL_ROOT="/userdata/system/scoretracker"
 SERVICE_NAME="ScoreTracker"
 SERVICE_PATH="/userdata/system/services/$SERVICE_NAME"
 VPX_INI="/userdata/system/configs/vpinball/VPinballX.ini"
+PINMAME_ROOT="/userdata/system/configs/vpinball/pinmame"
 CONFIG_PATH="$INSTALL_ROOT/scoretracker.conf"
 PORTS_ROOT="/userdata/roms/ports"
 ES_SERVICE="/etc/init.d/S31emulationstation"
@@ -84,6 +85,8 @@ for component in bin plugin web pybrowser; do
     rm -rf "$INSTALL_ROOT/$component"
     mv "$INSTALL_ROOT/$component.new" "$INSTALL_ROOT/$component"
 done
+mkdir -p "$PINMAME_ROOT/memmaps"
+cp -a "$INSTALL_ROOT/plugin/maps/." "$PINMAME_ROOT/memmaps/"
 chmod 755 "$INSTALL_ROOT/bin/scoretracker-server"
 chmod 755 "$INSTALL_ROOT/pybrowser/scoretracker_pybrowser.py" \
     "$INSTALL_ROOT/pybrowser/launch-pybrowser.sh"
@@ -139,6 +142,30 @@ END {
         print ""
         print "[Plugin.ScoreTracker]"
         print "Enable = 1"
+    }
+}
+' "$VPX_INI" > "$tmp_ini"
+mv "$tmp_ini" "$VPX_INI"
+
+awk -v pinmame_path="$PINMAME_ROOT" '
+BEGIN { in_section = 0; section_seen = 0; path_seen = 0 }
+/^[[:space:]]*\[/ {
+    if (in_section && !path_seen) print "PinMAMEPath = " pinmame_path
+    in_section = ($0 ~ /^[[:space:]]*\[Plugin\.PinMAME\]/)
+    if (in_section) { section_seen = 1; path_seen = 0 }
+}
+in_section && tolower($0) ~ /^[[:space:]]*pinmamepath[[:space:]]*=/ {
+    if (!path_seen) print "PinMAMEPath = " pinmame_path
+    path_seen = 1
+    next
+}
+{ print }
+END {
+    if (in_section && !path_seen) print "PinMAMEPath = " pinmame_path
+    if (!section_seen) {
+        print ""
+        print "[Plugin.PinMAME]"
+        print "PinMAMEPath = " pinmame_path
     }
 }
 ' "$VPX_INI" > "$tmp_ini"
