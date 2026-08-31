@@ -58,7 +58,7 @@ on:
 env:
   VPINBALL_REPO: https://github.com/vpinball/vpinball.git
   VPINBALL_REF: master
-  PINMAME_REPO: https://github.com/vbousquet/pinmame.git
+  PINMAME_REPO: https://github.com/vpinball/pinmame.git
   NVRAM_MAPS_REPO: https://github.com/herrMirto/pinmame-nvram-maps.git
   NVRAM_MAPS_SHA: 2d886188712fe434a94910dafeb0cea27d539448
   # Developer branches build unsigned packages. Expensive platform signing and
@@ -292,8 +292,8 @@ jobs:
           cmake -S pinmame-src -B pinmame-src/build -G "Visual Studio 17 2022" -A x64 -DPLATFORM=win -DARCH=x64 -DBUILD_SHARED=ON -DBUILD_STATIC=OFF
           cmake --build pinmame-src/build --config Release
           $thirdPartyRoot = 'vpinball-src/third-party'
-          New-Item -ItemType Directory -Force -Path "$thirdPartyRoot/include", "$thirdPartyRoot/build-libs/windows-x64", "$thirdPartyRoot/runtime-libs/windows-x64"
-          Copy-Item pinmame-src/src/libpinmame/libpinmame.h vpinball-src/third-party/include/
+          New-Item -ItemType Directory -Force -Path "$thirdPartyRoot/include/pinmame", "$thirdPartyRoot/build-libs/windows-x64", "$thirdPartyRoot/runtime-libs/windows-x64"
+          Copy-Item pinmame-src/src/libpinmame/libpinmame.h, pinmame-src/src/libpinmame/PinMAMEPlugin.h vpinball-src/third-party/include/pinmame/
           Copy-Item pinmame-src/build/Release/pinmame64.lib vpinball-src/third-party/build-libs/windows-x64/
           Copy-Item pinmame-src/build/Release/pinmame64.dll vpinball-src/third-party/runtime-libs/windows-x64/
 
@@ -311,8 +311,8 @@ jobs:
             -DBUILD_STATIC=OFF \
             -DCMAKE_BUILD_TYPE=Release
           cmake --build pinmame-src/build
-          mkdir -p vpinball-src/third-party/include "vpinball-src/third-party/runtime-libs/${{ matrix.platform }}-${{ matrix.arch }}"
-          cp pinmame-src/src/libpinmame/libpinmame.h vpinball-src/third-party/include/
+          mkdir -p vpinball-src/third-party/include/pinmame "vpinball-src/third-party/runtime-libs/${{ matrix.platform }}-${{ matrix.arch }}"
+          cp pinmame-src/src/libpinmame/libpinmame.h pinmame-src/src/libpinmame/PinMAMEPlugin.h vpinball-src/third-party/include/pinmame/
           if [ "${{ matrix.platform }}" = macos ]; then
             cp pinmame-src/build/libpinmame.dylib "vpinball-src/third-party/runtime-libs/${{ matrix.platform }}-${{ matrix.arch }}/"
           else

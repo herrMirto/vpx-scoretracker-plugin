@@ -29,7 +29,7 @@ on:
 env:
   VPINBALL_REPO: https://github.com/vpinball/vpinball.git
   VPINBALL_REF: master
-  PINMAME_REPO: https://github.com/vbousquet/pinmame.git
+  PINMAME_REPO: https://github.com/vpinball/pinmame.git
   NVRAM_MAPS_REPO: https://github.com/herrMirto/pinmame-nvram-maps.git
   NVRAM_MAPS_SHA: 2d886188712fe434a94910dafeb0cea27d539448
 
@@ -128,8 +128,8 @@ jobs:
           cmake -S pinmame-src -B pinmame-src/build \
             -DPLATFORM=linux -DARCH=x64 -DBUILD_STATIC=OFF -DCMAKE_BUILD_TYPE=Release
           cmake --build pinmame-src/build
-          mkdir -p vpinball-src/third-party/include vpinball-src/third-party/runtime-libs/linux-x64
-          cp pinmame-src/src/libpinmame/libpinmame.h vpinball-src/third-party/include/
+          mkdir -p vpinball-src/third-party/include/pinmame vpinball-src/third-party/runtime-libs/linux-x64
+          cp pinmame-src/src/libpinmame/libpinmame.h pinmame-src/src/libpinmame/PinMAMEPlugin.h vpinball-src/third-party/include/pinmame/
           cp pinmame-src/build/libpinmame.so vpinball-src/third-party/runtime-libs/linux-x64/
 
       - name: Build ScoreTracker plugin for current VPX

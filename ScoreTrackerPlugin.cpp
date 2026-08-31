@@ -6,12 +6,14 @@
 #include "NotificationOverlay.h"
 
 #include <algorithm>
+#include <chrono>
 #include <filesystem>
 #include <vector>
 
 #include "plugins/MsgPlugin.h"
 #include "plugins/ControllerPlugin.h"
 #include "plugins/VPXPlugin.h"
+#include "pinmame/PinMAMEPlugin.h"
 
 namespace ScoreTracker
 {
@@ -35,13 +37,16 @@ static unsigned int onGameStartId = 0;
 static unsigned int onGameEndId = 0;
 #endif
 static unsigned int onVpxGameEndId = 0;
+static unsigned int onPrepareFrameId = 0;
 
 static PinMameStateTracker* tracker = nullptr;
 static B2STracker* b2sTracker = nullptr;
 static string activeGameId;
 static bool pollActive = false;
-static bool pollScheduled = false;
+static std::chrono::steady_clock::time_point nextPollAt;
 static NotificationOverlay notificationOverlay;
+static bool notificationHidePending = false;
+static std::chrono::steady_clock::time_point notificationHideAt;
 
 MSGPI_STRING_VAL_SETTING(mapsFolderProp, "nvram_maps_folder", "NVRAM Maps Folder",
    "Folder with the PinMAME NVRAM maps (index.json, maps/, platforms/). When empty, the maps shipped with the plugin are used.", true, "", 1024);
@@ -50,17 +55,15 @@ MSGPI_STRING_VAL_SETTING(outputFolderProp, "OutputFolder", "Scores Output Folder
 MSGPI_BOOL_VAL_SETTING(notificationsProp, "Notifications", "Notifications",
    "Show a pop-up over the playfield when a score is saved.", true, true);
 
-static void HideNotification(void* userData)
-{
-   notificationOverlay.Hide();
-}
-
 static void OnScoreSaved(void* userData)
 {
-   if (!notificationsProp_Val || msgApi == nullptr)
+   if (!notificationsProp_Val)
       return;
    if (notificationOverlay.ShowScoreSaved())
-      msgApi->RunOnMainThread(endpointId, 2.0, HideNotification, nullptr);
+   {
+      notificationHidePending = true;
+      notificationHideAt = std::chrono::steady_clock::now() + std::chrono::seconds(2);
+   }
 }
 
 static string ResolveMapsPath()
@@ -71,26 +74,25 @@ static string ResolveMapsPath()
    return (GetPluginPath() / "maps").string();
 }
 
-static void SchedulePoll();
-
-static void OnPoll(void* userData)
+static void OnPrepareFrame(const unsigned int eventId, void* userData, void* msgData)
 {
-   pollScheduled = false;
+   const auto now = std::chrono::steady_clock::now();
+   if (notificationHidePending && now >= notificationHideAt)
+   {
+      notificationHidePending = false;
+      notificationOverlay.Hide();
+   }
+
    if (!pollActive)
       return;
+   if (now < nextPollAt)
+      return;
+   nextPollAt = now + std::chrono::milliseconds(pollIntervalMsProp_Val);
+
    if (tracker != nullptr)
       tracker->Poll();
    else if (b2sTracker != nullptr)
       b2sTracker->Poll();
-   SchedulePoll();
-}
-
-static void SchedulePoll()
-{
-   if (pollScheduled || !pollActive)
-      return;
-   pollScheduled = true;
-   msgApi->RunOnMainThread(endpointId, pollIntervalMsProp_Val / 1000.0, OnPoll, nullptr);
 }
 
 static void StopTracker()
@@ -159,25 +161,16 @@ static bool StartPinMameTrackerForGame(const string& gameId, uint32_t controller
    }
    activeGameId = gameId;
    pollActive = true;
-   SchedulePoll();
+   nextPollAt = std::chrono::steady_clock::now()
+      + std::chrono::milliseconds(pollIntervalMsProp_Val);
    return true;
 }
 
 #if defined(CTLPI_CONTROLLERS_ON_CHG_MSG)
 
-// PinMAME-specific machine information message. The build only imports libpinmame.h, so keep this
-// small wire definition local instead of depending on PinMAME's optional plugin header as well.
-struct PinmameMachineStateMsg
-{
-   int version;
-   const char* game;
-   const char* rom;
-   uint64_t hardwareGen;
-};
-
 static string ResolvePinmameRom(const ControllerDef& controller)
 {
-   PinmameMachineStateMsg state { 1, nullptr, nullptr, 0 };
+   PinMAMEMachineStateMsg state { 1, nullptr, nullptr, 0 };
    msgApi->SendMsg(endpointId, getPinmameMachineStateId, controller.endpointId, &state);
    if (state.rom != nullptr && state.rom[0] != '\0')
       return state.rom;
@@ -185,7 +178,7 @@ static string ResolvePinmameRom(const ControllerDef& controller)
    // Older providers may enumerate the controller without implementing GetMachineState. In that
    // case, use the requested game id after removing PinMAME's controller namespace prefix.
    const string enumeratedId = controller.gameId != nullptr ? controller.gameId : "";
-   static constexpr char kPinmameGamePrefix[] = "pinmame::";
+   static constexpr char kPinmameGamePrefix[] = PMPI_GAMEID_PREFIX;
    if (enumeratedId.rfind(kPinmameGamePrefix, 0) == 0)
       return enumeratedId.substr(sizeof(kPinmameGamePrefix) - 1);
    return enumeratedId;
@@ -210,7 +203,7 @@ static void RefreshControllers()
       if (controllers[i].gameId == nullptr)
          continue;
       const string enumeratedId(controllers[i].gameId);
-      if (pinmameController == nullptr && enumeratedId.rfind("pinmame::", 0) == 0)
+      if (pinmameController == nullptr && enumeratedId.rfind(PMPI_GAMEID_PREFIX, 0) == 0)
          pinmameController = &controllers[i];
       else if (b2sController == nullptr && enumeratedId.rfind("b2s::", 0) == 0)
          b2sController = &controllers[i];
@@ -241,7 +234,8 @@ static void RefreshControllers()
       }
       activeGameId = gameId;
       pollActive = true;
-      SchedulePoll();
+      nextPollAt = std::chrono::steady_clock::now()
+         + std::chrono::milliseconds(pollIntervalMsProp_Val);
    }
 }
 
@@ -336,14 +330,19 @@ MSGPI_EXPORT void MSGPIAPI ScoreTrackerPluginLoad(const uint32_t sessionId, cons
    msgApi->SubscribeMsg(endpointId, onGameStartId = msgApi->GetMsgID(CTLPI_NAMESPACE, CTLPI_EVT_ON_GAME_START), OnGameStart, nullptr);
    msgApi->SubscribeMsg(endpointId, onGameEndId = msgApi->GetMsgID(CTLPI_NAMESPACE, CTLPI_EVT_ON_GAME_END), OnGameEnd, nullptr);
 #endif
+   msgApi->SubscribeMsg(endpointId,
+      onPrepareFrameId = msgApi->GetMsgID(VPXPI_NAMESPACE, VPXPI_EVT_ON_PREPARE_FRAME),
+      OnPrepareFrame, nullptr);
    msgApi->SubscribeMsg(endpointId, onVpxGameEndId = msgApi->GetMsgID(VPXPI_NAMESPACE, VPXPI_EVT_ON_GAME_END), OnVpxGameEnd, nullptr);
 }
 
 MSGPI_EXPORT void MSGPIAPI ScoreTrackerPluginUnload()
 {
    StopTracker();
+   notificationHidePending = false;
    notificationOverlay.Hide();
    msgApi->UnsubscribeMsg(onStateSourcesChangedId, OnStateSourcesChanged, nullptr);
+   msgApi->UnsubscribeMsg(onPrepareFrameId, OnPrepareFrame, nullptr);
 
 #if defined(CTLPI_CONTROLLERS_ON_CHG_MSG)
    msgApi->UnsubscribeMsg(onControllersChangedId, OnControllersChanged, nullptr);
@@ -364,6 +363,7 @@ MSGPI_EXPORT void MSGPIAPI ScoreTrackerPluginUnload()
 #endif
    msgApi->ReleaseMsgID(onStateSourcesChangedId);
    msgApi->ReleaseMsgID(getStateSourcesId);
+   msgApi->ReleaseMsgID(onPrepareFrameId);
    msgApi->ReleaseMsgID(onVpxGameEndId);
    msgApi->ReleaseMsgID(getVpxApiId);
    msgApi->FlushPendingCallbacks(endpointId);

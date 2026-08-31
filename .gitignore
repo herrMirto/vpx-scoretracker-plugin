@@ -1,8 +1,10 @@
 .DS_Store
+.claude/
 
 # Local development and planning artifacts
 /tools/
 /.planning/
+.claude/
 
 # Prerequisites
 *.d

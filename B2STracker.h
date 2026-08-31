@@ -46,7 +46,7 @@ private:
    {
       unsigned int inputIndex;
       unsigned int playerNo;
-      int typeMask;
+      int dataFormat;
    };
 
    bool ReadPlayerScores(vector<int64_t>& scores) const;

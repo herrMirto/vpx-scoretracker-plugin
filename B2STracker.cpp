@@ -11,7 +11,7 @@ namespace ScoreTracker
 
 static constexpr int kScoreStableConfirmSeconds = 8;
 static constexpr int kMinGameDurationSeconds = 30;
-static constexpr uint32_t kB2SPlayerScoresGroup = 0x0002;
+static constexpr uint32_t kB2SPlayerScoresSource = 2;
 
 B2STracker::~B2STracker() { Stop(); }
 
@@ -72,29 +72,22 @@ void B2STracker::RefreshStateSource()
    for (unsigned int sourceIndex = 0; sourceIndex < count; ++sourceIndex)
    {
       const StateSrcId& source = sources[sourceIndex];
-      if (source.id.endpointId != m_controllerEndpointId || source.GetState == nullptr)
+      if (source.id.endpointId != m_controllerEndpointId
+         || source.id.resId != kB2SPlayerScoresSource
+         || source.name == nullptr
+         || std::strcmp(source.name, "Scores (players)") != 0)
          continue;
-
-      uint32_t playerScoresGroup = kB2SPlayerScoresGroup;
-      for (unsigned int groupIndex = 0; groupIndex < source.nGroups; ++groupIndex)
-      {
-         const StateGroupDef& group = source.groupDefs[groupIndex];
-         if (group.name != nullptr && std::strcmp(group.name, "Scores (players)") == 0)
-         {
-            playerScoresGroup = group.id;
-            break;
-         }
-      }
 
       vector<PlayerState> playerStates;
       for (unsigned int stateIndex = 0; stateIndex < source.nStates; ++stateIndex)
       {
          const StateDef& state = source.stateDefs[stateIndex];
-         if (state.id.groupId != playerScoresGroup || state.id.stateId < 1 || state.id.stateId > 8)
+         if (state.mappingId < 1 || state.mappingId > 8 || state.GetState == nullptr)
             continue;
-         if ((state.typeMask & (CTLPI_STATE_TYPE_INT32 | CTLPI_STATE_TYPE_INT64)) == 0)
+         if (state.dataFormat != CTLPI_STATE_FORMAT_INT32
+            && state.dataFormat != CTLPI_STATE_FORMAT_INT64)
             continue;
-         playerStates.push_back({ stateIndex, state.id.stateId, state.typeMask });
+         playerStates.push_back({ stateIndex, state.mappingId, state.dataFormat });
       }
       if (playerStates.empty())
          continue;
@@ -109,26 +102,28 @@ void B2STracker::RefreshStateSource()
 
 bool B2STracker::ReadPlayerScores(vector<int64_t>& scores) const
 {
-   if (m_stateSource.GetState == nullptr || m_playerStates.empty())
+   if (m_stateSource.stateDefs == nullptr || m_playerStates.empty())
       return false;
 
    scores.assign(m_playerStates.back().playerNo, 0);
    for (const PlayerState& player : m_playerStates)
    {
       int64_t value = 0;
-      int result;
-      if ((player.typeMask & CTLPI_STATE_TYPE_INT64) != 0)
+      if (player.inputIndex >= m_stateSource.nStates)
+         return false;
+      const StateDef& state = m_stateSource.stateDefs[player.inputIndex];
+      if (state.GetState == nullptr || state.dataFormat != player.dataFormat)
+         return false;
+      if (player.dataFormat == CTLPI_STATE_FORMAT_INT64)
       {
-         result = m_stateSource.GetState(player.inputIndex, CTLPI_STATE_TYPE_INT64, &value);
+         state.GetState(m_stateSource.id, player.inputIndex, &value);
       }
       else
       {
          int32_t value32 = 0;
-         result = m_stateSource.GetState(player.inputIndex, CTLPI_STATE_TYPE_INT32, &value32);
+         state.GetState(m_stateSource.id, player.inputIndex, &value32);
          value = value32;
       }
-      if (result != 0)
-         return false;
       scores[player.playerNo - 1] = std::max<int64_t>(value, 0);
    }
    return true;

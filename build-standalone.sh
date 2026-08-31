@@ -5,17 +5,19 @@
 # would install a prebuilt plugin release: compile once, drop the .dylib and
 # plugin.cfg into the app bundle's PlugIns/scoretracker folder.
 #
-# Usage: ./build-standalone.sh [path-to-vpinball-checkout] [path-to-nvram-maps]
+# Usage: ./build-standalone.sh [path-to-vpinball-checkout] [path-to-nvram-maps] [pinmame-root]
 # Defaults to ~/vpinball; when a maps path is given (a checkout of
 # tomlogic/pinmame-nvram-maps or a compatible fork), its index.json, maps/ and
 # platforms/ are installed to plugins/scoretracker/maps as the plugin's
-# default maps.
+# default maps. Pass the active PinMAME root as the third argument to also install the same
+# snapshot to <pinmame-root>/memmaps, where current PinMAME versions decode and publish it.
 
 set -euo pipefail
 
 PLUGIN_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 VPINBALL_DIR="${1:-$HOME/vpinball}"
 MAPS_DIR="${2:-}"
+PINMAME_ROOT="${3:-}"
 
 if [ ! -d "$VPINBALL_DIR/third-party/include" ]; then
   echo "error: $VPINBALL_DIR does not look like a vpinball checkout (missing third-party/include)" >&2
@@ -76,6 +78,24 @@ if [ -n "$MAPS_DIR" ]; then
   rsync -a --delete "$MAPS_DIR/maps/" "$DEST/maps/maps/"
   rsync -a --delete "$MAPS_DIR/platforms/" "$DEST/maps/platforms/"
   echo "Installed maps from $MAPS_DIR"
+
+  if [ -n "$PINMAME_ROOT" ]; then
+    PINMAME_MEMMAPS="$PINMAME_ROOT/memmaps"
+    mkdir -p "$PINMAME_MEMMAPS/maps" "$PINMAME_MEMMAPS/platforms"
+    MAPS_REAL="$(cd "$MAPS_DIR" && pwd -P)"
+    PINMAME_MEMMAPS_REAL="$(cd "$PINMAME_MEMMAPS" && pwd -P)"
+    if [ "$MAPS_REAL" = "$PINMAME_MEMMAPS_REAL" ]; then
+      echo "PinMAME decoded-state maps already point to $MAPS_REAL"
+    else
+      cp "$MAPS_DIR/index.json" "$PINMAME_MEMMAPS/"
+      [ -f "$MAPS_DIR/LICENSE" ] && cp "$MAPS_DIR/LICENSE" "$PINMAME_MEMMAPS/"
+      rsync -a "$MAPS_DIR/maps/" "$PINMAME_MEMMAPS/maps/"
+      rsync -a "$MAPS_DIR/platforms/" "$PINMAME_MEMMAPS/platforms/"
+      echo "Installed PinMAME decoded-state maps to $PINMAME_MEMMAPS"
+    fi
+  else
+    echo "PinMAME maps were not installed; pass its root as the third argument for live decoded-state testing"
+  fi
 fi
 
 echo "Installed to $DEST"
