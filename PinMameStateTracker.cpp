@@ -129,11 +129,7 @@ bool PinMameStateTracker::LoadSchema(const string& mapsPath)
          {
             const string label = ReadLabel(value);
             if (!label.empty())
-            {
-               const bool invertBoolean = value.value("encoding", string()) == "bool"
-                  && value.value("invert", false);
-               m_namedStates.push_back({ key, label, invertBoolean, {} });
-            }
+               m_namedStates.push_back({ key, label, {} });
          }
       }
    }
@@ -151,15 +147,13 @@ bool PinMameStateTracker::LoadSchema(const string& mapsPath)
    return true;
 }
 
-bool PinMameStateTracker::Start(const MsgPluginAPI* msgApi, uint32_t endpointId,
-   uint32_t controllerEndpointId, unsigned int getStateSourcesId, const string& gameId,
+bool PinMameStateTracker::Start(StateSourceConsumer* stateSources,
+   uint32_t controllerEndpointId, const string& gameId,
    const string& mapsPath, const string& tablePath, const string& outputPath,
    ScoreSavedCallback scoreSavedCallback, void* scoreSavedUserData)
 {
-   m_msgApi = msgApi;
-   m_endpointId = endpointId;
+   m_stateSources = stateSources;
    m_controllerEndpointId = controllerEndpointId;
-   m_getStateSourcesId = getStateSourcesId;
    m_gameId = gameId;
    m_tablePath = tablePath;
    m_outputPath = outputPath;
@@ -198,152 +192,142 @@ bool PinMameStateTracker::Start(const MsgPluginAPI* msgApi, uint32_t endpointId,
 
 bool PinMameStateTracker::RefreshStateSource()
 {
+   InvalidateStateSource();
+
+   if (!m_monitoringStarted || m_stateSources == nullptr)
+      return false;
+
+   return m_stateSources->With([this](const vector<StateSrcId>& sources)
+   {
+      for (const StateSrcId& source : sources)
+      {
+         if ((m_controllerEndpointId != 0 && source.id.endpointId != m_controllerEndpointId)
+            || source.name == nullptr
+            || source.stateDefs == nullptr
+            || std::strcmp(source.name, "Game States") != 0)
+            continue;
+
+         struct Candidate
+         {
+            string path;
+            StateBinding binding;
+         };
+         std::unordered_map<string, vector<Candidate>> gameStates;
+         for (unsigned int stateIndex = 0; stateIndex < source.nStates; ++stateIndex)
+         {
+            const StateDef& state = source.stateDefs[stateIndex];
+            if (state.name == nullptr || state.GetState == nullptr)
+               continue;
+            if (state.dataFormat < CTLPI_STATE_FORMAT_UINT8
+               || state.dataFormat > CTLPI_STATE_FORMAT_INT64)
+               continue;
+            string path = state.desc != nullptr ? state.desc : "";
+            std::transform(path.begin(), path.end(), path.begin(), [](unsigned char ch) {
+               return ch == '/' ? '\\' : static_cast<char>(std::tolower(ch));
+            });
+            gameStates[state.name].push_back({ std::move(path),
+               StateBinding { stateIndex, state.dataFormat, true } });
+         }
+         if (gameStates.empty())
+            continue;
+
+         const auto bindByLabel = [&gameStates](const string& label, const char* collection) {
+            const auto it = gameStates.find(label);
+            if (it == gameStates.end())
+               return StateBinding {};
+            if (collection != nullptr)
+            {
+               const string pathPart = "\\"s + collection + "\\";
+               for (const Candidate& candidate : it->second)
+                  if (candidate.path.find(pathPart) != string::npos)
+                     return candidate.binding;
+            }
+            // Labels are normally unique. This fallback also supports providers predating the
+            // hierarchical desc path; ambiguous labels must use the path to avoid mixing live and
+            // frozen scores.
+            return it->second.size() == 1 ? it->second.front().binding : StateBinding {};
+         };
+
+         m_stateSource = source;
+         for (size_t i = 0; i < m_scoreLabels.size(); ++i)
+            m_scoreBindings[i] = bindByLabel(m_scoreLabels[i], "scores");
+         for (size_t i = 0; i < m_finalScoreLabels.size(); ++i)
+            m_finalScoreBindings[i] = bindByLabel(m_finalScoreLabels[i], "final_scores");
+         for (NamedState& state : m_namedStates)
+            state.binding = bindByLabel(state.label, state.key.c_str());
+
+         const size_t scoreCount = std::count_if(m_scoreBindings.begin(),
+            m_scoreBindings.end(), [](const StateBinding& binding) { return binding.bound; });
+         const size_t finalScoreCount = std::count_if(m_finalScoreBindings.begin(),
+            m_finalScoreBindings.end(), [](const StateBinding& binding) { return binding.bound; });
+         const bool hasGameOver = std::any_of(m_namedStates.begin(), m_namedStates.end(),
+            [](const NamedState& state) { return state.key == "game_over" && state.binding.bound; });
+         const bool hasCompleteLiveScores = !m_scoreBindings.empty()
+            && scoreCount == m_scoreBindings.size();
+         const bool hasCompleteFinalScores = !m_finalScoreBindings.empty()
+            && finalScoreCount == m_finalScoreBindings.size();
+         if (!hasCompleteLiveScores && (!hasCompleteFinalScores || !hasGameOver))
+         {
+            InvalidateStateSource();
+            continue;
+         }
+         if (!hasCompleteLiveScores)
+            m_scoreBindings.clear();
+         if (!hasCompleteFinalScores)
+            m_finalScoreBindings.clear();
+
+         const size_t namedStateCount = std::count_if(m_namedStates.begin(), m_namedStates.end(),
+            [](const NamedState& state) { return state.binding.bound; });
+         LOGI("PinMAME exposed %u live score, %u final score and %u game-state value(s) for %s",
+            static_cast<unsigned int>(scoreCount), static_cast<unsigned int>(finalScoreCount),
+            static_cast<unsigned int>(namedStateCount), m_gameId.c_str());
+         return true;
+      }
+      return false;
+   });
+}
+
+void PinMameStateTracker::InvalidateStateSource()
+{
    m_stateSource = {};
    m_scoreBindings.assign(m_scoreLabels.size(), {});
    m_finalScoreBindings.assign(m_finalScoreLabels.size(), {});
    for (NamedState& state : m_namedStates)
       state.binding = {};
-
-   if (!m_monitoringStarted || m_msgApi == nullptr)
-      return false;
-
-   GetStateSrcMsg query { 0, 0, nullptr };
-   m_msgApi->BroadcastMsg(m_endpointId, m_getStateSourcesId, &query);
-   if (query.count == 0)
-      return false;
-
-   vector<StateSrcId> sources(query.count);
-   query = { static_cast<unsigned int>(sources.size()), 0, sources.data() };
-   m_msgApi->BroadcastMsg(m_endpointId, m_getStateSourcesId, &query);
-
-   const unsigned int sourceCount = std::min(query.count,
-      static_cast<unsigned int>(sources.size()));
-   for (unsigned int sourceIndex = 0; sourceIndex < sourceCount; ++sourceIndex)
-   {
-      const StateSrcId& source = sources[sourceIndex];
-      if ((m_controllerEndpointId != 0 && source.id.endpointId != m_controllerEndpointId)
-         || source.GetState == nullptr)
-         continue;
-
-      struct Candidate
-      {
-         string path;
-         StateBinding binding;
-      };
-      std::unordered_map<string, vector<Candidate>> gameStates;
-      uint32_t gameStateGroupId = 0;
-      bool hasGameStateGroup = false;
-      for (unsigned int groupIndex = 0; groupIndex < source.nGroups; ++groupIndex)
-      {
-         const StateGroupDef& group = source.groupDefs[groupIndex];
-         if (group.name != nullptr && std::strcmp(group.name, "Game States") == 0)
-         {
-            gameStateGroupId = group.id;
-            hasGameStateGroup = true;
-            break;
-         }
-      }
-      if (!hasGameStateGroup)
-         continue;
-      for (unsigned int stateIndex = 0; stateIndex < source.nStates; ++stateIndex)
-      {
-         const StateDef& state = source.stateDefs[stateIndex];
-         if (state.id.groupId != gameStateGroupId || state.name == nullptr)
-            continue;
-         const int integerTypes = CTLPI_STATE_TYPE_UINT8 | CTLPI_STATE_TYPE_UINT16
-            | CTLPI_STATE_TYPE_UINT32 | CTLPI_STATE_TYPE_UINT64 | CTLPI_STATE_TYPE_INT8
-            | CTLPI_STATE_TYPE_INT16 | CTLPI_STATE_TYPE_INT32 | CTLPI_STATE_TYPE_INT64;
-         if ((state.typeMask & integerTypes) == 0)
-            continue;
-         string path = state.desc != nullptr ? state.desc : "";
-         std::transform(path.begin(), path.end(), path.begin(), [](unsigned char ch) {
-            return ch == '/' ? '\\' : static_cast<char>(std::tolower(ch));
-         });
-         gameStates[state.name].push_back({ std::move(path),
-            StateBinding { stateIndex, state.typeMask, true } });
-      }
-      if (gameStates.empty())
-         continue;
-
-      const auto bindByLabel = [&gameStates](const string& label, const char* collection) {
-         const auto it = gameStates.find(label);
-         if (it == gameStates.end())
-            return StateBinding {};
-         if (collection != nullptr)
-         {
-            const string pathPart = "\\"s + collection + "\\";
-            for (const Candidate& candidate : it->second)
-               if (candidate.path.find(pathPart) != string::npos)
-                  return candidate.binding;
-         }
-         // Labels are normally unique. This fallback also supports providers predating the
-         // hierarchical desc path; ambiguous labels must use the path to avoid mixing live and
-         // frozen scores.
-         return it->second.size() == 1 ? it->second.front().binding : StateBinding {};
-      };
-
-      m_stateSource = source;
-      for (size_t i = 0; i < m_scoreLabels.size(); ++i)
-         m_scoreBindings[i] = bindByLabel(m_scoreLabels[i], "scores");
-      for (size_t i = 0; i < m_finalScoreLabels.size(); ++i)
-         m_finalScoreBindings[i] = bindByLabel(m_finalScoreLabels[i], "final_scores");
-      for (NamedState& state : m_namedStates)
-         state.binding = bindByLabel(state.label, state.key.c_str());
-
-      const size_t scoreCount = std::count_if(m_scoreBindings.begin(),
-         m_scoreBindings.end(), [](const StateBinding& binding) { return binding.bound; });
-      const size_t finalScoreCount = std::count_if(m_finalScoreBindings.begin(),
-         m_finalScoreBindings.end(), [](const StateBinding& binding) { return binding.bound; });
-      const bool hasGameOver = std::any_of(m_namedStates.begin(), m_namedStates.end(),
-         [](const NamedState& state) { return state.key == "game_over" && state.binding.bound; });
-      const bool hasCompleteLiveScores = !m_scoreBindings.empty()
-         && scoreCount == m_scoreBindings.size();
-      const bool hasCompleteFinalScores = !m_finalScoreBindings.empty()
-         && finalScoreCount == m_finalScoreBindings.size();
-      if (!hasCompleteLiveScores && (!hasCompleteFinalScores || !hasGameOver))
-      {
-         m_stateSource = {};
-         continue;
-      }
-      if (!hasCompleteLiveScores)
-         m_scoreBindings.clear();
-      if (!hasCompleteFinalScores)
-         m_finalScoreBindings.clear();
-
-      const size_t namedStateCount = std::count_if(m_namedStates.begin(), m_namedStates.end(),
-         [](const NamedState& state) { return state.binding.bound; });
-      LOGI("PinMAME exposed %u live score, %u final score and %u game-state value(s) for %s",
-         static_cast<unsigned int>(scoreCount), static_cast<unsigned int>(finalScoreCount),
-         static_cast<unsigned int>(namedStateCount), m_gameId.c_str());
-      return true;
-   }
-   return false;
 }
 
 bool PinMameStateTracker::ReadInteger(const StateBinding& binding, int64_t& value) const
 {
-   if (!binding.bound || m_stateSource.GetState == nullptr)
+   if (!binding.bound || m_stateSource.stateDefs == nullptr
+      || binding.inputIndex >= m_stateSource.nStates)
       return false;
 
-#define READ_STATE(TYPE_FLAG, TYPE) \
-   if ((binding.typeMask & TYPE_FLAG) != 0) \
+   const StateDef& state = m_stateSource.stateDefs[binding.inputIndex];
+   if (state.GetState == nullptr || state.dataFormat != binding.dataFormat)
+      return false;
+
+#define READ_STATE(FORMAT, TYPE) \
+   case FORMAT: \
    { \
       TYPE result = 0; \
-      if (m_stateSource.GetState(binding.inputIndex, TYPE_FLAG, &result) != 0) \
-         return false; \
+      state.GetState(state.callContext, &result); \
       value = static_cast<int64_t>(result); \
       return true; \
    }
-   READ_STATE(CTLPI_STATE_TYPE_INT64, int64_t)
-   READ_STATE(CTLPI_STATE_TYPE_UINT64, uint64_t)
-   READ_STATE(CTLPI_STATE_TYPE_INT32, int32_t)
-   READ_STATE(CTLPI_STATE_TYPE_UINT32, uint32_t)
-   READ_STATE(CTLPI_STATE_TYPE_INT16, int16_t)
-   READ_STATE(CTLPI_STATE_TYPE_UINT16, uint16_t)
-   READ_STATE(CTLPI_STATE_TYPE_INT8, int8_t)
-   READ_STATE(CTLPI_STATE_TYPE_UINT8, uint8_t)
+   switch (binding.dataFormat)
+   {
+      READ_STATE(CTLPI_STATE_FORMAT_INT64, int64_t)
+      READ_STATE(CTLPI_STATE_FORMAT_UINT64, uint64_t)
+      READ_STATE(CTLPI_STATE_FORMAT_INT32, int32_t)
+      READ_STATE(CTLPI_STATE_FORMAT_UINT32, uint32_t)
+      READ_STATE(CTLPI_STATE_FORMAT_INT16, int16_t)
+      READ_STATE(CTLPI_STATE_FORMAT_UINT16, uint16_t)
+      READ_STATE(CTLPI_STATE_FORMAT_INT8, int8_t)
+      READ_STATE(CTLPI_STATE_FORMAT_UINT8, uint8_t)
+      default:
+         return false;
+   }
 #undef READ_STATE
-   return false;
 }
 
 bool PinMameStateTracker::ReadSnapshot()
@@ -376,8 +360,6 @@ bool PinMameStateTracker::ReadSnapshot()
       int64_t value = 0;
       if (!ReadInteger(state.binding, value))
          return false;
-      if (state.invertBoolean)
-         value = value == 0 ? 1 : 0;
       decodedValues[state.key] = value;
    }
 
@@ -459,12 +441,20 @@ void PinMameStateTracker::Stop()
       m_summarySent = true;
    }
    m_monitoringStarted = false;
+   m_stateSources = nullptr;
    m_stateSource = {};
    m_scoreBindings.clear();
    m_finalScoreBindings.clear();
 }
 
 void PinMameStateTracker::Poll()
+{
+   if (!m_monitoringStarted || m_stateSources == nullptr)
+      return;
+   m_stateSources->With([this](const vector<StateSrcId>&) { PollCurrentState(); });
+}
+
+void PinMameStateTracker::PollCurrentState()
 {
    if (!m_monitoringStarted || !ReadSnapshot())
       return;

@@ -15,6 +15,8 @@
 namespace ScoreTracker
 {
 
+using StateSourceConsumer = PinballPlugin::Controller::CtrlItemConsumer<StateSrcId>;
+
 // Tracks PinMAME's decoded game states through the generic Controller state-source API. PinMAME
 // remains responsible for interpreting the memory map; ScoreTracker only consumes named values
 // and keeps the session/finalization policy needed to produce reliable scores.json records.
@@ -35,8 +37,8 @@ public:
 
    static MapStatus ProbeMap(const string& gameId, const string& mapsPath, string& detail);
 
-   bool Start(const MsgPluginAPI* msgApi, uint32_t endpointId, uint32_t controllerEndpointId,
-      unsigned int getStateSourcesId, const string& gameId, const string& mapsPath,
+   bool Start(StateSourceConsumer* stateSources, uint32_t controllerEndpointId,
+      const string& gameId, const string& mapsPath,
       const string& tablePath, const string& outputPath,
       ScoreSavedCallback scoreSavedCallback = nullptr, void* scoreSavedUserData = nullptr);
    void Stop();
@@ -45,6 +47,7 @@ public:
    // Provider-owned definitions are invalidated by OnStateSrcChanged. Re-enumerate and bind the
    // map labels again without disturbing the active game session.
    bool RefreshStateSource();
+   void InvalidateStateSource();
 
    uint32_t GetControllerEndpointId() const { return m_controllerEndpointId; }
 
@@ -52,7 +55,7 @@ private:
    struct StateBinding
    {
       unsigned int inputIndex = 0;
-      int typeMask = 0;
+      int dataFormat = 0;
       bool bound = false;
    };
 
@@ -60,16 +63,13 @@ private:
    {
       string key;
       string label;
-      // libpinmame currently publishes the decoded boolean before applying the map's
-      // invert flag. Keep this small piece of schema metadata so consumers see the
-      // same value as the original map decoder.
-      bool invertBoolean = false;
       StateBinding binding;
    };
 
    bool LoadSchema(const string& mapsPath);
    bool ReadInteger(const StateBinding& binding, int64_t& value) const;
    bool ReadSnapshot();
+   void PollCurrentState();
    static string ReadLabel(const nlohmann::json& descriptor);
 
    vector<int64_t> BuildFinalScoresSnapshot(const vector<int64_t>& playerScores,
@@ -78,10 +78,8 @@ private:
    void FinalizeSession(const vector<int64_t>& finalScores, bool writeScoresFile,
       size_t authoritativeCount);
 
-   const MsgPluginAPI* m_msgApi = nullptr;
-   uint32_t m_endpointId = 0;
+   StateSourceConsumer* m_stateSources = nullptr;
    uint32_t m_controllerEndpointId = 0;
-   unsigned int m_getStateSourcesId = 0;
    StateSrcId m_stateSource { };
 
    string m_gameId;

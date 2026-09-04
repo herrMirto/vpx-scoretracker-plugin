@@ -6,8 +6,11 @@
 #include "NotificationOverlay.h"
 
 #include <algorithm>
+#include <atomic>
 #include <chrono>
 #include <filesystem>
+#include <memory>
+#include <mutex>
 #include <vector>
 
 #include "plugins/MsgPlugin.h"
@@ -25,11 +28,7 @@ static uint32_t endpointId = 0;
 static VPXPluginAPI* vpxApi = nullptr;
 
 static unsigned int getVpxApiId = 0;
-static unsigned int onStateSourcesChangedId = 0;
-static unsigned int getStateSourcesId = 0;
 #if defined(CTLPI_CONTROLLERS_ON_CHG_MSG)
-static unsigned int onControllersChangedId = 0;
-static unsigned int getControllersId = 0;
 static unsigned int getPinmameMachineStateId = 0;
 static unsigned int onB2SStateChangeId = 0;
 #else
@@ -38,6 +37,14 @@ static unsigned int onGameEndId = 0;
 #endif
 static unsigned int onVpxGameEndId = 0;
 static unsigned int onPrepareFrameId = 0;
+
+static std::unique_ptr<StateSourceConsumer> stateSources;
+#if defined(CTLPI_CONTROLLERS_ON_CHG_MSG)
+using ControllerSourceConsumer = PinballPlugin::Controller::CtrlItemConsumer<ControllerDef>;
+static std::unique_ptr<ControllerSourceConsumer> controllerSources;
+#endif
+static std::mutex trackerMutex;
+static std::atomic_bool shuttingDown { false };
 
 static PinMameStateTracker* tracker = nullptr;
 static B2STracker* b2sTracker = nullptr;
@@ -76,6 +83,7 @@ static string ResolveMapsPath()
 
 static void OnPrepareFrame(const unsigned int eventId, void* userData, void* msgData)
 {
+   std::lock_guard lock(trackerMutex);
    const auto now = std::chrono::steady_clock::now();
    if (notificationHidePending && now >= notificationHideAt)
    {
@@ -151,7 +159,7 @@ static bool StartPinMameTrackerForGame(const string& gameId, uint32_t controller
 
    LOGI("Tracking decoded PinMAME states for rom %s using schema %s", gameId.c_str(), mapDetail.c_str());
    tracker = new PinMameStateTracker();
-   if (!tracker->Start(msgApi, endpointId, controllerEndpointId, getStateSourcesId, gameId,
+   if (!tracker->Start(stateSources.get(), controllerEndpointId, gameId,
       mapsPath, tablePath, outputFolderProp_Val, OnScoreSaved))
    {
       LOGI("PinMAME did not publish usable decoded score states for %s", gameId.c_str());
@@ -168,16 +176,15 @@ static bool StartPinMameTrackerForGame(const string& gameId, uint32_t controller
 
 #if defined(CTLPI_CONTROLLERS_ON_CHG_MSG)
 
-static string ResolvePinmameRom(const ControllerDef& controller)
+static string ResolvePinmameRom(uint32_t controllerEndpointId, const string& enumeratedId)
 {
    PinMAMEMachineStateMsg state { 1, nullptr, nullptr, 0 };
-   msgApi->SendMsg(endpointId, getPinmameMachineStateId, controller.endpointId, &state);
+   msgApi->SendMsg(endpointId, getPinmameMachineStateId, controllerEndpointId, &state);
    if (state.rom != nullptr && state.rom[0] != '\0')
       return state.rom;
 
    // Older providers may enumerate the controller without implementing GetMachineState. In that
    // case, use the requested game id after removing PinMAME's controller namespace prefix.
-   const string enumeratedId = controller.gameId != nullptr ? controller.gameId : "";
    static constexpr char kPinmameGamePrefix[] = PMPI_GAMEID_PREFIX;
    if (enumeratedId.rfind(kPinmameGamePrefix, 0) == 0)
       return enumeratedId.substr(sizeof(kPinmameGamePrefix) - 1);
@@ -186,61 +193,67 @@ static string ResolvePinmameRom(const ControllerDef& controller)
 
 static void RefreshControllers()
 {
-   GetControllersMsg query { 0, 0, nullptr };
-   msgApi->BroadcastMsg(endpointId, getControllersId, &query);
-   if (query.count == 0)
+   if (controllerSources == nullptr)
       return;
 
-   vector<ControllerDef> controllers(query.count);
-   query = { static_cast<unsigned int>(controllers.size()), 0, controllers.data() };
-   msgApi->BroadcastMsg(endpointId, getControllersId, &query);
-
-   const unsigned int count = std::min(query.count, static_cast<unsigned int>(controllers.size()));
-   const ControllerDef* pinmameController = nullptr;
-   const ControllerDef* b2sController = nullptr;
-   for (unsigned int i = 0; i < count; ++i)
+   uint32_t pinmameEndpointId = 0;
+   uint32_t b2sEndpointId = 0;
+   string pinmameGameId;
+   string b2sGameId;
+   controllerSources->With([&](const vector<ControllerDef>& controllers)
    {
-      if (controllers[i].gameId == nullptr)
-         continue;
-      const string enumeratedId(controllers[i].gameId);
-      if (pinmameController == nullptr && enumeratedId.rfind(PMPI_GAMEID_PREFIX, 0) == 0)
-         pinmameController = &controllers[i];
-      else if (b2sController == nullptr && enumeratedId.rfind("b2s::", 0) == 0)
-         b2sController = &controllers[i];
-   }
+      for (const ControllerDef& controller : controllers)
+      {
+         if (controller.gameId == nullptr)
+            continue;
+         const string enumeratedId(controller.gameId);
+         if (pinmameEndpointId == 0 && enumeratedId.rfind(PMPI_GAMEID_PREFIX, 0) == 0)
+         {
+            pinmameEndpointId = controller.endpointId;
+            pinmameGameId = enumeratedId;
+         }
+         else if (b2sEndpointId == 0 && enumeratedId.rfind("b2s::", 0) == 0)
+         {
+            b2sEndpointId = controller.endpointId;
+            b2sGameId = enumeratedId;
+         }
+      }
+   });
 
    // Prefer the decoded states published by PinMAME. If the ROM has no usable game-state source,
    // fall back to direct player scores published by B2S.
-   if (pinmameController != nullptr && StartPinMameTrackerForGame(
-      ResolvePinmameRom(*pinmameController), pinmameController->endpointId))
+   if (pinmameEndpointId != 0 && StartPinMameTrackerForGame(
+      ResolvePinmameRom(pinmameEndpointId, pinmameGameId), pinmameEndpointId))
       return;
 
-   if (b2sController != nullptr)
+   if (b2sEndpointId != 0)
    {
-      const string gameId(b2sController->gameId);
-      if (b2sTracker != nullptr && b2sTracker->GetControllerEndpointId() == b2sController->endpointId
-         && b2sTracker->GetGameId() == gameId)
+      if (b2sTracker != nullptr && b2sTracker->GetControllerEndpointId() == b2sEndpointId
+         && b2sTracker->GetGameId() == b2sGameId)
          return;
 
       StopTracker();
-      LOGI("No supported PinMAME map is active; monitoring direct B2S player scores for %s", gameId.c_str());
+      LOGI("No supported PinMAME map is active; monitoring direct B2S player scores for %s", b2sGameId.c_str());
       b2sTracker = new B2STracker();
-      if (!b2sTracker->Start(msgApi, endpointId, b2sController->endpointId, getStateSourcesId,
-         gameId, ResolveTablePath(), outputFolderProp_Val, OnScoreSaved))
+      if (!b2sTracker->Start(stateSources.get(), b2sEndpointId, b2sGameId,
+         ResolveTablePath(), outputFolderProp_Val, OnScoreSaved))
       {
          delete b2sTracker;
          b2sTracker = nullptr;
          return;
       }
-      activeGameId = gameId;
+      activeGameId = b2sGameId;
       pollActive = true;
       nextPollAt = std::chrono::steady_clock::now()
          + std::chrono::milliseconds(pollIntervalMsProp_Val);
    }
 }
 
-static void OnControllersChanged(const unsigned int eventId, void* userData, void* msgData)
+static void OnControllersChanged()
 {
+   if (shuttingDown)
+      return;
+   std::lock_guard lock(trackerMutex);
    // An empty enumeration means the machine stopped. Keep the tracker alive until VPX game-end:
    // Stop() may still need to persist the played session as an exit fallback.
    RefreshControllers();
@@ -255,7 +268,10 @@ struct B2SPluginEvent
 
 static void OnB2SStateChange(const unsigned int eventId, void* userData, void* msgData)
 {
-   if (b2sTracker == nullptr || msgData == nullptr)
+   if (shuttingDown || msgData == nullptr)
+      return;
+   std::lock_guard lock(trackerMutex);
+   if (b2sTracker == nullptr)
       return;
    const B2SPluginEvent* event = static_cast<const B2SPluginEvent*>(msgData);
    b2sTracker->OnB2SStateChange(event->type, event->index, event->value);
@@ -267,7 +283,10 @@ static void OnGameStart(const unsigned int eventId, void* userData, void* msgDat
 {
    const CtlOnGameStateChgMsg* msg = static_cast<const CtlOnGameStateChgMsg*>(msgData);
    if (msg != nullptr && msg->gameId != nullptr)
+   {
+      std::lock_guard lock(trackerMutex);
       StartPinMameTrackerForGame(msg->gameId);
+   }
 }
 
 static void OnGameEnd(const unsigned int eventId, void* userData, void* msgData)
@@ -279,8 +298,22 @@ static void OnGameEnd(const unsigned int eventId, void* userData, void* msgData)
 
 #endif
 
-static void OnStateSourcesChanged(const unsigned int eventId, void* userData, void* msgData)
+static void OnStateSourcesAboutToChange()
 {
+   std::lock_guard lock(trackerMutex);
+   if (tracker != nullptr)
+      tracker->InvalidateStateSource();
+#if defined(CTLPI_CONTROLLERS_ON_CHG_MSG)
+   if (b2sTracker != nullptr)
+      b2sTracker->InvalidateStateSource();
+#endif
+}
+
+static void OnStateSourcesChanged()
+{
+   if (shuttingDown)
+      return;
+   std::lock_guard lock(trackerMutex);
    if (tracker != nullptr)
       tracker->RefreshStateSource();
 #if defined(CTLPI_CONTROLLERS_ON_CHG_MSG)
@@ -291,7 +324,13 @@ static void OnStateSourcesChanged(const unsigned int eventId, void* userData, vo
 #endif
 }
 
-static void OnVpxGameEnd(const unsigned int eventId, void* userData, void* msgData) { StopTracker(); }
+static void OnVpxGameEnd(const unsigned int eventId, void* userData, void* msgData)
+{
+   if (shuttingDown)
+      return;
+   std::lock_guard lock(trackerMutex);
+   StopTracker();
+}
 
 }
 
@@ -301,6 +340,7 @@ MSGPI_EXPORT void MSGPIAPI ScoreTrackerPluginLoad(const uint32_t sessionId, cons
 {
    msgApi = api;
    endpointId = sessionId;
+   shuttingDown = false;
 
    LPISetup(endpointId, msgApi);
 
@@ -310,22 +350,18 @@ MSGPI_EXPORT void MSGPIAPI ScoreTrackerPluginLoad(const uint32_t sessionId, cons
    msgApi->RegisterSetting(endpointId, &notificationsProp);
 
    msgApi->BroadcastMsg(endpointId, getVpxApiId = msgApi->GetMsgID(VPXPI_NAMESPACE, VPXPI_MSG_GET_API), &vpxApi);
-   getStateSourcesId = msgApi->GetMsgID(CTLPI_NAMESPACE, CTLPI_STATE_GET_SRC_MSG);
-   msgApi->SubscribeMsg(endpointId,
-      onStateSourcesChangedId = msgApi->GetMsgID(CTLPI_NAMESPACE, CTLPI_STATE_ON_SRC_CHG_MSG),
-      OnStateSourcesChanged, nullptr);
+   stateSources = std::make_unique<StateSourceConsumer>(msgApi, endpointId,
+      CTLPI_STATE_GET_SRC_MSG, CTLPI_STATE_ON_SRC_CHG_MSG, nullptr,
+      OnStateSourcesAboutToChange, OnStateSourcesChanged);
 
 #if defined(CTLPI_CONTROLLERS_ON_CHG_MSG)
-   getControllersId = msgApi->GetMsgID(CTLPI_NAMESPACE, CTLPI_CONTROLLERS_GET_MSG);
+   controllerSources = std::make_unique<ControllerSourceConsumer>(msgApi, endpointId,
+      CTLPI_CONTROLLERS_GET_MSG, CTLPI_CONTROLLERS_ON_CHG_MSG, nullptr, nullptr,
+      OnControllersChanged);
    getPinmameMachineStateId = msgApi->GetMsgID("PinMAME", "GetMachineState");
    msgApi->SubscribeMsg(endpointId,
       onB2SStateChangeId = msgApi->GetMsgID("B2S", "OnStateChange"),
       OnB2SStateChange, nullptr);
-   msgApi->SubscribeMsg(endpointId,
-      onControllersChangedId = msgApi->GetMsgID(CTLPI_NAMESPACE, CTLPI_CONTROLLERS_ON_CHG_MSG),
-      OnControllersChanged, nullptr);
-   // A controller may already be running if ScoreTracker was loaded or enabled after PinMAME.
-   RefreshControllers();
 #else
    msgApi->SubscribeMsg(endpointId, onGameStartId = msgApi->GetMsgID(CTLPI_NAMESPACE, CTLPI_EVT_ON_GAME_START), OnGameStart, nullptr);
    msgApi->SubscribeMsg(endpointId, onGameEndId = msgApi->GetMsgID(CTLPI_NAMESPACE, CTLPI_EVT_ON_GAME_END), OnGameEnd, nullptr);
@@ -334,39 +370,53 @@ MSGPI_EXPORT void MSGPIAPI ScoreTrackerPluginLoad(const uint32_t sessionId, cons
       onPrepareFrameId = msgApi->GetMsgID(VPXPI_NAMESPACE, VPXPI_EVT_ON_PREPARE_FRAME),
       OnPrepareFrame, nullptr);
    msgApi->SubscribeMsg(endpointId, onVpxGameEndId = msgApi->GetMsgID(VPXPI_NAMESPACE, VPXPI_EVT_ON_GAME_END), OnVpxGameEnd, nullptr);
+
+   // State sources must be available before controller discovery starts a tracker.
+   stateSources->Subscribe();
+#if defined(CTLPI_CONTROLLERS_ON_CHG_MSG)
+   controllerSources->Subscribe();
+#endif
 }
 
 MSGPI_EXPORT void MSGPIAPI ScoreTrackerPluginUnload()
 {
-   StopTracker();
-   notificationHidePending = false;
-   notificationOverlay.Hide();
-   msgApi->UnsubscribeMsg(onStateSourcesChangedId, OnStateSourcesChanged, nullptr);
+   shuttingDown = true;
    msgApi->UnsubscribeMsg(onPrepareFrameId, OnPrepareFrame, nullptr);
-
+   msgApi->UnsubscribeMsg(onVpxGameEndId, OnVpxGameEnd, nullptr);
 #if defined(CTLPI_CONTROLLERS_ON_CHG_MSG)
-   msgApi->UnsubscribeMsg(onControllersChangedId, OnControllersChanged, nullptr);
    msgApi->UnsubscribeMsg(onB2SStateChangeId, OnB2SStateChange, nullptr);
 #else
    msgApi->UnsubscribeMsg(onGameStartId, OnGameStart, nullptr);
    msgApi->UnsubscribeMsg(onGameEndId, OnGameEnd, nullptr);
 #endif
-   msgApi->UnsubscribeMsg(onVpxGameEndId, OnVpxGameEnd, nullptr);
+   {
+      std::lock_guard lock(trackerMutex);
+      StopTracker();
+   }
+   notificationHidePending = false;
+   notificationOverlay.Hide();
+
 #if defined(CTLPI_CONTROLLERS_ON_CHG_MSG)
-   msgApi->ReleaseMsgID(onControllersChangedId);
-   msgApi->ReleaseMsgID(getControllersId);
+   controllerSources->Unsubscribe();
+#endif
+   stateSources->Unsubscribe();
+   msgApi->FlushPendingCallbacks(endpointId);
+
+#if defined(CTLPI_CONTROLLERS_ON_CHG_MSG)
+   controllerSources.reset();
+#endif
+   stateSources.reset();
+
+#if defined(CTLPI_CONTROLLERS_ON_CHG_MSG)
    msgApi->ReleaseMsgID(getPinmameMachineStateId);
    msgApi->ReleaseMsgID(onB2SStateChangeId);
 #else
    msgApi->ReleaseMsgID(onGameStartId);
    msgApi->ReleaseMsgID(onGameEndId);
 #endif
-   msgApi->ReleaseMsgID(onStateSourcesChangedId);
-   msgApi->ReleaseMsgID(getStateSourcesId);
    msgApi->ReleaseMsgID(onPrepareFrameId);
    msgApi->ReleaseMsgID(onVpxGameEndId);
    msgApi->ReleaseMsgID(getVpxApiId);
-   msgApi->FlushPendingCallbacks(endpointId);
 
    vpxApi = nullptr;
    msgApi = nullptr;

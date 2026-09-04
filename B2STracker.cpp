@@ -15,14 +15,12 @@ static constexpr uint32_t kB2SPlayerScoresSource = 2;
 
 B2STracker::~B2STracker() { Stop(); }
 
-bool B2STracker::Start(const MsgPluginAPI* msgApi, uint32_t endpointId, uint32_t controllerEndpointId,
-   unsigned int getStateSourcesId, const string& gameId, const string& tablePath,
+bool B2STracker::Start(StateSourceConsumer* stateSources, uint32_t controllerEndpointId,
+   const string& gameId, const string& tablePath,
    const string& outputPath, ScoreSavedCallback scoreSavedCallback, void* scoreSavedUserData)
 {
-   m_msgApi = msgApi;
-   m_endpointId = endpointId;
+   m_stateSources = stateSources;
    m_controllerEndpointId = controllerEndpointId;
-   m_getStateSourcesId = getStateSourcesId;
    m_gameId = gameId;
    m_tablePath = tablePath;
    m_outputPath = outputPath;
@@ -48,56 +46,55 @@ void B2STracker::Stop()
       FinalizeSession(true);
    }
    m_monitoringStarted = false;
+   m_stateSources = nullptr;
    m_stateSource = { };
    m_playerStates.clear();
 }
 
 void B2STracker::RefreshStateSource()
 {
+   InvalidateStateSource();
+   if (!m_monitoringStarted || m_stateSources == nullptr)
+      return;
+
+   m_stateSources->With([this](const vector<StateSrcId>& sources)
+   {
+      for (const StateSrcId& source : sources)
+      {
+         if (source.id.endpointId != m_controllerEndpointId
+            || source.id.resId != kB2SPlayerScoresSource
+            || source.name == nullptr
+            || source.stateDefs == nullptr
+            || std::strcmp(source.name, "Scores (players)") != 0)
+            continue;
+
+         vector<PlayerState> playerStates;
+         for (unsigned int stateIndex = 0; stateIndex < source.nStates; ++stateIndex)
+         {
+            const StateDef& state = source.stateDefs[stateIndex];
+            if (state.mappingId < 1 || state.mappingId > 8 || state.GetState == nullptr)
+               continue;
+            if (state.dataFormat != CTLPI_STATE_FORMAT_INT32
+               && state.dataFormat != CTLPI_STATE_FORMAT_INT64)
+               continue;
+            playerStates.push_back({ stateIndex, state.mappingId, state.dataFormat });
+         }
+         if (playerStates.empty())
+            continue;
+
+         std::sort(playerStates.begin(), playerStates.end(), [](const PlayerState& lhs, const PlayerState& rhs) { return lhs.playerNo < rhs.playerNo; });
+         m_stateSource = source;
+         m_playerStates = std::move(playerStates);
+         LOGI("B2S exposed %u direct player score state(s)", static_cast<unsigned int>(m_playerStates.size()));
+         return;
+      }
+   });
+}
+
+void B2STracker::InvalidateStateSource()
+{
    m_stateSource = { };
    m_playerStates.clear();
-   if (!m_monitoringStarted || m_msgApi == nullptr)
-      return;
-
-   GetStateSrcMsg query { 0, 0, nullptr };
-   m_msgApi->BroadcastMsg(m_endpointId, m_getStateSourcesId, &query);
-   if (query.count == 0)
-      return;
-
-   vector<StateSrcId> sources(query.count);
-   query = { static_cast<unsigned int>(sources.size()), 0, sources.data() };
-   m_msgApi->BroadcastMsg(m_endpointId, m_getStateSourcesId, &query);
-
-   const unsigned int count = std::min(query.count, static_cast<unsigned int>(sources.size()));
-   for (unsigned int sourceIndex = 0; sourceIndex < count; ++sourceIndex)
-   {
-      const StateSrcId& source = sources[sourceIndex];
-      if (source.id.endpointId != m_controllerEndpointId
-         || source.id.resId != kB2SPlayerScoresSource
-         || source.name == nullptr
-         || std::strcmp(source.name, "Scores (players)") != 0)
-         continue;
-
-      vector<PlayerState> playerStates;
-      for (unsigned int stateIndex = 0; stateIndex < source.nStates; ++stateIndex)
-      {
-         const StateDef& state = source.stateDefs[stateIndex];
-         if (state.mappingId < 1 || state.mappingId > 8 || state.GetState == nullptr)
-            continue;
-         if (state.dataFormat != CTLPI_STATE_FORMAT_INT32
-            && state.dataFormat != CTLPI_STATE_FORMAT_INT64)
-            continue;
-         playerStates.push_back({ stateIndex, state.mappingId, state.dataFormat });
-      }
-      if (playerStates.empty())
-         continue;
-
-      std::sort(playerStates.begin(), playerStates.end(), [](const PlayerState& lhs, const PlayerState& rhs) { return lhs.playerNo < rhs.playerNo; });
-      m_stateSource = source;
-      m_playerStates = std::move(playerStates);
-      LOGI("B2S exposed %u direct player score state(s)", static_cast<unsigned int>(m_playerStates.size()));
-      return;
-   }
 }
 
 bool B2STracker::ReadPlayerScores(vector<int64_t>& scores) const
@@ -116,12 +113,12 @@ bool B2STracker::ReadPlayerScores(vector<int64_t>& scores) const
          return false;
       if (player.dataFormat == CTLPI_STATE_FORMAT_INT64)
       {
-         state.GetState(m_stateSource.id, player.inputIndex, &value);
+         state.GetState(state.callContext, &value);
       }
       else
       {
          int32_t value32 = 0;
-         state.GetState(m_stateSource.id, player.inputIndex, &value32);
+         state.GetState(state.callContext, &value32);
          value = value32;
       }
       scores[player.playerNo - 1] = std::max<int64_t>(value, 0);
@@ -178,6 +175,13 @@ void B2STracker::FinalizeSession(bool writeScoresFile)
 }
 
 void B2STracker::Poll()
+{
+   if (!m_monitoringStarted || m_stateSources == nullptr)
+      return;
+   m_stateSources->With([this](const vector<StateSrcId>&) { PollCurrentState(); });
+}
+
+void B2STracker::PollCurrentState()
 {
    if (!m_monitoringStarted)
       return;

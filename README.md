@@ -22,8 +22,9 @@ original table through B2S's `B2SSetScorePlayer` methods.
 - On `OnGameStart` (controller event), the ROM id is looked up in the maps `index.json`. The plugin
   reads only the `game_state` labels and session metadata; PinMAME owns all address resolution,
   memory access, encoding, scaling and decoding.
-- Each poll calls the source's generic `GetState` function for scores, `game_over`, `player_count`
-  and the other mapped numeric game-state values. The Inspector plugin is not a dependency; it is
+- Each poll calls the getter published by each state in PinMAME's `Game States` source for scores,
+  `game_over`, `player_count` and the other mapped numeric values. PinMAME owns decoding details
+  such as masks, enums and boolean inversion. The Inspector plugin is not a dependency; it is
   another consumer of the same API.
 - If no mapped PinMAME controller is available, the plugin looks for a B2S controller and reads
   its generic `Scores (players)` state group. Digit-only B2S score calls are not inferred.

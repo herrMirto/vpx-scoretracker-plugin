@@ -12,6 +12,8 @@
 namespace ScoreTracker
 {
 
+using StateSourceConsumer = PinballPlugin::Controller::CtrlItemConsumer<StateSrcId>;
+
 // Tracks scores explicitly published by table scripts through
 // B2SSetScorePlayer/B2SSetScorePlayerN. B2S exposes those values through the
 // generic Controller state-source API in its "Scores (players)" group.
@@ -23,8 +25,8 @@ public:
    B2STracker() = default;
    ~B2STracker();
 
-   bool Start(const MsgPluginAPI* msgApi, uint32_t endpointId, uint32_t controllerEndpointId,
-      unsigned int getStateSourcesId, const string& gameId, const string& tablePath,
+   bool Start(StateSourceConsumer* stateSources, uint32_t controllerEndpointId,
+      const string& gameId, const string& tablePath,
       const string& outputPath, ScoreSavedCallback scoreSavedCallback = nullptr,
       void* scoreSavedUserData = nullptr);
    void Stop();
@@ -33,6 +35,7 @@ public:
    // State source definitions are owned by their provider and become invalid whenever any
    // provider announces a source change, so reacquire the B2S definition on every such event.
    void RefreshStateSource();
+   void InvalidateStateSource();
 
    // B2S currently exposes its standard game-over helper through the compatibility event stream,
    // while the generic getter for illumination states is broken in current VPX master.
@@ -50,14 +53,13 @@ private:
    };
 
    bool ReadPlayerScores(vector<int64_t>& scores) const;
+   void PollCurrentState();
    void BeginSession(const vector<int64_t>& scores);
    void FinalizeSession(bool writeScoresFile);
    void ResetSession(bool waitForScoreReset);
 
-   const MsgPluginAPI* m_msgApi = nullptr;
-   uint32_t m_endpointId = 0;
+   StateSourceConsumer* m_stateSources = nullptr;
    uint32_t m_controllerEndpointId = 0;
-   unsigned int m_getStateSourcesId = 0;
    StateSrcId m_stateSource { };
    vector<PlayerState> m_playerStates;
 
