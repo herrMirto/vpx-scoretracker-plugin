@@ -1,8 +1,10 @@
 .DS_Store
+tools/
 .claude/
 
 # Local development and planning artifacts
-/tools/
+/tools/*
+!/tools/nvram-profiler/
 /.planning/
 .claude/
 
