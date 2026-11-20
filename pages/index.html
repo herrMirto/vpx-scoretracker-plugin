@@ -53,10 +53,18 @@
           </div>
           <p class="platform-meta" data-platform-status="linux-x64">Checking version…</p>
         </article>
+        <article class="platform-card" aria-labelledby="windows-title">
+          <div class="platform-heading"><h2 id="windows-title">Windows</h2><span>x64 · Unsigned</span></div>
+          <div class="download-actions">
+            <a class="download-link" data-asset-template="scoretracker-plugin-{version}-windows-x64.zip" data-kind="Plugin" href="https://github.com/herrMirto/vpx-scoretracker-plugin/releases/latest">Plugin ZIP</a>
+            <a class="download-link secondary" data-asset-template="scoretracker-viewer-{version}-windows-x64.zip" data-kind="Viewer" href="https://github.com/herrMirto/vpx-scoretracker-plugin/releases/latest">Viewer ZIP</a>
+          </div>
+          <p class="platform-meta" data-platform-status="windows-x64">Checking version…</p>
+        </article>
       </div>
       <noscript><p class="download-fallback">Download links open the latest GitHub release.</p></noscript>
     </section>
-    <section class="install" id="install" aria-labelledby="install-title">
+    <section class="install" id="install" aria-label="Install">
       <div class="install-grid">
         <article class="install-card">
           <h3>Install Plugin</h3>
@@ -68,13 +76,13 @@
           <pre><code>[Plugin.ScoreTracker]
 Enable = 1
 Notifications = 1</code></pre>
-          <dl class="paths"><dt>macOS</dt><dd><code>Your VPX app/Contents/PlugIns/scoretracker/</code></dd><dt>Linux</dt><dd><code>plugins/scoretracker/</code> inside your VPX installation.</dd></dl>
+          <dl class="paths"><dt>macOS</dt><dd><code>Your VPX app/Contents/PlugIns/scoretracker/</code></dd><dt>Linux</dt><dd><code>plugins/scoretracker/</code> inside your VPX installation.</dd><dt>Windows</dt><dd><code>plugins\scoretracker\</code> inside your VPX installation.</dd></dl>
         </article>
         <article class="install-card">
           <h3>Install Viewer</h3>
           <ol>
             <li>Extract the entire Viewer ZIP.</li>
-            <li>On macOS, open <code>ScoreTracker.app</code>. On Linux, open <code>ScoreTracker/scoretracker-viewer</code>.</li>
+            <li>On macOS, open <code>ScoreTracker.app</code>. On Linux, open <code>ScoreTracker/scoretracker-viewer</code>. On Windows, open <code>ScoreTracker\ScoreTracker.exe</code>.</li>
             <li>Choose your tables folder. Select your VPX installation to read the table high scores from NVRAM.</li>
           </ol>
         </article>

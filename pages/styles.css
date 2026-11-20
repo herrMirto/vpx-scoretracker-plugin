@@ -34,7 +34,7 @@ main { width: min(1120px, calc(100% - 64px)); margin-inline: auto; }
 h1, .section-heading h2 { font-size: 32px; letter-spacing: -.035em; line-height: 1.2; font-weight: 650; }
 .intro { margin-top: 10px; color: var(--muted); }
 .download-heading { margin-top: 16px; display: flex; align-items: center; justify-content: space-between; gap: 16px; font-size: 17px; color: var(--muted); }
-.download-options { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-top: 12px; }
+.download-options { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px; margin-top: 12px; }
 .platform-card { min-width: 0; padding: 18px 20px; border: 1px solid var(--line); border-radius: 8px; background: var(--surface); }
 .platform-heading { display: flex; align-items: baseline; flex-wrap: wrap; gap: 6px 14px; }
 .platform-heading h2 { font-size: 24px; font-weight: 650; letter-spacing: -.02em; }
@@ -69,6 +69,7 @@ p code, li code, dd code { padding: 2px 4px; background: #e8e8e8; border-radius:
 figcaption { padding: 12px 17px; font-size: 17px; font-weight: 600; }
 footer { display: flex; justify-content: space-between; gap: 16px; padding: 18px 0 24px; border-top: 1px solid var(--line); color: var(--muted); font-size: 16px; }
 @media(max-width:850px) {
+  .download-options { grid-template-columns: 1fr; }
   .header-inner { flex-wrap: wrap; gap: 12px; }
 }
 @media(max-width:600px) {
