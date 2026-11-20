@@ -60,5 +60,6 @@ separately; neither build changes the VPX installation. Packaging uses
 
 `validate-project.py` is an optional source consistency check, not a build tool.
 CI runs it once on Linux, alongside a separate Bash syntax check. Each platform
-then compiles the plugin, runs capture/storage and Viewer tests, and packages its
-own binaries. Windows uses MSVC x64 and produces unsigned portable ZIPs.
+then compiles the plugin, runs capture/storage and Viewer unit/API tests, and
+packages its own binaries. Window tests run locally, not in CI. Windows uses
+MSVC x64 and produces unsigned portable ZIPs.

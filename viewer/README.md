@@ -35,8 +35,8 @@ The build stays in `build/viewer/`. macOS bundles are ad-hoc signed. Electron Bu
 users need neither Node.js nor other development tools. The plugin is packaged
 separately; see the [plugin instructions](../INSTALL.txt).
 
-CI currently produces packages for macOS arm64 and Linux x64. The Windows
-matrix entry remains commented out while code-signing is unavailable.
+CI produces packages for macOS arm64, Linux x64 and Windows x64. Windows
+packages are currently unsigned.
 
 ## Structure and data
 
@@ -68,10 +68,11 @@ npm --prefix companion run test:desktop
 python3 scripts/validate-project.py
 ```
 
-The desktop smoke test opens a real Electron window using disposable histories
-and settings, saves `build/viewer/desktop-smoke.png`, and closes the application.
-Linux CI runs it with `xvfb-run -a`. To test a packaged application, set
-`SCORETRACKER_APP` to its executable path.
+The desktop smoke test is for local execution only. It opens the packaged app
+using disposable histories and settings, saves diagnostics in
+`build/desktop-smoke/`, and closes the application. Build and package the Viewer
+first, or set `SCORETRACKER_APP` to a packaged executable path. CI runs unit/API
+tests and packaging checks without opening a window.
 
 For a read-only Node.js service after building:
 

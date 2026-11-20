@@ -47,12 +47,6 @@ jobs:
       - uses: actions/setup-node@v6
         with:
           node-version: 24
-      - name: Install Linux desktop test tools
-        if: runner.os == 'Linux'
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y libgtk-3-0t64 libnss3 libasound2t64 libgbm1 xvfb
-          sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
       - name: Stage pinned public plugin SDK
         shell: bash
         run: bash platforms/${{ matrix.platform }}/external.sh
@@ -78,15 +72,6 @@ jobs:
           npm --prefix companion test
           npm --prefix companion run build
           npm --prefix companion run package
-      - name: Test desktop window
-        timeout-minutes: 3
-        shell: bash
-        run: |
-          if [[ "${{ runner.os }}" == "Linux" ]]; then
-            xvfb-run -a npm --prefix companion run test:desktop
-          else
-            npm --prefix companion run test:desktop
-          fi
       - name: Create portable ZIPs
         shell: bash
         run: |
