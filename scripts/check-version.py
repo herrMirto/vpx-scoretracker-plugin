@@ -3,7 +3,6 @@
 import configparser
 import json
 import sys
-import tomllib
 from pathlib import Path
 
 
@@ -11,28 +10,16 @@ ROOT = Path(__file__).resolve().parent.parent
 expected = (ROOT / "VERSION").read_text(encoding="utf-8").strip()
 
 plugin = configparser.ConfigParser()
-plugin.read(ROOT / "plugin.cfg", encoding="utf-8")
-
-with (ROOT / "installer/Cargo.toml").open("rb") as file:
-    installer = tomllib.load(file)
-with (ROOT / "companion/src-tauri/Cargo.toml").open("rb") as file:
-    viewer = tomllib.load(file)
-with (ROOT / "batocera/server/Cargo.toml").open("rb") as file:
-    server = tomllib.load(file)
+plugin.read(ROOT / "src/plugin.cfg", encoding="utf-8")
 
 package = json.loads((ROOT / "companion/package.json").read_text(encoding="utf-8"))
 package_lock = json.loads((ROOT / "companion/package-lock.json").read_text(encoding="utf-8"))
-tauri = json.loads((ROOT / "companion/src-tauri/tauri.conf.json").read_text(encoding="utf-8"))
 
 versions = {
-    "plugin.cfg": plugin["configuration"]["version"].strip("\"'"),
-    "installer/Cargo.toml": installer["package"]["version"],
-    "batocera/server/Cargo.toml": server["package"]["version"],
+    "src/plugin.cfg": plugin["configuration"]["version"].strip("\"'"),
     "companion/package.json": package["version"],
     "companion/package-lock.json": package_lock["version"],
     "companion/package-lock.json root package": package_lock["packages"][""]["version"],
-    "companion/src-tauri/Cargo.toml": viewer["package"]["version"],
-    "companion/src-tauri/tauri.conf.json": tauri["version"],
 }
 
 errors = [

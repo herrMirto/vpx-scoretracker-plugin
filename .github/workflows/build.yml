@@ -1,696 +1,94 @@
-name: Build ScoreTracker VPX Plugin
-
+name: Build portable ScoreTracker packages
 on:
   push:
-    branches: [main, "feat/*"]
-    paths-ignore:
-      # Documentation-only pushes must not rebuild application artifacts.
-      - "**/*.md"
-      - pages/**
-      - .github/workflows/pages.yml
-      # A page-only release still carries synchronized version metadata, but
-      # should deploy Pages without rebuilding every application artifact.
-      - .github/workflows/build.yml
-      - VERSION
-      - plugin.cfg
-      - installer/Cargo.toml
-      - installer/Cargo.lock
-      - companion/package.json
-      - companion/package-lock.json
-      - companion/src-tauri/Cargo.toml
-      - companion/src-tauri/Cargo.lock
-      - companion/src-tauri/tauri.conf.json
+    branches: [main]
+    tags: ['v*']
   pull_request:
-    paths-ignore:
-      - "**/*.md"
-      - pages/**
-      - .github/workflows/pages.yml
-      - .github/workflows/build.yml
-      - VERSION
-      - plugin.cfg
-      - installer/Cargo.toml
-      - installer/Cargo.lock
-      - companion/package.json
-      - companion/package-lock.json
-      - companion/src-tauri/Cargo.toml
-      - companion/src-tauri/Cargo.lock
-      - companion/src-tauri/tauri.conf.json
   workflow_dispatch:
-    inputs:
-      publish_release:
-        description: Build installers and publish the VERSION as a GitHub release
-        required: false
-        type: boolean
-        default: false
-  workflow_call:
-    inputs:
-      publish_release:
-        description: Publish the checked-out VERSION after successful builds
-        required: false
-        type: boolean
-        default: false
-      source_ref:
-        description: Git ref to build instead of the caller commit
-        required: false
-        type: string
-        default: ""
-
-env:
-  VPINBALL_REPO: https://github.com/vpinball/vpinball.git
-  VPINBALL_REF: master
-  PINMAME_REPO: https://github.com/vpinball/pinmame.git
-  NVRAM_MAPS_REPO: https://github.com/herrMirto/pinmame-nvram-maps.git
-  NVRAM_MAPS_SHA: 2d886188712fe434a94910dafeb0cea27d539448
-  # Developer branches build unsigned packages. Expensive platform signing and
-  # notarization are reserved for runs that can actually publish from main.
-  PACKAGE_SIGNING: ${{ github.ref == 'refs/heads/main' && (github.event_name == 'push' || inputs.publish_release) }}
-
+permissions:
+  contents: read
 jobs:
-  resolve-vpx:
-    name: Resolve VPX compatibility revision
-    if: github.event_name != 'pull_request' || github.head_ref != 'codex/batocera-support'
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-    outputs:
-      source_sha: ${{ steps.revisions.outputs.source_sha }}
-      vpx_sha: ${{ steps.revisions.outputs.vpx_sha }}
-      pinmame_sha: ${{ steps.revisions.outputs.pinmame_sha }}
-      version: ${{ steps.package_version.outputs.version }}
-    steps:
-      - uses: actions/checkout@v6
-        with:
-          ref: ${{ inputs.source_ref || github.sha }}
-
-      - name: Verify package versions
-        id: package_version
-        shell: bash
-        run: |
-          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
-            python3 scripts/check-version.py --tag "$GITHUB_REF_NAME"
-          else
-            python3 scripts/check-version.py
-          fi
-          echo "version=$(tr -d '[:space:]' < VERSION)" >> "$GITHUB_OUTPUT"
-
-      - name: Resolve VPX and PinMAME revisions
-        id: revisions
-        shell: bash
-        run: |
-          VPX_SHA=$(git ls-remote "${{ env.VPINBALL_REPO }}" "refs/heads/${{ env.VPINBALL_REF }}" | cut -f1)
-          if [ -z "$VPX_SHA" ]; then
-            echo "error: could not resolve VPX ${{ env.VPINBALL_REF }}" >&2
-            exit 1
-          fi
-          PINMAME_SHA=$(curl --fail --silent --show-error \
-            "https://raw.githubusercontent.com/vpinball/vpinball/$VPX_SHA/platforms/config.sh" \
-            | sed -n 's/^PINMAME_SHA=//p')
-          if [ -z "$PINMAME_SHA" ]; then
-            echo "error: PINMAME_SHA not found for VPX $VPX_SHA" >&2
-            exit 1
-          fi
-          echo "VPX_SHA=$VPX_SHA"
-          echo "PINMAME_SHA=$PINMAME_SHA"
-          echo "source_sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
-          echo "vpx_sha=$VPX_SHA" >> "$GITHUB_OUTPUT"
-          echo "pinmame_sha=$PINMAME_SHA" >> "$GITHUB_OUTPUT"
-
   build:
-    name: Build ${{ matrix.label }}
-    needs: resolve-vpx
-    permissions:
-      contents: read
     strategy:
       fail-fast: false
       matrix:
         include:
-          - label: Windows x64
-            runner: windows-2022
-            platform: windows
-            arch: x64
-            artifact_suffix: windows-x64.exe
-          - label: Linux x64
-            runner: ubuntu-24.04
-            platform: linux
-            arch: x64
-            artifact_suffix: linux-x64
-          - label: Linux ARM64
-            runner: ubuntu-24.04-arm
-            platform: linux
-            arch: arm64
-            artifact_suffix: linux-arm64
-          - label: macOS ARM64
-            runner: macos-15
-            platform: macos
-            arch: arm64
-            artifact_suffix: macos-arm64.dmg
+          - runner: macos-15
+            platform: macos-arm64
+          - runner: ubuntu-24.04
+            platform: linux-x64
+          # Windows packaging is paused while code-signing is unavailable.
+          # - runner: windows-2022
+          #   platform: windows-x64
     runs-on: ${{ matrix.runner }}
-    env:
-      VPINBALL_SHA: ${{ needs.resolve-vpx.outputs.vpx_sha }}
-      PINMAME_SHA: ${{ needs.resolve-vpx.outputs.pinmame_sha }}
-      ARTIFACT_NAME: scoretracker-installer-${{ needs.resolve-vpx.outputs.version }}-${{ matrix.artifact_suffix }}
-
     steps:
       - uses: actions/checkout@v6
-        with:
-          ref: ${{ inputs.source_ref || github.sha }}
-
-      - name: Validate score signing key
-        if: github.event_name != 'pull_request'
-        shell: bash
-        env:
-          SCORETRACKER_SIGNING_SEED_HEX: ${{ secrets.SCORETRACKER_SIGNING_SEED_HEX }}
-        run: |
-          if [[ ! "$SCORETRACKER_SIGNING_SEED_HEX" =~ ^[0-9a-fA-F]{64}$ ]]; then
-            echo "::error::SCORETRACKER_SIGNING_SEED_HEX must be a GitHub Actions secret containing a 32-byte Ed25519 seed as 64 hexadecimal characters."
-            exit 1
-          fi
-          private_der="$RUNNER_TEMP/scoretracker-signing-key.der"
-          printf '%s' "302e020100300506032b657004220420${SCORETRACKER_SIGNING_SEED_HEX}" | xxd -r -p > "$private_der"
-          public_der="$(openssl pkey -in "$private_der" -inform DER -pubout -outform DER | xxd -p -c 1000)"
-          rm -f "$private_der"
-          expected_public_key="73a0a766bcaaeccbbd1692b43d8920ba2b372e29d49d99214118a40fedab799b"
-          if [[ "${public_der: -64}" != "$expected_public_key" ]]; then
-            echo "::error::SCORETRACKER_SIGNING_SEED_HEX does not match the public verification key embedded in ScoreTracker."
-            exit 1
-          fi
-
-      - name: Configure macOS signing credentials
-        if: matrix.platform == 'macos' && env.PACKAGE_SIGNING == 'true'
-        shell: bash
-        env:
-          APPLE_CERTIFICATE_BASE64: ${{ secrets.APPLE_CERTIFICATE_BASE64 }}
-          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
-          APPLE_API_KEY_BASE64: ${{ secrets.APPLE_API_KEY_BASE64 }}
-          SIGNING_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
-          SIGNING_API_ISSUER_ID: ${{ secrets.APPLE_API_ISSUER_ID }}
-          SIGNING_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
-        run: |
-          set -euo pipefail
-
-          for variable in \
-            APPLE_CERTIFICATE_BASE64 \
-            APPLE_CERTIFICATE_PASSWORD \
-            APPLE_API_KEY_BASE64 \
-            SIGNING_API_KEY_ID \
-            SIGNING_API_ISSUER_ID \
-            SIGNING_TEAM_ID; do
-            if [ -z "${!variable:-}" ]; then
-              echo "::error::Required GitHub Actions secret $variable is missing."
-              exit 1
-            fi
-          done
-
-          certificate_path="$RUNNER_TEMP/apple-developer-id.p12"
-          api_key_path="$RUNNER_TEMP/AuthKey_${SIGNING_API_KEY_ID}.p8"
-          keychain_path="$RUNNER_TEMP/scoretracker-signing.keychain-db"
-          keychain_password="$(openssl rand -base64 32)"
-
-          echo "APPLE_KEYCHAIN_PATH=$keychain_path" >> "$GITHUB_ENV"
-          echo "APPLE_API_KEY_PATH=$api_key_path" >> "$GITHUB_ENV"
-          echo "APPLE_API_KEY_ID=$SIGNING_API_KEY_ID" >> "$GITHUB_ENV"
-          echo "APPLE_API_ISSUER_ID=$SIGNING_API_ISSUER_ID" >> "$GITHUB_ENV"
-          echo "APPLE_TEAM_ID=$SIGNING_TEAM_ID" >> "$GITHUB_ENV"
-
-          printf '%s' "$APPLE_CERTIFICATE_BASE64" | /usr/bin/base64 -D > "$certificate_path"
-          printf '%s' "$APPLE_API_KEY_BASE64" | /usr/bin/base64 -D > "$api_key_path"
-          chmod 600 "$certificate_path" "$api_key_path"
-
-          security create-keychain -p "$keychain_password" "$keychain_path"
-          security set-keychain-settings -lut 21600 "$keychain_path"
-          security unlock-keychain -p "$keychain_password" "$keychain_path"
-          security import "$certificate_path" \
-            -k "$keychain_path" \
-            -P "$APPLE_CERTIFICATE_PASSWORD" \
-            -T /usr/bin/codesign \
-            -T /usr/bin/security
-          security set-key-partition-list \
-            -S apple-tool:,apple:,codesign: \
-            -s \
-            -k "$keychain_password" \
-            "$keychain_path"
-          security list-keychains -d user -s "$keychain_path"
-
-          signing_identity="$(
-            security find-identity -v -p codesigning "$keychain_path" \
-              | sed -n 's/.*"\(Developer ID Application:.*\)"/\1/p' \
-              | head -n 1
-          )"
-          if [ -z "$signing_identity" ]; then
-            echo "::error::The imported certificate does not contain a Developer ID Application identity."
-            exit 1
-          fi
-
-          echo "APPLE_SIGNING_IDENTITY=$signing_identity" >> "$GITHUB_ENV"
-
-          echo "Configured signing identity: $signing_identity"
-
-      - name: Set up Python for map validation
-        if: matrix.platform != 'windows'
-        uses: actions/setup-python@v6
-        with:
-          python-version: "3.x"
-
-      - name: Fetch pinned NVRAM maps
-        shell: bash
-        run: |
-          git clone --filter=blob:none --no-checkout "${{ env.NVRAM_MAPS_REPO }}" nvram-maps-src
-          git -C nvram-maps-src config core.autocrlf false
-          git -C nvram-maps-src fetch --depth 1 origin "${{ env.NVRAM_MAPS_SHA }}"
-          git -C nvram-maps-src checkout --detach "${{ env.NVRAM_MAPS_SHA }}"
-          test -f nvram-maps-src/index.json
-          test -d nvram-maps-src/maps
-          test -d nvram-maps-src/platforms
-          test -f nvram-maps-src/LICENSE
-
-      - name: Validate pinned NVRAM maps
-        if: matrix.platform != 'windows'
-        shell: bash
-        run: |
-          cd nvram-maps-src
-          python tools/update-index.py
-          git diff --ignore-space-at-eol --exit-code -- index.json
-          git checkout -- index.json
-
-      - name: Clone VPX
-        shell: bash
-        run: |
-          git clone --filter=blob:none --no-checkout "${{ env.VPINBALL_REPO }}" vpinball-src
-          git -C vpinball-src fetch --depth 1 origin "$VPINBALL_SHA"
-          git -C vpinball-src checkout --detach "$VPINBALL_SHA"
-
-      - name: Build PinMAME (Windows)
-        if: matrix.platform == 'windows'
-        shell: pwsh
-        run: |
-          $ErrorActionPreference = 'Stop'
-          $PSNativeCommandUseErrorActionPreference = $true
-          git clone --filter=blob:none --no-checkout "${{ env.PINMAME_REPO }}" pinmame-src
-          git -C pinmame-src fetch --depth 1 origin "$env:PINMAME_SHA"
-          git -C pinmame-src checkout --detach "$env:PINMAME_SHA"
-          Copy-Item pinmame-src/cmake/libpinmame/CMakeLists.txt pinmame-src/CMakeLists.txt
-          cmake -S pinmame-src -B pinmame-src/build -G "Visual Studio 17 2022" -A x64 -DPLATFORM=win -DARCH=x64 -DBUILD_SHARED=ON -DBUILD_STATIC=OFF
-          cmake --build pinmame-src/build --config Release
-          $thirdPartyRoot = 'vpinball-src/third-party'
-          New-Item -ItemType Directory -Force -Path "$thirdPartyRoot/include/pinmame", "$thirdPartyRoot/build-libs/windows-x64", "$thirdPartyRoot/runtime-libs/windows-x64"
-          Copy-Item pinmame-src/src/libpinmame/libpinmame.h, pinmame-src/src/libpinmame/PinMAMEPlugin.h vpinball-src/third-party/include/pinmame/
-          Copy-Item pinmame-src/build/Release/pinmame64.lib vpinball-src/third-party/build-libs/windows-x64/
-          Copy-Item pinmame-src/build/Release/pinmame64.dll vpinball-src/third-party/runtime-libs/windows-x64/
-
-      - name: Build PinMAME (Unix)
-        if: matrix.platform != 'windows'
-        shell: bash
-        run: |
-          git clone --filter=blob:none --no-checkout "${{ env.PINMAME_REPO }}" pinmame-src
-          git -C pinmame-src fetch --depth 1 origin "$PINMAME_SHA"
-          git -C pinmame-src checkout --detach "$PINMAME_SHA"
-          cp pinmame-src/cmake/libpinmame/CMakeLists.txt pinmame-src/CMakeLists.txt
-          cmake -S pinmame-src -B pinmame-src/build \
-            -DPLATFORM="${{ matrix.platform }}" \
-            -DARCH="${{ matrix.arch }}" \
-            -DBUILD_STATIC=OFF \
-            -DCMAKE_BUILD_TYPE=Release
-          cmake --build pinmame-src/build
-          mkdir -p vpinball-src/third-party/include/pinmame "vpinball-src/third-party/runtime-libs/${{ matrix.platform }}-${{ matrix.arch }}"
-          cp pinmame-src/src/libpinmame/libpinmame.h pinmame-src/src/libpinmame/PinMAMEPlugin.h vpinball-src/third-party/include/pinmame/
-          if [ "${{ matrix.platform }}" = macos ]; then
-            cp pinmame-src/build/libpinmame.dylib "vpinball-src/third-party/runtime-libs/${{ matrix.platform }}-${{ matrix.arch }}/"
-          else
-            cp pinmame-src/build/libpinmame.so "vpinball-src/third-party/runtime-libs/${{ matrix.platform }}-${{ matrix.arch }}/"
-          fi
-
-      - name: Add ScoreTracker to the VPX source tree
-        shell: bash
-        run: |
-          mkdir -p vpinball-src/plugins/scoretracker
-          cp ScoreTrackerPlugin.cpp NotificationOverlay.cpp NotificationOverlay.h B2STracker.cpp B2STracker.h PinMameStateTracker.cpp PinMameStateTracker.h ScoresFileWriter.cpp ScoresFileWriter.h ScoreSignature.cpp ScoreSignature.h ScoreSigningConfig.h.in common.cpp common.h plugin.cfg vpinball-src/plugins/scoretracker/
-          cp CMakeLists_plugin_ScoreTracker.txt vpinball-src/make/
-          cat > vpinball-src/CMakeLists.txt <<'EOF'
-          cmake_minimum_required(VERSION 3.19)
-          project(scoretracker-plugin)
-          set(CMAKE_CXX_STANDARD 20)
-          set(CMAKE_CXX_STANDARD_REQUIRED ON)
-          set(BUILD_SHARED ON)
-          set(PLATFORM "${{ matrix.platform }}")
-          set(ARCH "${{ matrix.arch }}")
-          set(PLUGINS_DIR "${CMAKE_BINARY_DIR}/plugins_output")
-          set(SCORETRACKER_FETCH_MAPS OFF CACHE BOOL "" FORCE)
-          include("${CMAKE_SOURCE_DIR}/make/CMakeLists_plugin_ScoreTracker.txt")
-          EOF
-
-      - name: Build plugin (Windows)
-        if: matrix.platform == 'windows'
-        shell: pwsh
-        env:
-          SCORETRACKER_SIGNING_SEED_HEX: ${{ secrets.SCORETRACKER_SIGNING_SEED_HEX }}
-        run: |
-          $ErrorActionPreference = 'Stop'
-          $PSNativeCommandUseErrorActionPreference = $true
-          cmake -S vpinball-src -B vpinball-src/build -G "Visual Studio 17 2022" -A x64
-          cmake --build vpinball-src/build --target ScoreTrackerPlugin --config Release
-
-      - name: Build plugin (Unix)
-        if: matrix.platform != 'windows'
-        shell: bash
-        env:
-          SCORETRACKER_SIGNING_SEED_HEX: ${{ secrets.SCORETRACKER_SIGNING_SEED_HEX }}
-        run: |
-          cmake -S vpinball-src -B vpinball-src/build -DCMAKE_BUILD_TYPE=Release
-          cmake --build vpinball-src/build --target ScoreTrackerPlugin --config Release
-
-      - name: Set up Rust
-        uses: dtolnay/rust-toolchain@stable
-
-      - name: Install installer UI build dependencies (Linux)
-        if: matrix.platform == 'linux'
-        shell: bash
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y libxcb-render0-dev libxcb-shape0-dev libxcb-xfixes0-dev libxkbcommon-dev libwayland-dev
-
-      - name: Test installer
-        shell: bash
-        run: cargo test --manifest-path installer/Cargo.toml
-
-      - name: Set up Node for the companion app
-        uses: actions/setup-node@v6
+      - uses: actions/setup-node@v6
         with:
           node-version: 24
-
-      - name: Install companion build dependencies (Linux)
-        if: matrix.platform == 'linux'
+      - name: Install Linux desktop test tools
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libgtk-3-0t64 libnss3 libasound2t64 libgbm1 xvfb
+          sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+      - name: Validate project
         shell: bash
-        run: sudo apt-get install -y libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev patchelf libxdo-dev
-
-      - name: Build companion app (VPX Scoretracker Viewer)
+        run: python3 scripts/validate-project.py
+      - name: Stage pinned public plugin SDK
+        shell: bash
+        run: bash platforms/${{ matrix.platform }}/external.sh
+      - name: Build standalone plugin
         shell: bash
         run: |
-          cd companion
-          npm ci
-          npm test
-          if [ "${{ matrix.platform }}" = windows ]; then
-            npm run tauri build -- --no-bundle
-          elif [ "${{ matrix.platform }}" = macos ]; then
-            npm run tauri build -- --bundles app
+          cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+          cmake --build build --config Release --parallel
+      - name: Ad-hoc sign local macOS module
+        if: runner.os == 'macOS'
+        run: codesign --force --sign - build/scoretracker/plugin-scoretracker.dylib
+      - name: Test completed-game contract
+        if: runner.os != 'Windows'
+        shell: bash
+        run: ctest --test-dir build -C Release --output-on-failure
+      - name: Build and test Viewer
+        shell: bash
+        run: |
+          npm --prefix companion ci
+          npm --prefix companion test
+          npm --prefix companion run build
+          npm --prefix companion run package
+      - name: Test desktop window
+        shell: bash
+        run: |
+          if [[ "${{ runner.os }}" == "Linux" ]]; then
+            xvfb-run -a npm --prefix companion run test:desktop
           else
-            # The outer ScoreTracker installer is already the single-file
-            # package. Embed the raw Tauri binary so it uses the target
-            # system's matching GLib/WebKitGTK stack at runtime.
-            npm run tauri build -- --no-bundle
+            npm --prefix companion run test:desktop
           fi
-
-      - name: Stage embedded installer payload
+      - name: Create portable ZIPs
         shell: bash
         run: |
-          mkdir -p installer-payload/scoretracker/maps
-          cp -R vpinball-src/build/plugins_output/scoretracker/. installer-payload/scoretracker/
-          cp nvram-maps-src/index.json nvram-maps-src/LICENSE installer-payload/scoretracker/maps/
-          cp -R nvram-maps-src/maps nvram-maps-src/platforms installer-payload/scoretracker/maps/
-          printf '{\n  "repository": "%s",\n  "commit": "%s"\n}\n' \
-            "${{ env.NVRAM_MAPS_REPO }}" "${{ env.NVRAM_MAPS_SHA }}" \
-            > installer-payload/scoretracker/maps/source.json
-          if [ "${{ matrix.platform }}" = windows ]; then
-            cp companion/src-tauri/target/release/vpx-scoretracker-viewer.exe installer-payload/
-          elif [ "${{ matrix.platform }}" = macos ]; then
-            cp -R "companion/src-tauri/target/release/bundle/macos/VPX Scoretracker Viewer.app" installer-payload/
-          else
-            cp companion/src-tauri/target/release/vpx-scoretracker-viewer installer-payload/
-            cp companion/src-tauri/icons/icon.png installer-payload/vpx-scoretracker-viewer.png
-          fi
-
-      # Windows code signing via SSL.com eSigner (cloud OV cert). Sign the
-      # embedded companion here, before the installer packs it in, so the
-      # extracted viewer.exe keeps a valid Authenticode signature. The outer
-      # installer .exe is signed after packaging below. The eSigner action
-      # derives the OTP from ES_TOTP_SECRET, so signing runs fully headless.
-      - name: Sign embedded Windows companion
-        if: matrix.platform == 'windows' && env.PACKAGE_SIGNING == 'true'
-        uses: sslcom/esigner-codesign@v1.3.2
+          python3 scripts/package-plugin.py --platform ${{ matrix.platform }}
+          python3 scripts/package-viewer.py --platform ${{ matrix.platform }}
+      - uses: actions/upload-artifact@v7
         with:
-          command: sign
-          username: ${{ secrets.ES_USERNAME }}
-          password: ${{ secrets.ES_PASSWORD }}
-          credential_id: ${{ secrets.ES_CREDENTIAL_ID }}
-          totp_secret: ${{ secrets.ES_TOTP_SECRET }}
-          file_path: ${{ github.workspace }}\installer-payload\vpx-scoretracker-viewer.exe
-          override: true
-          malware_block: false
-          environment_name: PROD
-
-      - name: Sign and notarize embedded macOS payload
-        if: matrix.platform == 'macos' && env.PACKAGE_SIGNING == 'true'
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          while IFS= read -r -d '' candidate; do
-            case "$candidate" in
-              *'.app/'*) continue ;;
-            esac
-            if file "$candidate" | grep -q 'Mach-O'; then
-              codesign \
-                --force \
-                --options runtime \
-                --timestamp \
-                --sign "$APPLE_SIGNING_IDENTITY" \
-                "$candidate"
-              codesign --verify --strict --verbose=2 "$candidate"
-            fi
-          done < <(find installer-payload -type f -print0)
-
-          viewer_app="installer-payload/VPX Scoretracker Viewer.app"
-          codesign --verify --deep --strict --verbose=2 "$viewer_app"
-          codesign --display --verbose=2 "$viewer_app"
-
-          payload_archive="$RUNNER_TEMP/scoretracker-installer-payload.zip"
-          /usr/bin/ditto -c -k --keepParent installer-payload "$payload_archive"
-          bash .github/scripts/notarize-macos.sh "$payload_archive" embedded-payload
-
-          xcrun stapler staple "$viewer_app"
-          xcrun stapler validate "$viewer_app"
-
-      - name: Compile self-contained installer
-        shell: bash
-        run: SCORETRACKER_PAYLOAD_DIR="$PWD/installer-payload" cargo build --release --manifest-path installer/Cargo.toml
-
-      - name: Package single-file installer
-        shell: bash
-        run: |
-          mkdir -p dist
-          if [ "${{ matrix.platform }}" = windows ]; then
-            cp installer/target/release/scoretracker-installer.exe "dist/$ARTIFACT_NAME"
-          elif [ "${{ matrix.platform }}" = macos ]; then
-            APP="dmg-root/ScoreTracker Installer.app"
-            DMG="dist/$ARTIFACT_NAME"
-            mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
-            cp installer/target/release/scoretracker-installer "$APP/Contents/MacOS/"
-            cp installer/macos/Info.plist "$APP/Contents/"
-            cp companion/src-tauri/icons/icon.icns "$APP/Contents/Resources/"
-            chmod +x "$APP/Contents/MacOS/scoretracker-installer"
-
-            if [ "$PACKAGE_SIGNING" != true ]; then
-              codesign --force --deep --sign - "$APP"
-            else
-              codesign \
-                --force \
-                --options runtime \
-                --timestamp \
-                --sign "$APPLE_SIGNING_IDENTITY" \
-                "$APP/Contents/MacOS/scoretracker-installer"
-              codesign \
-                --force \
-                --options runtime \
-                --timestamp \
-                --sign "$APPLE_SIGNING_IDENTITY" \
-                "$APP"
-              codesign --verify --deep --strict --verbose=2 "$APP"
-              codesign --display --verbose=2 "$APP"
-            fi
-
-            hdiutil create \
-              -volname "ScoreTracker Installer" \
-              -srcfolder dmg-root \
-              -ov \
-              -format UDZO \
-              "$DMG"
-            hdiutil verify "$DMG"
-
-            if [ "$PACKAGE_SIGNING" = true ]; then
-              codesign \
-                --force \
-                --timestamp \
-                --sign "$APPLE_SIGNING_IDENTITY" \
-                "$DMG"
-              codesign --verify --strict --verbose=2 "$DMG"
-              bash .github/scripts/notarize-macos.sh "$DMG" installer-dmg
-              xcrun stapler staple "$DMG"
-              xcrun stapler validate "$DMG"
-              spctl --assess \
-                --type open \
-                --context context:primary-signature \
-                --verbose=4 \
-                "$DMG"
-            fi
-          else
-            cp installer/target/release/scoretracker-installer "dist/$ARTIFACT_NAME"
-            chmod +x "dist/$ARTIFACT_NAME"
-          fi
-
-      - name: Sign Windows installer
-        if: matrix.platform == 'windows' && env.PACKAGE_SIGNING == 'true'
-        uses: sslcom/esigner-codesign@v1.3.2
-        with:
-          command: sign
-          username: ${{ secrets.ES_USERNAME }}
-          password: ${{ secrets.ES_PASSWORD }}
-          credential_id: ${{ secrets.ES_CREDENTIAL_ID }}
-          totp_secret: ${{ secrets.ES_TOTP_SECRET }}
-          file_path: ${{ github.workspace }}\dist\${{ env.ARTIFACT_NAME }}
-          override: true
-          malware_block: false
-          environment_name: PROD
-
-      - name: Verify Windows signature
-        if: matrix.platform == 'windows' && env.PACKAGE_SIGNING == 'true'
-        shell: pwsh
-        run: |
-          $ErrorActionPreference = 'Stop'
-          $sig = Get-AuthenticodeSignature "dist/${{ env.ARTIFACT_NAME }}"
-          Write-Host "dist/${{ env.ARTIFACT_NAME }} -> $($sig.Status)"
-          Write-Host "Signer: $($sig.SignerCertificate.Subject)"
-          if ($sig.Status -ne 'Valid') {
-            throw "Authenticode signature is not valid: $($sig.Status)"
-          }
-
-      - name: Upload installer
-        if: github.event_name != 'schedule' || inputs.publish_release
-        uses: actions/upload-artifact@v7
-        with:
-          name: ${{ env.ARTIFACT_NAME }}
-          path: dist/${{ env.ARTIFACT_NAME }}
-          archive: false
-
-      - name: Remove macOS signing credentials
-        if: always() && matrix.platform == 'macos' && env.PACKAGE_SIGNING == 'true'
-        shell: bash
-        run: |
-          if [ -n "${APPLE_KEYCHAIN_PATH:-}" ]; then
-            security delete-keychain "$APPLE_KEYCHAIN_PATH" || true
-          fi
-          rm -f \
-            "${RUNNER_TEMP}/apple-developer-id.p12" \
-            "${APPLE_API_KEY_PATH:-}" \
-            "${RUNNER_TEMP}/embedded-payload-notary-submission.json" \
-            "${RUNNER_TEMP}/embedded-payload-notary-log.json" \
-            "${RUNNER_TEMP}/installer-dmg-notary-submission.json" \
-            "${RUNNER_TEMP}/installer-dmg-notary-log.json" \
-            "${RUNNER_TEMP}/scoretracker-installer-payload.zip"
-
-  batocera:
-    name: Build Batocera installer
-    needs: resolve-vpx
-    if: github.event_name != 'pull_request'
-    uses: ./.github/workflows/batocera.yml
-    with:
-      source_ref: ${{ needs.resolve-vpx.outputs.source_sha }}
-      vpx_sha: ${{ needs.resolve-vpx.outputs.vpx_sha }}
-      pinmame_sha: ${{ needs.resolve-vpx.outputs.pinmame_sha }}
-    secrets: inherit
-
+          name: scoretracker-${{ matrix.platform }}
+          path: dist/*
   release:
-    name: Publish GitHub release
-    needs: [resolve-vpx, build, batocera]
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [build]
     runs-on: ubuntu-latest
-    if: >-
-      github.ref == 'refs/heads/main' &&
-      (github.event_name == 'push' || inputs.publish_release)
     permissions:
       contents: write
     steps:
       - uses: actions/checkout@v6
+      - run: python3 scripts/check-version.py --tag "$GITHUB_REF_NAME"
+      - uses: actions/download-artifact@v8
         with:
-          ref: ${{ inputs.source_ref || github.sha }}
-
-      - name: Resolve release version
-        id: release_version
-        shell: bash
-        run: |
-          version="$(tr -d '[:space:]' < VERSION)"
-          python3 scripts/check-version.py
-          echo "version=$version" >> "$GITHUB_OUTPUT"
-          echo "tag=v$version" >> "$GITHUB_OUTPUT"
-
-      - name: Require a new release version
-        env:
-          RELEASE_TAG: ${{ steps.release_version.outputs.tag }}
-        shell: bash
-        run: |
-          if git ls-remote --exit-code --tags origin "refs/tags/$RELEASE_TAG" >/dev/null 2>&1; then
-            echo "::error::Release tag $RELEASE_TAG already exists. Bump VERSION before pushing to main."
-            exit 1
-          fi
-
-      - name: Download installers
-        uses: actions/download-artifact@v8
-        with:
-          pattern: scoretracker-installer-*
+          pattern: scoretracker-*
           path: dist
           merge-multiple: true
-
-      - name: Download Batocera installer
-        uses: actions/download-artifact@v8
+      - uses: softprops/action-gh-release@v2
         with:
-          pattern: scoretracker-batocera-*
-          path: dist
-          merge-multiple: true
-
-      - name: Generate update compatibility manifest
-        env:
-          SCORETRACKER_VERSION: ${{ steps.release_version.outputs.version }}
-          VPX_SHA: ${{ needs.resolve-vpx.outputs.vpx_sha }}
-          PINMAME_SHA: ${{ needs.resolve-vpx.outputs.pinmame_sha }}
-        shell: bash
-        run: |
-          python3 - <<'PY'
-          import hashlib
-          import json
-          import os
-          from pathlib import Path
-
-          assets = []
-          for path in sorted(Path("dist").glob("scoretracker-installer-*")):
-              assets.append({
-                  "name": path.name,
-                  "size": path.stat().st_size,
-                  "sha256": hashlib.sha256(path.read_bytes()).hexdigest(),
-              })
-
-          manifest = {
-              "schemaVersion": 1,
-              "version": os.environ["SCORETRACKER_VERSION"].removeprefix("v"),
-              "channel": "stable",
-              "repository": "herrMirto/vpx-scoretracker-plugin",
-              "compatibility": {
-                  "vpxRef": "master",
-                  "vpxCommit": os.environ["VPX_SHA"],
-                  "pinmameCommit": os.environ["PINMAME_SHA"],
-              },
-              "assets": assets,
-          }
-          Path("dist/update-manifest.json").write_text(
-              json.dumps(manifest, indent=2) + "\n",
-              encoding="utf-8",
-          )
-          PY
-
-      - name: Create GitHub release
-        uses: softprops/action-gh-release@v3
-        with:
-          tag_name: ${{ steps.release_version.outputs.tag }}
-          target_commitish: ${{ needs.resolve-vpx.outputs.source_sha }}
-          name: ScoreTracker ${{ steps.release_version.outputs.tag }}
+          files: dist/*
           generate_release_notes: true
-          files: |
-            dist/scoretracker-installer-*
-            dist/scoretracker-batocera-*
-            dist/update-manifest.json

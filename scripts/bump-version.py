@@ -36,28 +36,8 @@ def main() -> None:
 
     replace_pattern("VERSION", rf"^{re.escape(current)}$", next_version)
     replace_pattern(
-        "plugin.cfg",
+        "src/plugin.cfg",
         rf'(^version = "){re.escape(current)}("$)',
-        rf"\g<1>{next_version}\g<2>",
-    )
-    replace_pattern(
-        "installer/Cargo.toml",
-        rf'(name = "scoretracker-installer"\nversion = "){re.escape(current)}(")',
-        rf"\g<1>{next_version}\g<2>",
-    )
-    replace_pattern(
-        "installer/Cargo.lock",
-        rf'(name = "scoretracker-installer"\nversion = "){re.escape(current)}(")',
-        rf"\g<1>{next_version}\g<2>",
-    )
-    replace_pattern(
-        "batocera/server/Cargo.toml",
-        rf'(name = "scoretracker-server"\nversion = "){re.escape(current)}(")',
-        rf"\g<1>{next_version}\g<2>",
-    )
-    replace_pattern(
-        "batocera/server/Cargo.lock",
-        rf'(name = "scoretracker-server"\nversion = "){re.escape(current)}(")',
         rf"\g<1>{next_version}\g<2>",
     )
     replace_pattern(
@@ -71,22 +51,6 @@ def main() -> None:
         rf"\g<1>{next_version}\g<2>",
         expected=2,
     )
-    replace_pattern(
-        "companion/src-tauri/Cargo.toml",
-        rf'(name = "vpx-scoretracker-viewer"\nversion = "){re.escape(current)}(")',
-        rf"\g<1>{next_version}\g<2>",
-    )
-    replace_pattern(
-        "companion/src-tauri/Cargo.lock",
-        rf'(name = "vpx-scoretracker-viewer"\nversion = "){re.escape(current)}(")',
-        rf"\g<1>{next_version}\g<2>",
-    )
-    replace_pattern(
-        "companion/src-tauri/tauri.conf.json",
-        rf'("productName": "VPX Scoretracker Viewer",\n  "version": "){re.escape(current)}(")',
-        rf"\g<1>{next_version}\g<2>",
-    )
-
     subprocess.run(["python3", str(ROOT / "scripts/check-version.py")], check=True)
     print(f"Bumped ScoreTracker {current} -> {next_version}")
 

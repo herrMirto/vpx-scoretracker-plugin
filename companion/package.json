@@ -1,24 +1,71 @@
 {
   "name": "vpx-scoretracker-viewer",
   "private": true,
-  "version": "0.1.21",
+  "version": "0.1.23",
   "type": "module",
   "scripts": {
-    "dev": "vite",
-    "build": "tsc && vite build",
-    "build:web": "tsc && VITE_SCORETRACKER_WEB=true vite build",
+    "dev": "node scripts/dev.mjs",
+    "build": "npm run check && vite build && node scripts/inline.mjs && npm run build:desktop",
     "test": "node --test tests/*.test.ts",
+    "check": "tsc --noEmit && tsc -p tsconfig.desktop.json --noEmit",
     "preview": "vite preview",
-    "check": "tsc --noEmit",
-    "tauri": "tauri"
-  },
-  "dependencies": {
-    "@tauri-apps/api": "^2",
-    "@tauri-apps/plugin-dialog": "^2"
+    "start": "electron .",
+    "build:desktop": "tsc -p tsconfig.desktop.json",
+    "test:integration": "node --test tests/api.test.ts",
+    "package": "electron-builder --dir --publish never",
+    "test:maps": "node --test tests/upstream-maps.test.ts",
+    "test:desktop": "node tests/desktop-smoke.mjs"
   },
   "devDependencies": {
-    "@tauri-apps/cli": "^2",
+    "@types/node": "24.19.2",
+    "electron": "45.4.1",
+    "electron-builder": "26.18.0",
+    "playwright-core": "1.65.1",
     "typescript": "^5.8",
     "vite": "^7"
+  },
+  "dependencies": {
+    "koffi": "3.3.8"
+  },
+  "main": "desktop-dist/desktop/main.js",
+  "description": "Desktop viewer for VPX ScoreTracker histories",
+  "author": "ScoreTracker contributors",
+  "license": "MIT",
+  "engines": {
+    "node": ">=24"
+  },
+  "build": {
+    "appId": "com.herrmirto.scoretracker.viewer",
+    "productName": "ScoreTracker",
+    "directories": {
+      "output": "../build/viewer",
+      "buildResources": "../viewer/icons"
+    },
+    "files": [
+      "dist/**/*",
+      "desktop-dist/**/*",
+      "package.json"
+    ],
+    "asarUnpack": [
+      "node_modules/koffi/**/*"
+    ],
+    "npmRebuild": false,
+    "mac": {
+      "category": "public.app-category.utilities",
+      "icon": "../viewer/icons/icon.icns",
+      "identity": "-"
+    },
+    "linux": {
+      "executableName": "scoretracker-viewer",
+      "category": "Utility",
+      "icon": "../viewer/icons/icon.png"
+    },
+    "win": {
+      "executableName": "ScoreTracker",
+      "signAndEditExecutable": false
+    }
+  },
+  "overrides": {
+    "minimatch@>=7 <11.0.1": "11.0.1"
   }
 }

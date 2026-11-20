@@ -1,0 +1,23 @@
+{
+  "schema_version": 1,
+  "games": [
+    {
+      "id": "6615beb25dc34fea8c67e786b03ac740",
+      "table": "Original Table.vpx",
+      "started_at": "2026-11-17T19:37:00.000Z",
+      "ended_at": "2026-11-17T19:42:10.125Z",
+      "duration_ms": 310125,
+      "source": "table_script",
+      "scores": [
+        {
+          "player": 1,
+          "score": 12345678
+        },
+        {
+          "player": 2,
+          "score": 0
+        }
+      ]
+    }
+  ]
+}

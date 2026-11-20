@@ -1,165 +1,58 @@
-# VPX ScoreTracker Plugin
+# VPX ScoreTracker
 
-A third-party [Visual Pinball](https://github.com/vpinball/vpinball) plugin that records played
-scores to a `scores.json` file. It is developed and distributed
-independently of the vpinball project. The installer places the plugin in the correct VPX location;
-no vpinball source changes are required.
+A standalone VPX plugin that writes completed games to readable `scores.json`,
+plus a small desktop Viewer for those files. The plugin runs independently of
+the Viewer. No PinMAME patch, separate PinMAME build, ROM path, signing key or
+upload service is required.
 
-While a game runs, PinMAME decodes its internal machine memory using a
-[PinMAME memory map](https://github.com/herrMirto/pinmame-nvram-maps). The plugin reads those
-decoded values through VPX's generic Controller state API. When the game is over (after the
-“Match” screen), the per-player scores, game duration and selected `game_state` values are appended
-to `scores.json`.
+## Plugin
 
-For PinMAME tables, the plugin requires a ROM map with a `game_state` block. When no supported
-PinMAME map is active, it can instead record direct per-player scores published by an EM or
-original table through B2S's `B2SSetScorePlayer` methods.
-
-## How it works
-
-- The plugin registers through VPX's public plugin API (`MsgPlugin`/`ControllerPlugin`/`VPXPlugin`
-  headers) and discovers the PinMAME `Game States` source through `GetStateSrc`.
-- On `OnGameStart` (controller event), the ROM id is looked up in the maps `index.json`. The plugin
-  reads only the `game_state` labels and session metadata; PinMAME owns all address resolution,
-  memory access, encoding, scaling and decoding.
-- Each poll calls the getter published by each state in PinMAME's `Game States` source for scores,
-  `game_over`, `player_count` and the other mapped numeric values. PinMAME owns decoding details
-  such as masks, enums and boolean inversion. The Inspector plugin is not a dependency; it is
-  another consumer of the same API.
-- If no mapped PinMAME controller is available, the plugin looks for a B2S controller and reads
-  its generic `Scores (players)` state group. Digit-only B2S score calls are not inferred.
-- The confirmed game is appended to `scores.json` with an atomic write (temporary file + rename).
-  An unreadable existing file is moved aside (`scores.json.broken.<timestamp>`), never deleted.
-- Official release builds add an Ed25519 signature to each new game. The Viewer verifies the score
-  fields locally and marks valid records as `signed`; older and locally built records remain usable
-  without the label.
-
-## Settings (`[Plugin.ScoreTracker]` in VPinballX.ini)
-
-| Setting | Default | Description |
-|---|---|---|
-| `Enable` | `1` | Enable the plugin. |
-| `Notifications` | `1` | Show the “Score saved” pop-up over the playfield. Set to `0` to disable it. |
-
-For example, keep score tracking enabled while hiding the pop-up:
+Extract the plugin ZIP into the existing VPX plugins directory and enable it:
 
 ```ini
 [Plugin.ScoreTracker]
 Enable = 1
-Notifications = 0
+Notifications = 1
 ```
 
-Restart VPX after changing `VPinballX.ini`.
+The [JSON schema](schema/scores.schema.json) and
+[example history](examples/completed-game.json) define the data contract:
+`schema_version`, stable game `id`, table filename, optional ROM identifier,
+start/end timestamps, informational duration, source and ordered player scores.
+Zero points are valid. Scores use signed 64-bit integers. Readers in JavaScript
+need integer-preserving handling above Number.MAX_SAFE_INTEGER.
 
-## scores.json format
+## Viewer
 
-```json
-{
-  "version": 2,
-  "games": [
-    {
-      "score_id": 1,
-      "date": "2026-07-03T18:30:12Z",
-      "rom": "taf_l7",
-      "scores": [12345678, 9876543],
-      "game_duration": 310,
-      "game_state": { "credits": 2, "player_count": 2 },
-      "signature": {
-        "algorithm": "ed25519",
-        "key_id": "scoretracker-release-v1",
-        "value": "<128 hexadecimal characters>"
-      }
-    }
-  ]
-}
+See [Viewer build and use](viewer/README.md). The Viewer reads the same schema,
+displays local history and reads optional machine high scores from host-owned
+NVRAM/maps. It does not install the plugin or upload scores.
+
+## Repository
+
+- `src/`: plugin capture, script integration and durable JSON writer.
+- `schema/`, `examples/`, `docs/`: current format and capture contract.
+- `viewer/`, `companion/`: Electron desktop Viewer, TypeScript interface and read-only decoders.
+- `platforms/`: public VPX SDK staging for supported build targets.
+- `scripts/`, `tests/`, `.github/`: validation, packaging, tests and CI.
+- `third-party/`: SDK staging instructions; generated headers are ignored.
+
+Generated output belongs in `build/`, `dist/` and `companion/desktop-dist/`. No profiling tools,
+ROMs, PinMAME patches, collector sites or signing experiments are part of this tree.
+
+## Build and verify
+
+```sh
+bash build-standalone.sh --no-install /path/to/vpinball
+ctest --test-dir build --output-on-failure
+python3 tests/run-capture.py --sanitize
+python3 scripts/validate-project.py
+bash viewer/build.sh
+npm --prefix companion test
+npm --prefix companion run test:desktop
 ```
 
-`scores` holds all scores seen per player during the session.
-
-`score_id` (added in version 2) is a per-file, monotonically increasing integer that never
-repeats, even after a game is removed. It gives the companion Viewer a stable handle to delete a
-specific record. It is not covered by the signature. Files written by an older plugin (version 1,
-no `score_id`) are read as-is and gain ids the next time the plugin appends a game.
-
-The signature covers `date`, `rom`, `scores`, and `game_duration`. It is a provenance marker, not
-tamper-proof DRM: the release plugin must contain signing capability so it can work offline, and a
-determined person can extract or replace that capability. The private seed is kept out of the source
-tree in the `SCORETRACKER_SIGNING_SEED_HEX` GitHub Actions secret and is injected only into official
-release builds. Pull-request and local builds intentionally write unsigned records.
-
-To configure a new release key, generate a 32-byte Ed25519 seed, store its 64-character hexadecimal
-form as the `SCORETRACKER_SIGNING_SEED_HEX` repository secret, and update
-`kScoreSignaturePublicKeyHex` in `ScoreSignature.h` plus `SIGNATURE_PUBLIC_KEY_HEX` in
-`companion/src-tauri/src/scores.rs` with its public key. Changing keys also requires a new `key_id`
-and retaining the previous public key in the Viewer if old signatures must continue to verify.
-
-## Maps
-
-Releases include a pinned snapshot of
-[herrMirto/pinmame-nvram-maps](https://github.com/herrMirto/pinmame-nvram-maps) in the plugin-default
-maps folder (`plugins/scoretracker/maps`), so users do not download or select maps separately.
-PinMAME uses the map to decode memory; ScoreTracker uses the matching schema to identify and order
-the published values and to retain metadata such as `final_scores_order`. The exact source commit is
-recorded in `maps/source.json`. The `nvram_maps_folder` setting remains an advanced development
-override. The maps are LGPL-3.0 and their license is installed alongside them.
-
-The desktop installer also synchronizes this snapshot to the configured PinMAME
-`memmaps` directory and sets a platform-default `PinMAMEPath` when it is empty. The Batocera
-installer performs the equivalent setup under `/userdata/system/configs/vpinball/pinmame/memmaps`.
-
-## Companion app: VPX Scoretracker Viewer
-
-`companion/` contains VPX Scoretracker Viewer, the cross-platform Tauri 2 desktop application for
-browsing the local game history produced by this plugin. It is embedded in each platform's
-self-contained installer, but is operationally independent: score recording never requires the app
-to be installed or running.
-
-See [`companion/README.md`](companion/README.md) for development instructions and feature details.
-
-### Batocera
-
-Batocera 43.1 x86-64 systems with a current, plugin-enabled VPX build use one package and installer
-for the ScoreTracker plugin, maps, background web dashboard, and controller-friendly Ports viewer.
-The dashboard port is configurable, and the Ports viewer can install verified updates from GitHub.
-See [`batocera/README.md`](batocera/README.md) for installation and service details.
-
-## Installation
-
-Download the latest installer from [GitHub Releases](https://github.com/herrMirto/vpx-scoretracker-plugin/releases/latest).
-
-Platform binaries:
-
-- **macOS (Apple Silicon):** `scoretracker-installer-<version>-macos-arm64.dmg`
-- **Windows (x64):** `scoretracker-installer-<version>-windows-x64.exe`
-- **Linux (x64):** `scoretracker-installer-<version>-linux-x64`
-- **Linux (ARM64):** `scoretracker-installer-<version>-linux-arm64`
-- **Batocera 43.1 (x86-64):** `scoretracker-batocera-<version>-x86_64.tar.gz`
-
-Installed Viewer locations:
-
-- **macOS:** `~/Applications/VPX Scoretracker Viewer.app`
-- **Windows:** `%LOCALAPPDATA%\Programs\VPX Scoretracker Viewer\VPX Scoretracker Viewer.exe`
-  with a Start Menu shortcut
-- **Linux:** `~/.local/bin/vpx-scoretracker-viewer` with a desktop entry
-
-1. On macOS, open the DMG and launch `ScoreTracker Installer.app` from it. On Linux, first run
-   `chmod +x scoretracker-installer-linux-*`.
-2. Run the installer and confirm the detected VPX installation and tables folder. It installs and
-   enables the plugin, bundled maps, and Viewer.
-3. Start VPX and play a supported PinMAME table. Its completed game is added to `scores.json`.
-
-Manual installation of a locally built `scoretracker` folder also works.
-
-## Updates
-
-You can update the VPX Score Tracker plugin directly from the Viewer app, using the 'Check for Updates' button. Click on **Update and restart** to update the Viewer, plugin, and bundled maps together.
-
-## Uninstall
-
-The uninstall at the moment is manual, so you need to delete the scoretracker folder from the plugins folder, the binary of the Viewer and disable the plugin in VPinballX.ini.
-
-## License
-
-ScoreTracker is available under the [MIT License](LICENSE). The bundled NVRAM maps retain their
-LGPL-3.0 license. Release builds use the portable
-[Monocypher](https://monocypher.org/) Ed25519 implementation under its BSD-2-Clause/CC0 dual license.
+The plugin build uses the supplied VPX checkout's SDK and never installs anything.
+`third-party/include/revisions.txt` records that checkout's commit. Build the Viewer
+separately; neither build changes the VPX installation. Packaging uses
+`scripts/package-plugin.py` and `scripts/package-viewer.py`.

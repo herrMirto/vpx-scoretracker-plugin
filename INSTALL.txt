@@ -1,0 +1,37 @@
+ScoreTracker — native VPX score capture
+
+1. Close VPX and extract scoretracker/ into the existing app plugins directory.
+2. Enable ScoreTracker in VPX settings or [Plugin.ScoreTracker] Enable=1.
+3. PinMAME capture uses the official Controller/GetStateSrc:1 API. Use the
+   PinMAME bundled with your VPX. No emulator patch, rebuild, extra library,
+   ROM filesystem path or separate map folder is required by ScoreTracker.
+4. The PinMAME host must expose decoded game states for the ROM. ScoreTracker
+   discovers their hierarchical paths, formats and explicit Player N labels.
+   It requires game_over, player_count, current_player, current_ball and scores.
+5. Start and complete a game. A native VPX notification confirms a durable save.
+   scores.json is beside the table unless OutputFolder is configured.
+
+Capture is event driven. There are no sleeps, score-stability windows, minimum
+play times or exit-score fallbacks. An observed idle state precedes ball-1 play.
+When configured ball_count is exposed, completion also requires observed play on
+that final ball by the final participant. Pending extra balls prevent completion.
+Closing the table or losing the state source discards open games. Changed Games
+Started audits invalidate the old game. Invalid/ambiguous states do not save.
+
+The public API provides asynchronous getters, not atomic emulator snapshots.
+Lifecycle controls are read before and after scores; a detected transition rejects
+that observation. This does not certify ROM-specific final-bonus ordering or every
+possible restart. See CAPTURE-CONTRACT.md for the exact guarantees and limits.
+
+Scripted tables can explicitly use ScoreTracker.Recorder at real start/end points;
+see examples/table-recorder.vbs. Ordinary B2S display changes are not completion.
+
+Storage failures retain completed records in memory and, where possible, durable
+.scoretracker-pending/ files. Retry occurs at table close, plugin unload and the
+ScoreTracker/RetryPending:1 message. Failed saves are notified while UI is alive.
+At shutdown VPX has destroyed its UI, so the result is logged.
+
+An old experimental {"games":[...]} history is preserved byte-for-byte by renaming
+it to scores.legacy-<unique-id>.json at the first completed-game write, then a new
+v1 scores.json is created. Old records are not migrated or certified. Malformed
+histories and other schema versions are left untouched and report a failure.

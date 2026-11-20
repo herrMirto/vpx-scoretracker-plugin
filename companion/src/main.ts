@@ -1,27 +1,37 @@
-import { invoke } from "@tauri-apps/api/core";
-import { open } from "@tauri-apps/plugin-dialog";
+import { backend, request, post, cancelScan, scanScores, type Configuration } from "./api";
 import packageMetadata from "../package.json";
 import { normalizeTableIdentity, selectVPinPlayItem, type LookupAttempt, type VPinPlayItem } from "./media-match.ts";
 import "./styles.css";
-import type { GameRecord, NvramDocument, ScanSnapshot, UpdateInfo } from "./types";
+import type { GameRecord, NvramDocument, ScanSnapshot } from "./types";
 
+let desktopMode = false;
+let readOnly = true;
+let vpxRoot = "";
+let setupBusy = false;
+let setupStatus = "";
+let nativeChoosing = false;
+let scanSerial = 0;
+const sessionPreferences = new Map<string, string>();
+const preferences = {
+  getItem(key: string): string | null { try { return localStorage.getItem(key) ?? sessionPreferences.get(key) ?? null; } catch { return sessionPreferences.get(key) ?? null; } },
+  setItem(key: string, value: string): void { sessionPreferences.set(key, value); try { localStorage.setItem(key, value); } catch { /* session storage remains usable */ } },
+  removeItem(key: string): void { sessionPreferences.delete(key); try { localStorage.removeItem(key); } catch { /* unavailable */ } },
+};
+function route(): string { return location.hash; }
+function navigate(value: string): void { location.hash = value; }
 const TABLES_ROOT_KEY = "scoretracker.tablesRoot";
-const MAPS_ROOT_KEY = "scoretracker.mapsRoot";
 const MEDIA_CACHE_KEY = "scoretracker.tableMedia.v2";
 const VIEWER_VERSION = packageMetadata.version;
-const UPDATE_CHECK_KEY = "scoretracker.lastUpdateCheck";
-const UPDATE_CHECK_INTERVAL = 24 * 60 * 60 * 1000;
 const VPINPLAY_API_BASE = "https://api.vpinplay.com:8888/api/v1";
 const VPINMEDIA_BASE = "https://raw.githubusercontent.com/superhac/vpinmediadb/refs/heads/main";
 const MEDIA_CACHE_MAX_AGE = 30 * 24 * 60 * 60 * 1000;
-const WEB_MODE = import.meta.env.VITE_SCORETRACKER_WEB === "true";
-const TABLE_LETTERS = [..."ABCDEFGHIJKLMNOPQRSTUVWXYZ"];
 const app = document.querySelector<HTMLDivElement>("#app")!;
 
 if (!app) throw new Error("Application root was not found");
 
 interface ScoreEntry {
   score: number;
+  player: number;
   date: string;
   duration: number | null;
   game: GameRecord;
@@ -49,12 +59,6 @@ interface TableMedia {
   resolvedAt: number;
 }
 
-interface RemoteProbe {
-  status: number;
-  contentType: string | null;
-  contentLength: number | null;
-}
-
 type DiagnosticLevel = "debug" | "info" | "warn" | "error";
 
 function errorDetails(error: unknown): Record<string, unknown> {
@@ -65,43 +69,7 @@ function errorDetails(error: unknown): Record<string, unknown> {
 function diagnostic(level: DiagnosticLevel, event: string, details: Record<string, unknown> = {}): void {
   const consoleMethod = level === "error" ? console.error : level === "warn" ? console.warn : console.info;
   consoleMethod(`[ScoreTracker] ${event}`, details);
-  if (WEB_MODE) return;
-  void invoke("write_diagnostic_log", { level, event, details }).catch((error) => {
-    console.warn("[ScoreTracker] diagnostic.write_failed", error);
-  });
-}
-
-async function probeRemoteUrl(url: string, reason: string): Promise<void> {
-  if (WEB_MODE) return;
-  try {
-    const probe = await invoke<RemoteProbe>("probe_remote_url", { url });
-    diagnostic("info", "media.remote_probe", { reason, url, ...probe });
-  } catch (error) {
-    diagnostic("error", "media.remote_probe_failed", { reason, url, ...errorDetails(error) });
-  }
-}
-
-async function backend<T>(command: string, args: Record<string, unknown> = {}): Promise<T> {
-  if (!WEB_MODE) return invoke<T>(command, args);
-
-  const query = new URLSearchParams();
-  for (const [key, value] of Object.entries(args)) {
-    if (value !== null && value !== undefined) query.set(key, String(value));
-  }
-  const endpoint = (() => {
-    switch (command) {
-      case "scan_scores": return "/api/scores";
-      case "resolve_vpx_hash": return `/api/vpx-hash?${query}`;
-      case "load_nvram": return `/api/nvram?${query}`;
-      case "read_seed_config": return "/api/config";
-      case "resolve_maps_root": return null;
-      default: throw new Error(`${command} is unavailable in the read-only dashboard`);
-    }
-  })();
-  if (endpoint === null) return String(args.path ?? "") as T;
-  const response = await fetch(endpoint, { headers: { Accept: "application/json" } });
-  if (!response.ok) throw new Error((await response.text()) || `Request failed (${response.status})`);
-  return await response.json() as T;
+  if (desktopMode) void post("/api/log", {level, event, details}).catch(() => {});
 }
 
 interface ChartTarget {
@@ -124,11 +92,13 @@ let nvramError = "";
 const tableMedia = new Map<string, TableMedia>();
 let mediaGeneration = "";
 let foldersOpen = false;
-let availableUpdate: UpdateInfo | null = null;
-let updateBusy = false;
-let updateStatus = "";
-let diagnosticLogPath = "";
-let tableLetterFilter: string | null = null;
+let webConfigurable = false;
+let webConfigLoaded = false;
+let tableSearch = "";
+let tableSort: "recent" | "name" | "games" = "recent";
+let detailTab: "overview" | "history" = "overview";
+let chartRange: "all" | "5" = "all";
+let selectedScoreIndex = -1;
 const loggedWheelResults = new Set<string>();
 
 function number(value: number): string {
@@ -137,9 +107,16 @@ function number(value: number): string {
 
 function duration(seconds: number | null): string {
   if (seconds === null) return "—";
-  const hours = Math.floor(seconds / 3600);
-  const minutes = Math.floor((seconds % 3600) / 60);
-  return hours > 0 ? `${hours}h ${minutes}m` : `${minutes}m`;
+  const value = Math.max(0, Math.floor(seconds));
+  return value >= 3600 ? `${Math.floor(value / 3600)}h ${Math.floor(value % 3600 / 60)}m` : `${Math.floor(value / 60)}m ${value % 60}s`;
+}
+
+function fullDate(value: string): string {
+  return new Intl.DateTimeFormat(undefined, {year: "numeric", month: "short", day: "numeric"}).format(new Date(value));
+}
+
+function time(value: string): string {
+  return new Intl.DateTimeFormat(undefined, {hour: "2-digit", minute: "2-digit"}).format(new Date(value));
 }
 
 function date(value: string, includeTime = true): string {
@@ -160,7 +137,7 @@ function esc(value: unknown): string {
 function tables(): TableHistory[] {
   const grouped = new Map<string, { name: string; games: GameRecord[] }>();
   for (const game of snapshot?.games ?? []) {
-    if (!game.scores.some((score) => score > 0)) continue;
+    if (!game.scores.some((score) => score >= 0)) continue;
     const key = game.rom || game.table;
     const group = grouped.get(key) ?? { name: game.table || game.rom, games: [] };
     group.games.push(game);
@@ -170,8 +147,8 @@ function tables(): TableHistory[] {
   return [...grouped.entries()].map(([rom, group]) => {
     group.games.sort((left, right) => left.date.localeCompare(right.date));
     const entries = group.games.flatMap((game) => game.scores
-      .filter((score) => score > 0)
-      .map((score) => ({ score, date: game.date, duration: game.gameDuration, game })));
+      .map((score, index) => ({ score, player: index + 1, date: game.date, duration: game.gameDuration, game }))
+      .filter((entry) => entry.score >= 0));
     const best = Math.max(...entries.map((entry) => entry.score));
     return {
       rom,
@@ -189,13 +166,14 @@ function tables(): TableHistory[] {
 }
 
 function selectedRom(): string | null {
-  const match = location.hash.match(/^#\/table\/(.+)$/);
+  const match = route().match(/^#\/table\/(.+)$/);
   return match ? decodeURIComponent(match[1]) : null;
 }
 
 function render(): void {
-  const root = localStorage.getItem(TABLES_ROOT_KEY) ?? "";
-  const mapsRoot = localStorage.getItem(MAPS_ROOT_KEY) ?? "";
+  const activeSearch = document.activeElement instanceof HTMLInputElement && document.activeElement.id === "search" ? document.activeElement : null;
+  const selection = activeSearch ? [activeSearch.selectionStart, activeSearch.selectionEnd] : null;
+  const root = preferences.getItem(TABLES_ROOT_KEY) ?? "";
   const tableList = tables();
   const selected = selectedRom();
   const table = selected ? tableList.find((candidate) => candidate.rom === selected) : null;
@@ -203,46 +181,44 @@ function render(): void {
 
   app.innerHTML = `
     ${renderTopbar(root, Boolean(table))}
-    <main>
+    <main class="shell">
       ${renderNotices()}
       ${table && configured ? renderTableDetail(table) : configured ? renderOverview(tableList) : renderSetup(root)}
+      ${renderFooter()}
     </main>
-    ${foldersOpen && configured ? renderFoldersModal(root) : ""}`;
+    ${foldersOpen && (configured || webConfigurable) ? renderFoldersModal(root) : ""}`;
 
   wireEvents();
-  if (configured && tableList.length) void ensureTableMedia(tableList);
-  if (table && configured) void ensureNvram(table, root, mapsRoot);
+  if (selection) {
+    const input = document.querySelector<HTMLInputElement>("#search");
+    input?.focus();
+    input?.setSelectionRange(selection[0], selection[1]);
+  }
+  if (!busy && configured && tableList.length) void ensureTableMedia(tableList);
+  if (table && configured) void ensureNvram(table, root);
 }
 
 function renderTopbar(root: string, inDetail: boolean): string {
   return `<header class="topbar">
     <button class="brand brand-button" id="home" type="button" aria-label="ScoreTracker home">
-      <span class="brand-stripe" aria-hidden="true"></span><span class="brand-copy"><span class="brand-title"><strong>VPX ScoreTracker</strong><span class="viewer-version">v${esc(VIEWER_VERSION)}</span></span><small>Local scores</small></span>
+      <span class="brand-stripe" aria-hidden="true"></span><span class="brand-copy"><span class="brand-title"><strong>VPX ScoreTracker Viewer</strong><span class="viewer-version">v${esc(VIEWER_VERSION)}</span></span><small>Local scores</small></span>
     </button>
     <nav class="actions" aria-label="Application actions">
       ${inDetail ? `<button id="back" class="button secondary" type="button">← All tables</button>` : ""}
-      ${root && !WEB_MODE ? `<button id="show-folders" class="button secondary" type="button">Folders & Log</button>` : ""}
+      ${webConfigurable ? `<button id="show-folders" class="button secondary" type="button">Folders</button>` : ""}
       ${root ? `<button id="refresh" class="button primary" type="button" ${busy ? "disabled" : ""}>${busy ? "Scanning…" : "Refresh scores"}</button>` : ""}
-      ${!WEB_MODE ? `<button id="check-update" class="button ${availableUpdate ? "update-nav" : "secondary"}" type="button" ${updateBusy ? "disabled" : ""}>${updateBusy ? "Checking…" : availableUpdate ? `Update ${esc(availableUpdate.version)}` : "Check for Updates"}</button>` : ""}
+      ${desktopMode ? `<button id="quit-native" class="button danger" type="button">Quit ScoreTracker</button>` : ""}
     </nav>
   </header>`;
 }
 
+function scanStatusText(): string {
+  return `Reading score history… ${number(snapshot?.sourcesScanned ?? 0)} files read · ${number(snapshot?.games.length ?? 0)} games found`;
+}
+
 function renderNotices(): string {
   const notices: string[] = [];
-  if (availableUpdate) {
-    notices.push(`<section class="update-card" role="alert" aria-live="polite">
-      <div class="update-mark" aria-hidden="true">↑</div>
-      <div class="update-copy">
-        <p class="update-eyebrow">Software update</p>
-        <strong>ScoreTracker ${esc(availableUpdate.version)} is ready</strong>
-        <span>${esc(formatBytes(availableUpdate.size))} · Updates the Viewer, VPX plugin, and maps, then restarts automatically. Close VPX before continuing.</span>
-      </div>
-      <button id="install-update" class="button update-action" type="button" ${updateBusy ? "disabled" : ""}>${updateBusy ? "Downloading and verifying…" : "Update and restart"}</button>
-    </section>`);
-  } else if (updateStatus) {
-    notices.push(`<div class="notice update-status" role="status">${esc(updateStatus)}</div>`);
-  }
+  if (busy) notices.push(`<div id="scan-status" class="notice scan-status" role="status">${scanStatusText()}</div>`);
   if (fatalError) notices.push(`<div class="notice error" role="alert">${esc(fatalError)}</div>`);
   if (snapshot?.warnings.length) {
     notices.push(`<details class="notice warning"><summary>${snapshot.warnings.length} source warning(s)</summary><ul>${snapshot.warnings.map((warning) => `<li><strong>${esc(warning.source)}</strong>: ${esc(warning.message)}</li>`).join("")}</ul></details>`);
@@ -250,80 +226,55 @@ function renderNotices(): string {
   return notices.join("");
 }
 
-function formatBytes(bytes: number): string {
-  if (bytes < 1024 * 1024) return `${Math.max(1, Math.round(bytes / 1024))} KB`;
-  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+
+function renderFooter(): string {
+  return '<footer class="footer"><span>Scores stored locally</span></footer>';
+}
+
+function visibleTables(tableList: TableHistory[]): TableHistory[] {
+  const query = tableSearch.trim().toLocaleLowerCase();
+  const filtered = tableList.filter(table => `${displayName(table)} ${table.name} ${table.rom} ${tableMedia.get(table.rom)?.manufacturer ?? ""}`.toLocaleLowerCase().includes(query));
+  return filtered.sort(tableSort === "name"
+    ? (a, b) => displayName(a).localeCompare(displayName(b))
+    : tableSort === "games" ? (a, b) => b.games.length - a.games.length
+      : (a, b) => b.latest.date.localeCompare(a.latest.date));
+}
+
+function renderLibrary(tableList: TableHistory[]): string {
+  const visible = visibleTables(tableList);
+  return visible.length ? visible.map(renderTableCard).join("") : '<div class="empty">No tables match your search.</div>';
 }
 
 function renderOverview(tableList: TableHistory[]): string {
   const games = snapshot?.games ?? [];
   const totalTime = games.reduce((sum, game) => sum + (game.gameDuration ?? 0), 0);
-  const availableLetters = new Set(tableList.map(tableInitial).filter((letter) => letter !== null));
-  if (tableLetterFilter && !availableLetters.has(tableLetterFilter)) tableLetterFilter = null;
-  const visibleTables = tableLetterFilter
-    ? tableList.filter((table) => tableInitial(table) === tableLetterFilter)
-    : tableList;
-  const tableDescription = tableLetterFilter
-    ? `${visibleTables.length} ${visibleTables.length === 1 ? "table" : "tables"} beginning with ${tableLetterFilter} · Most recent first`
-    : "Most recent first · Select a table for its complete history";
-
-  return `<section class="stats" aria-label="History summary">
-      ${stat("Completed games", number(games.length), "Valid scores recorded")}
-      ${stat("Played tables", number(tableList.length), "Unique ROMs")}
-      ${stat("Tables found", number(snapshot?.vpxFilesFound ?? 0), "VPX files discovered")}
-      ${stat("Recorded time", duration(totalTime), "Across all sessions")}
+  const recent = tableList[0];
+  const best = recent?.entries.find(entry => entry.score === recent.best);
+  return `<div class="heading"><div><div class="overline">Local scores</div><h1>Tables</h1></div>
+    <div class="heading-meta"><div><strong>${number(tableList.length)}</strong><small>Played tables</small></div><div><strong>${number(games.length)}</strong><small>Completed games</small></div><div><strong>${duration(totalTime)}</strong><small>Time played</small></div></div></div>
+    ${recent && best ? `<section class="highlights" aria-label="Collection highlights">
+      <article class="feature"><div class="feature-art"><div class="orbit"></div>${renderWheel(recent, "feature-wheel")}</div>
+        <div class="feature-copy"><div class="overline">Last played · ${esc(date(recent.latest.date, false))}</div><h2>${esc(displayName(recent))}</h2><p>${renderMediaMeta(recent)}${recent.games.length} completed games</p><a class="feature-link" href="#/table/${encodeURIComponent(recent.rom)}">View details <b aria-hidden="true">↗</b></a></div></article>
+      <article class="session-card"><div class="session-title"><div class="overline">Personal best</div><div class="session-indicator">Local history</div></div><div class="session-score">${number(recent.best)}</div><div class="session-name">${esc(displayName(recent))} <span class="pill">Player ${best.player}</span></div><div class="session-bottom"><div><small>Latest score</small><strong>${number(recent.latest.score)}</strong></div><div><small>Recorded on</small><strong>${esc(fullDate(best.date))}</strong></div></div></article>
     </section>
-    ${tableList.length ? `<div class="overview-browser">
-      <div class="overview-table-list">
-        <section class="section-heading"><div><p class="eyebrow">Recently played</p><h2>Table progress</h2></div><span>${esc(tableDescription)}</span></section>
-        <section class="table-grid">${visibleTables.map(renderTableCard).join("")}</section>
-      </div>
-      ${renderAlphabetFilter(availableLetters)}
-    </div>` : renderEmptyHistory()}`;
-}
-
-function tableInitial(table: TableHistory): string | null {
-  const initial = displayName(table)
-    .normalize("NFD")
-    .replace(/[\u0300-\u036f]/g, "")
-    .trim()
-    .charAt(0)
-    .toUpperCase();
-  return TABLE_LETTERS.includes(initial) ? initial : null;
-}
-
-function renderAlphabetFilter(availableLetters: Set<string>): string {
-  const letterButton = (letter: string) => {
-    const selected = tableLetterFilter === letter;
-    const available = availableLetters.has(letter);
-    return `<button class="alphabet-letter${selected ? " selected" : ""}" type="button" data-table-letter="${letter}" aria-label="Show tables beginning with ${letter}" aria-pressed="${selected}" ${available ? "" : "disabled"}>${letter}</button>`;
-  };
-  return `<nav class="alphabet-filter" aria-label="Filter tables alphabetically">
-    <button class="alphabet-all${tableLetterFilter === null ? " selected" : ""}" type="button" data-table-letter="" aria-label="Show all tables" aria-pressed="${tableLetterFilter === null}">All</button>
-    ${TABLE_LETTERS.map(letterButton).join("")}
-  </nav>`;
+    <div class="section-heading"><h2>The collection <span class="count" id="result-count">${visibleTables(tableList).length} tables</span></h2><div class="library-tools"><label class="search-box"><span class="search-icon" aria-hidden="true">⌕</span><input id="search" type="search" placeholder="Find a table or ROM…" aria-label="Find a table or ROM" value="${esc(tableSearch)}"></label><select class="sort" id="sort" aria-label="Sort tables"><option value="recent" ${tableSort === "recent" ? "selected" : ""}>Recently played</option><option value="name" ${tableSort === "name" ? "selected" : ""}>Name · A to Z</option><option value="games" ${tableSort === "games" ? "selected" : ""}>Most played</option></select></div></div>
+    <section class="library" id="library" aria-label="Played tables">${renderLibrary(tableList)}</section>` : renderEmptyHistory()}`;
 }
 
 function renderTableCard(table: TableHistory): string {
-  const recent = table.entries.slice(-6);
-  const points = sparklinePoints(recent.map((entry) => entry.score), 240, 58, 5);
-  return `<button class="table-card" type="button" data-rom="${esc(table.rom)}">
-    <div class="table-card-art">${renderWheel(table, "card-wheel")}${tableMedia.has(table.rom) ? `<span class="media-credit">VPinMediaDB</span>` : ""}</div>
-    <div class="table-card-head"><span class="table-index">Played ${date(table.latest.date, false)}</span><span class="game-count">${table.entries.length} game${table.entries.length === 1 ? "" : "s"}</span></div>
-    <div class="table-card-copy"><h3>${esc(displayName(table))}</h3>${renderMediaMeta(table)}<code>ROM / ${esc(table.rom)}</code></div>
-    <svg class="sparkline" viewBox="0 0 240 58" role="img" aria-label="Recent score trend for ${esc(table.name)}">
-      ${recent.length > 1 ? `<path class="spark-area" d="${areaPath(points, 58)}"></path><polyline points="${points}" vector-effect="non-scaling-stroke"></polyline>` : ""}
-      <g class="spark-dots">${scorePointCircles(recent, points)}</g>
-    </svg>
-    <div class="table-card-foot"><span><small>Personal best</small><strong>${number(table.best)}</strong></span><span class="closeness"><small>Latest score</small><strong>${number(table.latest.score)}</strong></span></div>
-  </button>`;
+  const recent = table.entries.slice(-8);
+  const points = sparklinePoints(recent.map(entry => entry.score), 90, 22, 3);
+  const coordinate = points.split(" ")[0]?.split(",") ?? ["45", "11"];
+  return `<a class="table-tile" href="#/table/${encodeURIComponent(table.rom)}" aria-label="View ${esc(displayName(table))} details">
+    ${renderWheel(table, "thumb")}<div class="table-copy"><h3>${esc(displayName(table))}</h3>${renderMediaMeta(table)}<div class="tile-meta"><span>${table.games.length} ${table.games.length === 1 ? "game" : "games"}</span><span class="meta-dot" aria-hidden="true"></span><span>Last played ${esc(date(table.latest.date, false))}</span></div></div>
+    <div class="tile-best"><small>Personal best</small><strong>${number(table.best)}</strong><svg class="tile-spark" viewBox="0 0 90 22" role="img" aria-label="${recent.length} recent recorded scores">${recent.length > 1 ? `<polyline points="${points}" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/>` : `<circle cx="${coordinate[0]}" cy="${coordinate[1]}" r="2.7" fill="currentColor"/>`}</svg></div></a>`;
 }
 
 function renderWheel(table: TableHistory, className: string): string {
   const media = tableMedia.get(table.rom);
   return `<div class="wheel-art ${className}" data-wheel-rom="${esc(table.rom)}">
     <span class="wheel-fallback">${esc(displayName(table))}</span>
-    ${media ? `<img class="wheel-image" src="${esc(media.wheelUrl)}" alt="${esc(media.name)} wheel artwork" loading="lazy">` : ""}
+    ${media ? `<img class="wheel-image" src="${esc(media.wheelUrl)}" alt="${esc(media.name)} wheel artwork" loading="${className === "thumb" ? "lazy" : "eager"}">` : ""}
   </div>`;
 }
 
@@ -336,12 +287,6 @@ function renderMediaMeta(table: TableHistory): string {
   if (!media) return "";
   const details = [media.manufacturer, media.year].filter(Boolean).join(" · ");
   return details ? `<span class="table-meta">${esc(details)}</span>` : "";
-}
-
-function detailEyebrow(table: TableHistory): string {
-  const media = tableMedia.get(table.rom);
-  const identity = media ? [media.manufacturer, media.year].filter(Boolean).join(" · ") : "PinMAME table";
-  return `${identity} · ${table.rom}`;
 }
 
 async function ensureTableMedia(tableList: TableHistory[]): Promise<void> {
@@ -426,7 +371,7 @@ async function resolveTableMedia(table: TableHistory): Promise<TableMedia | null
   if (selection?.item.vpsId) return mediaFromItem(selection.item, selection.item.vpsId);
 
   // Exact file hashing is an expensive last resort. It runs in a blocking worker
-  // on the Rust side, after local scores are already visible.
+  // in the desktop backend, after local scores are already visible.
   const tablesRoot = snapshot?.tablesRoot;
   const scoreSource = table.latest.game.source;
   if (tablesRoot && scoreSource) {
@@ -482,7 +427,7 @@ function mediaCacheKey(table: TableHistory): string {
 
 function readMediaCache(): Record<string, TableMedia> {
   try {
-    return JSON.parse(localStorage.getItem(MEDIA_CACHE_KEY) ?? "{}") as Record<string, TableMedia>;
+    return JSON.parse(preferences.getItem(MEDIA_CACHE_KEY) ?? "{}") as Record<string, TableMedia>;
   } catch (error) {
     diagnostic("warn", "media.cache_read_failed", errorDetails(error));
     return {};
@@ -491,7 +436,7 @@ function readMediaCache(): Record<string, TableMedia> {
 
 function writeMediaCache(cache: Record<string, TableMedia>): void {
   try {
-    localStorage.setItem(MEDIA_CACHE_KEY, JSON.stringify(cache));
+    preferences.setItem(MEDIA_CACHE_KEY, JSON.stringify(cache));
   } catch (error) {
     // Media enrichment is optional; storage limits must not break local history.
     diagnostic("warn", "media.cache_write_failed", errorDetails(error));
@@ -510,7 +455,6 @@ async function fetchVPinPlay<T>(path: string, purpose: string): Promise<T | null
       diagnostic("warn", "media.api_http_error", {
         purpose, url, status: response.status, statusText: response.statusText, elapsedMs,
       });
-      void probeRemoteUrl(url, `${purpose}: HTTP ${response.status}`);
       return null;
     }
     try {
@@ -524,7 +468,6 @@ async function fetchVPinPlay<T>(path: string, purpose: string): Promise<T | null
   } catch (error) {
     const elapsedMs = Math.round(performance.now() - startedAt);
     diagnostic("error", "media.api_request_failed", { purpose, url, elapsedMs, ...errorDetails(error) });
-    void probeRemoteUrl(url, purpose);
     return null;
   } finally {
     window.clearTimeout(timeout);
@@ -533,31 +476,25 @@ async function fetchVPinPlay<T>(path: string, purpose: string): Promise<T | null
 
 function renderTableDetail(table: TableHistory): string {
   const targets = machineBoardTargets(table);
-  const nextTarget = [...targets].sort((left, right) => left.score - right.score).find((target) => target.score > table.latest.score);
-  const comparisonTarget = nextTarget ?? [...targets].sort((left, right) => right.score - left.score)[0];
-  const latestPct = comparisonTarget ? Math.round((table.latest.score / comparisonTarget.score) * 100) : 100;
-  const progressText = nextTarget ? `${latestPct}% of ${nextTarget.label.toLowerCase()}` : "Top machine score beaten";
-  return `<section class="detail-hero">
-      <div class="detail-identity">${renderWheel(table, "detail-wheel")}<div class="detail-title"><p class="eyebrow">${esc(detailEyebrow(table))}</p><h1>${esc(displayName(table))}</h1>${tableMedia.has(table.rom) ? `<span class="vps-id">VPS / ${esc(tableMedia.get(table.rom)?.vpsId)}</span>` : ""}</div></div>
-      <div class="record-summary"><small>Latest game</small><strong>${number(table.latest.score)}</strong><span>${esc(progressText)}</span></div>
-    </section>
-    <section class="stats detail-stats" aria-label="Table summary">
-      ${stat("Personal best", number(table.best), date([...table.entries].sort((left, right) => right.score - left.score)[0].date))}
-      ${stat("Average score", number(table.average), `${table.entries.length} recorded scores`)}
-      ${stat("Time played", duration(table.totalTime), `${table.games.length} completed games`)}
-    </section>
-    <section class="panel chart-panel">
-      <div class="panel-heading"><div><p class="eyebrow">Personal scores</p><h2>Score journey</h2></div><span>${table.entries.length} recorded ${table.entries.length === 1 ? "score" : "scores"}</span></div>
-      <div class="progress-layout">${renderProgressChart(table)}${renderChartLeaderboard(targets)}</div>
-    </section>
-    <section class="panel history-panel full-history"><div class="panel-heading"><div><p class="eyebrow">Every result</p><h2>Score history</h2></div><span>${table.entries.length} scores</span></div>${renderScoreHistory(table.entries)}</section>`;
+  const firstPlace = targets.find(target => target.rank > 0 && isFirstPlaceLabel(`${target.name} ${target.label}`));
+  const gap = firstPlace ? Math.max(0, firstPlace.score - table.best) : null;
+  const best = table.entries.find(entry => entry.score === table.best)!;
+  return `<nav class="breadcrumb" aria-label="Breadcrumb"><a href="#/">Tables</a><span aria-hidden="true">/</span><span>${esc(displayName(table))}</span></nav>
+    <div class="detail-layout"><aside class="identity">${renderWheel(table, "identity-art")}<h1>${esc(displayName(table))}</h1>${renderMediaMeta(table)}<p class="rom">${table.games.some(game => game.rom) ? esc(table.rom) : "Scripted table"}</p>
+      <div class="identity-stats"><div><span>Completed games</span><strong>${table.games.length}</strong></div><div><span>Time played</span><strong>${duration(table.totalTime)}</strong></div><div><span>First recorded</span><strong>${esc(fullDate(table.entries[0].date))}</strong></div></div>
+      <div class="best-block"><div class="overline">Personal best</div><strong>${number(table.best)}</strong><small>Player ${best.player} · ${esc(fullDate(best.date))}</small></div></aside>
+    <section class="detail-main ${detailTab === "history" ? "history-only" : ""}" aria-label="Table performance"><div class="detail-top"><div class="tabs" role="tablist" aria-label="Table views"><button role="tab" aria-selected="${detailTab === "overview"}" class="tab ${detailTab === "overview" ? "active" : ""}" data-tab="overview">Overview</button><button role="tab" aria-selected="${detailTab === "history"}" class="tab ${detailTab === "history" ? "active" : ""}" data-tab="history">Game history <span class="count">${table.games.length}</span></button></div></div>
+      <div class="detail-kpis"><div class="last"><small>Latest score</small><strong>${number(table.latest.score)}</strong><p>${esc(date(table.latest.date))} · Player ${table.latest.player}</p></div><div><small>Average score</small><strong>${number(table.average)}</strong><p>Across ${table.entries.length} player scores</p></div><div><small>Percentage remaining to first place</small><strong>${gap === null || !firstPlace ? "—" : gap === 0 ? "Reached" : `${Math.round(gap / firstPlace.score * 100)}%`}</strong><p>${gap === null ? "No mapped first-place score" : gap === 0 ? "Personal best ≥ machine #1" : `${number(gap)} points to go`}</p></div></div>
+      <section class="chart-block"><div class="panel-title"><div><h2>Score history</h2><p>Scores by date · ${table.entries.length} recorded ${table.entries.length === 1 ? "score" : "scores"}</p></div><div class="segments" role="group" aria-label="Chart range"><button data-range="all" class="${chartRange === "all" ? "active" : ""}" aria-pressed="${chartRange === "all"}">All scores</button><button data-range="5" class="${chartRange === "5" ? "active" : ""}" aria-pressed="${chartRange === "5"}">Last 5</button></div></div><div class="chart-wrap" id="chart">${renderProgressChart(table)}</div></section>
+      <div class="lower-grid"><section class="history-block"><div class="block-head"><h2>Game history</h2><span>${table.games.length} ${table.games.length === 1 ? "game" : "games"} · ${table.entries.length} ${table.entries.length === 1 ? "score" : "scores"}</span></div>${renderScoreHistory(table.entries)}</section>${renderChartLeaderboard(table, targets)}</div>
+    </section></div>`;
 }
 
 function machineBoardTargets(table: TableHistory): ChartTarget[] {
   if (nvram?.rom === table.rom) {
     const entries = nvram.highScores
       .filter((entry) => !entry.label.toLowerCase().includes("buy-in") && !entry.shortLabel?.toLowerCase().startsWith("bi"))
-      .filter((entry) => entry.score > 0);
+      .filter((entry) => entry.score >= 0);
     const firstPlaceIndex = entries.findIndex((entry) => isFirstPlaceLabel(`${entry.label} ${entry.shortLabel ?? ""}`));
     let place = 0;
     const targets = entries
@@ -588,126 +525,68 @@ function isFirstPlaceLabel(value: string): boolean {
 }
 
 function renderProgressChart(table: TableHistory): string {
-  const width = 900, height = 320, left = 150, right = 28, top = 38, bottom = 52;
-  const chartWidth = width - left - right, chartHeight = height - top - bottom;
-  const scores = table.entries.map((entry) => entry.score);
-  const scoreMin = Math.min(...scores);
-  const scoreMax = Math.max(...scores);
-  const spread = scoreMax - scoreMin;
-  const padding = spread > 0
-    ? Math.max(spread * .18, scoreMax * .06)
-    : Math.max(scoreMax * .25, 1);
-  const paddedMin = Math.max(0, scoreMin - padding);
-  const paddedMax = Math.max(paddedMin + 1, scoreMax + padding);
-  const roughStep = (paddedMax - paddedMin) / 3;
-  const magnitude = 10 ** Math.floor(Math.log10(roughStep));
-  const residual = roughStep / magnitude;
-  const step = (residual <= 1.5 ? 1 : residual <= 3 ? 2 : residual <= 7 ? 5 : 10) * magnitude;
-  const axisMin = Math.max(0, Math.floor(paddedMin / step) * step);
-  const axisMax = Math.max(axisMin + step, Math.ceil(paddedMax / step) * step);
-  const x = (index: number) => left + (table.entries.length === 1 ? chartWidth / 2 : (index / (table.entries.length - 1)) * chartWidth);
-  const y = (score: number) => top + chartHeight - ((score - axisMin) / (axisMax - axisMin)) * chartHeight;
-  const points = table.entries.map((entry, index) => `${x(index).toFixed(1)},${y(entry.score).toFixed(1)}`).join(" ");
-  const area = table.entries.length > 1
-    ? `${points} ${x(table.entries.length - 1).toFixed(1)},${y(axisMin).toFixed(1)} ${x(0).toFixed(1)},${y(axisMin).toFixed(1)}`
-    : "";
-  const tickValues: number[] = [];
-  for (let value = axisMin; value <= axisMax + step / 2; value += step) tickValues.push(Math.round(value));
-  const labels = tickValues.map((value) => `<g><line x1="${left}" y1="${y(value)}" x2="${width - right}" y2="${y(value)}"></line><text x="${left - 14}" y="${y(value) + 4}" text-anchor="end">${number(value)}</text></g>`).join("");
-  const dots = table.entries.map((entry, index) => {
-    const latest = index === table.entries.length - 1 ? " latest-score-point" : "";
-    return `<circle class="score-point${latest}" cx="${x(index)}" cy="${y(entry.score)}" r="${latest ? 7 : 6}" tabindex="0" data-score="${entry.score}" data-date="${esc(date(entry.date))}"><title>${date(entry.date)} — ${number(entry.score)}</title></circle>`;
+  const start = chartRange === "5" ? Math.max(0, table.entries.length - 5) : 0;
+  const entries = table.entries.slice(start);
+  const width = 720, height = 222, left = 44, right = 20, top = 14, bottom = 30;
+  const max = Math.max(table.best * 1.12, 1);
+  const times = entries.map(entry => new Date(entry.date).getTime());
+  const span = times[times.length - 1] - times[0];
+  const x = (index: number) => span ? left + (times[index] - times[0]) / span * (width - left - right) : (left + width - right) / 2;
+  const y = (score: number) => height - bottom - score / max * (height - top - bottom);
+  const points = entries.map((entry, index) => `${x(index)},${y(entry.score)}`).join(" ");
+  const labels = [0, 1, 2, 3].map(i => {
+    const score = max * i / 3;
+    const label = score >= 1e9 ? `${(score / 1e9).toFixed(1)}B` : score >= 1e6 ? `${(score / 1e6).toFixed(0)}M` : score >= 1000 ? `${(score / 1000).toFixed(0)}K` : String(Math.round(score));
+    return `<line class="chart-grid" x1="${left}" y1="${y(score)}" x2="${width - right}" y2="${y(score)}"/><text class="chart-label" x="${left - 10}" y="${y(score) + 3}" text-anchor="end">${label}</text>`;
   }).join("");
-  const firstDate = table.entries[0]?.date ?? "", lastDate = table.entries.at(-1)?.date ?? "";
-  const previousBest = table.entries.length > 1
-    ? Math.max(...table.entries.slice(0, -1).map((entry) => entry.score))
-    : null;
-  const bestLineLabel = previousBest !== null && table.latest.score > previousBest ? "Previous best" : "Personal best";
-  const bestLine = previousBest !== null && table.latest.score !== previousBest
-    ? `<g class="personal-best"><line class="personal-best-line" x1="${left}" y1="${y(previousBest)}" x2="${width - right}" y2="${y(previousBest)}"></line>
-      <text class="personal-best-label" x="${width - right - 8}" y="${Math.max(18, y(previousBest) - 10)}" text-anchor="end">${bestLineLabel} · ${number(previousBest)}</text></g>`
-    : "";
-  const dateIndexes = table.entries.length <= 6
-    ? table.entries.map((_, index) => index)
-    : [0, Math.floor((table.entries.length - 1) / 2), table.entries.length - 1];
-  const dateLabels = dateIndexes.map((index) => `<text class="axis-date" x="${x(index)}" y="${height - 15}" text-anchor="${index === 0 ? "start" : index === table.entries.length - 1 ? "end" : "middle"}">${date(table.entries[index].date, false)}</text>`).join("");
-  const latestY = y(table.latest.score);
-  const latestCalloutWidth = 194;
-  const latestCalloutX = Math.max(left + 8, Math.min(width - right - latestCalloutWidth, x(table.entries.length - 1) - latestCalloutWidth - 8));
-  const latestCalloutY = latestY < top + 60 ? latestY + 12 : latestY - 58;
-  const line = table.entries.length > 1
-    ? `<polyline class="score-line" points="${points}" vector-effect="non-scaling-stroke"></polyline>`
-    : "";
-  return `<div class="chart-wrap"><svg class="progress-chart" viewBox="0 0 ${width} ${height}" role="img" aria-labelledby="chart-title chart-desc">
-    <title id="chart-title">Personal score progression for ${esc(table.name)}</title><desc id="chart-desc">${table.entries.length} ${table.entries.length === 1 ? "score" : "scores"} from ${date(firstDate, false)} to ${date(lastDate, false)}. Latest score: ${number(table.latest.score)}. Personal best: ${number(table.best)}.</desc>
-    <rect class="chart-plot-background" x="${left}" y="${top}" width="${chartWidth}" height="${chartHeight}" rx="3"></rect>
-    <g class="chart-grid">${labels}</g>${area ? `<polygon class="score-area" points="${area}"></polygon>` : ""}${bestLine}
-    ${line}<g class="score-dots">${dots}</g>
-    <g class="latest-score-callout"><rect x="${latestCalloutX}" y="${latestCalloutY}" width="${latestCalloutWidth}" height="46" rx="3"></rect>
-      <text class="latest-score-date" x="${latestCalloutX + 12}" y="${latestCalloutY + 17}">Latest · ${esc(date(table.latest.date, false))}</text>
-      <text class="latest-score-label" x="${latestCalloutX + 12}" y="${latestCalloutY + 36}">${number(table.latest.score)}</text></g>
-    ${dateLabels}
-  </svg></div>`;
+  const sameDay = new Date(entries[0].date).toDateString() === new Date(entries[entries.length - 1].date).toDateString();
+  let lastTick = -Infinity;
+  const dots = entries.map((entry, index) => {
+    const showTick = x(index) - lastTick >= 80;
+    if (showTick) lastTick = x(index);
+    const selected = selectedScoreIndex === index + start;
+    return `<circle class="chart-point score-point ${selected ? "selected" : ""}" cx="${x(index)}" cy="${y(entry.score)}" r="${selected ? 5 : 3.5}" tabindex="0" data-score="${entry.score}" data-date="${esc(`${date(entry.date)} · Player ${entry.player}`)}"><title>${esc(date(entry.date))} · Player ${entry.player}: ${number(entry.score)} points</title></circle>${showTick ? `<text class="chart-label" x="${x(index)}" y="${height - 7}" text-anchor="middle">${esc(sameDay ? time(entry.date) : date(entry.date, false))}</text>` : ""}`;
+  }).join("");
+  const selected = table.entries[selectedScoreIndex];
+  return `<svg class="score-chart" viewBox="0 0 ${width} ${height}" role="img" aria-label="${entries.length} recorded scores; highest score ${number(table.best)} points"><defs><linearGradient id="chart-fill" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="#171717" stop-opacity=".1"/><stop offset="100%" stop-color="#171717" stop-opacity="0"/></linearGradient></defs>${labels}${span ? `<polygon points="${x(0)},${height - bottom} ${points} ${x(entries.length - 1)},${height - bottom}" fill="url(#chart-fill)"/>` : ""}<polyline class="chart-line" points="${points}"/>${dots}</svg>
+    <div class="chart-selection"><span>${selected ? `${esc(date(selected.date))} · Player ${selected.player} · ${number(selected.score)} points` : "Select a score in the history to highlight it."}</span><strong>Personal scores</strong></div>`;
 }
 
-function renderChartLeaderboard(targets: ChartTarget[]): string {
-  const machineTargets = targets.filter((target) => target.rank > 0);
-  if (!machineTargets.length) {
-    const status = nvramBusy ? "Reading machine scores…" : nvramError ? "Machine scores are unavailable for this table." : "Machine high scores appear here when mapped NVRAM is available.";
-    return `<aside class="chart-leaderboard chart-leaderboard-empty"><p class="eyebrow">Leaderboard</p><strong>Personal record</strong><span>${esc(status)}</span></aside>`;
-  }
-  return `<aside class="chart-leaderboard" aria-label="Machine leaderboard">
-    <div class="leaderboard-heading"><div><p class="eyebrow">Machine board</p><h3>High scores</h3></div><span>From NVRAM</span></div>
-    <ol>${machineTargets.map((target) => `<li class="leaderboard-rank-${target.rank}">
-      <span class="trophy-cell">${target.champion ? crownIcon() : target.place <= 3 ? trophyIcon(target.place) : `<span class="rank-number">${target.place}</span>`}</span>
-      <span class="leaderboard-player"><strong>${esc(target.initials || "—")}</strong><small>${esc(target.name)}</small></span>
-      <strong class="leaderboard-score">${number(target.score)}</strong>
-    </li>`).join("")}</ol>
-  </aside>`;
-}
-
-function trophyIcon(rank: number): string {
-  return `<svg class="trophy trophy-${rank}" viewBox="0 0 24 24" role="img" aria-label="${rank === 1 ? "Gold" : rank === 2 ? "Silver" : "Bronze"} trophy">
-    <path d="M7 2h10v3h3v4c0 3-1.8 5-5 5h-.2c-.7 1-1.7 1.7-2.8 2v2h4v2H8v-2h4v-2c-1.1-.3-2.1-1-2.8-2H9c-3.2 0-5-2-5-5V5h3V2Zm0 5H6v2c0 1.4.7 2.4 2.1 2.8A9.8 9.8 0 0 1 7 7Zm10 0a9.8 9.8 0 0 1-1.1 4.8C17.3 11.4 18 10.4 18 9V7h-1Z"></path>
-  </svg>`;
-}
-
-function crownIcon(): string {
-  return `<svg class="crown" viewBox="0 0 24 24" role="img" aria-label="Grand Champion crown">
-    <path d="M3 6 7.5 10 12 4l4.5 6L21 6l-2 11H5L3 6Zm3 13h12v2H6v-2Z"></path>
-    <circle class="crown-jewel" cx="12" cy="13" r="1.35"></circle>
-  </svg>`;
+function renderChartLeaderboard(table: TableHistory, targets: ChartTarget[]): string {
+  const machine = targets.filter(target => target.rank > 0);
+  const status = nvramBusy ? "Reading machine scores…" : "No machine high scores available.";
+  return `<aside class="leaderboard" aria-label="Table high scores"><div class="block-head"><h2>Table high scores</h2><span>NVRAM</span></div>
+    ${machine.length ? machine.map(target => `<div class="rank-row ${target.champion ? "champion" : ""}"><span class="rank-no">${esc(target.label)}</span><div class="rank-body"><div><span>${esc(target.name)}</span><span class="initials">${esc(target.initials)}</span></div><strong>${number(target.score)}</strong></div></div>`).join("") : `<div class="machine-empty">${esc(status)}${nvramError ? `<details><summary>Details</summary>${esc(nvramError)}</details>` : ""}</div>`}
+    <div class="rank-row you"><span class="rank-no">↳</span><div class="rank-body"><div><span>Your personal best</span><span>YOU</span></div><strong>${number(table.best)}</strong></div></div><div class="rank-foot">Machine scores are a read-only reference.</div></aside>`;
 }
 
 function renderScoreHistory(entries: ScoreEntry[]): string {
-  return `<div class="score-history">${[...entries].reverse().map((entry) => `<div class="score-row"><span><strong>${number(entry.score)}</strong><small>${date(entry.date)}</small></span><span class="score-row-meta">${entry.game.signed ? `<span class="signed-label" title="Verified ScoreTracker signature">signed</span>` : ""}<span>${duration(entry.duration)}</span>${WEB_MODE ? "" : `<button class="score-remove" type="button" data-source="${esc(entry.game.source)}" data-index="${entry.game.sourceIndex}" data-score-id="${entry.game.scoreId ?? ""}" title="Remove this game from history" aria-label="Remove this game from history">Remove</button>`}</span></div>`).join("")}</div>`;
-}
-
-function stat(label: string, value: string, context: string): string {
-  return `<article><span>${esc(label)}</span><strong>${esc(value)}</strong><small>${esc(context)}</small></article>`;
+  const best = Math.max(...entries.map(entry => entry.score));
+  const bestIndex = entries.findIndex(entry => entry.score === best);
+  return `<div class="history-scroll"><table class="history-table"><thead><tr><th>Played</th><th>Player</th><th class="score">Final score</th><th>Duration</th>${readOnly ? "" : '<th><span class="sr-only">Actions</span></th>'}</tr></thead><tbody>${entries.map((entry, index) => ({entry, index})).reverse().map(({entry, index}) => `<tr data-game="${index}" tabindex="0" aria-label="Select ${esc(date(entry.date))}, player ${entry.player}, ${number(entry.score)} points" class="${selectedScoreIndex === index ? "selected" : ""}"><td>${esc(fullDate(entry.date))}<small>${esc(time(entry.date))}</small></td><td>P${entry.player}${index === bestIndex ? ' <span class="pill">PB</span>' : ""}</td><td class="score">${number(entry.score)}</td><td>${duration(entry.duration)}</td>${readOnly ? "" : `<td><button class="score-remove" type="button" data-source="${esc(entry.game.source)}" data-index="${entry.game.sourceIndex}" data-score-id="${esc(entry.game.scoreId ?? "")}" aria-label="Remove this game from history">Remove</button></td>`}</tr>`).join("")}</tbody></table></div>`;
 }
 
 function renderSetup(root: string): string {
-  return `<section class="hero setup-hero"><p class="eyebrow">Cabinet setup</p><h1>Connect your local files.</h1><p>Choose your VPX tables folder. ScoreTracker includes the NVRAM maps needed for machine high scores.</p></section>
-    <section class="panel setup">
-      <div class="folder-row"><span class="folder-number">01</span><div><h2>VPX tables</h2><p>Contains each table's <code>scores.json</code> and PinMAME NVRAM files.</p><code class="folder-path">${esc(root || "Not selected")}</code></div><button id="choose-root" class="button ${root ? "secondary" : "primary"}" type="button">${root ? "Change" : "Choose folder"}</button></div>
-      ${root ? `<div class="setup-ready"><span>Tables folder connected</span><button id="setup-done" class="button primary" type="button">View score history</button></div>` : `<div class="setup-hint">Select your tables folder to continue.</div>`}
-    </section>`;
+  return `<section class="hero setup-hero"><p class="eyebrow">Local score history</p><h1>Tables folder</h1><p>Choose your tables folder to explore your history and machine leaderboards.</p></section>
+    <section class="panel setup-panel">${webConfigLoaded ? webConfigurable ? renderWebFolders(root) : "<p>The dashboard folders are configured by its server.</p>" : '<p>Connecting to your Viewer…</p><button id="retry-connection" class="button primary">Retry connection</button>'}</section>`;
 }
-
+function renderWebFolders(root: string): string {
+  if (!desktopMode) return '<p>The dashboard folders are configured by its server.</p>';
+  return `<div class="folder-row"><div><h2>Tables folder</h2><code class="folder-path">${esc(root || "Not selected")}</code><p>Your folder is remembered automatically.</p></div><button id="choose-native" class="button primary" type="button">${root ? "Change tables folder" : "Choose tables folder"}</button></div>
+  <form id="setup-form" class="web-folders-form">
+    <label for="vpx-path">Visual Pinball installation</label><div class="setup-path"><input id="vpx-path" name="vpxRoot" value="${esc(vpxRoot)}" placeholder="Select your Visual Pinball installation"><button type="button" id="choose-vpx" class="button secondary">Browse…</button></div>
+    <button type="submit" class="button secondary" ${setupBusy || !root ? "disabled" : ""}>Save folders</button>
+    <p>Install or update the plugin using its separate ZIP in the VPX plugins directory.</p>
+    <p id="setup-status" role="status">${esc(setupStatus)}</p>
+  </form>`;
+}
 function renderFoldersModal(root: string): string {
-  return `<div class="modal-backdrop" data-close-folders>
-    <section class="folders-modal panel" role="dialog" aria-modal="true" aria-labelledby="folders-title">
-      <div class="modal-heading"><div><p class="eyebrow">Cabinet setup</p><h2 id="folders-title">Folders</h2></div><button id="close-folders" class="modal-close" type="button" aria-label="Close folders">×</button></div>
-      <div class="folder-row"><span class="folder-number">01</span><div><h2>VPX tables</h2><p>Contains each table's <code>scores.json</code> and PinMAME NVRAM files.</p><code class="folder-path">${esc(root)}</code></div><button id="choose-root" class="button secondary" type="button">Change</button></div>
-      <div class="folder-row"><span class="folder-number">02</span><div><h2>Diagnostic log</h2><p>Send this file when table artwork or score loading fails.</p><code class="folder-path">${esc(diagnosticLogPath || "The log path will appear after application startup.")}</code></div><button id="show-log" class="button secondary" type="button">Show file</button></div>
-    </section>
-  </div>`;
+  return `<div class="modal-backdrop" data-close-folders><section class="folders-modal panel" role="dialog" aria-modal="true" aria-labelledby="folders-title"><div class="modal-heading"><h2 id="folders-title">Folders & setup</h2><button id="close-folders" class="modal-close" aria-label="Close folders">×</button></div>${renderWebFolders(root)}${desktopMode ? '<button id="show-log" class="button secondary">Show diagnostic log</button>' : ""}</section></div>`;
 }
 
 function renderEmptyHistory(): string {
   if (busy) return `<section class="panel empty"><strong>Scanning your tables…</strong><span>This can take a moment for a large collection.</span></section>`;
-  return `<section class="panel empty"><strong>No non-zero scores found</strong><span>Play a supported table with ScoreTracker enabled, then refresh.</span></section>`;
+  return `<section class="panel empty"><strong>No completed games found</strong><span>Play a supported table with ScoreTracker enabled, then refresh.</span></section>`;
 }
 
 function sparklinePoints(values: number[], width: number, height: number, pad: number): string {
@@ -720,33 +599,8 @@ function sparklinePoints(values: number[], width: number, height: number, pad: n
   }).join(" ");
 }
 
-function scorePointCircles(entries: ScoreEntry[], points: string): string {
-  const coordinates = points.split(" ");
-  return entries.map((entry, index) => {
-    const [cx, cy] = coordinates[index]?.split(",") ?? ["0", "0"];
-    return `<circle class="score-point" cx="${cx}" cy="${cy}" r="4.5" data-score="${entry.score}" data-date="${esc(date(entry.date))}"><title>${date(entry.date)} — ${number(entry.score)}</title></circle>`;
-  }).join("");
-}
-
-function areaPath(points: string, height: number): string {
-  if (!points) return "";
-  const pairs = points.split(" ");
-  return `M ${pairs[0]} L ${pairs.slice(1).join(" L ")} L ${pairs.at(-1)?.split(",")[0]},${height} L ${pairs[0].split(",")[0]},${height} Z`;
-}
-
-function wireEvents(): void {
-  wireScorePointTooltips();
-  document.querySelectorAll<HTMLButtonElement>("[data-table-letter]").forEach((button) => {
-    button.addEventListener("click", () => {
-      tableLetterFilter = button.dataset.tableLetter || null;
-      render();
-      document.querySelector(".section-heading")?.scrollIntoView({
-        behavior: window.matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth",
-        block: "start",
-      });
-    });
-  });
-  document.querySelectorAll<HTMLImageElement>(".wheel-image").forEach((image) => {
+function wireArtwork(scope: ParentNode = document): void {
+  scope.querySelectorAll<HTMLImageElement>(".wheel-image").forEach((image) => {
     const artwork = image.closest<HTMLElement>(".wheel-art");
     const updateArtworkState = () => {
       const loaded = image.naturalWidth > 0;
@@ -760,7 +614,6 @@ function wireEvents(): void {
           naturalHeight: image.naturalHeight,
           online: navigator.onLine,
         });
-        if (!loaded) void probeRemoteUrl(image.src, `wheel image for ${artwork?.dataset.wheelRom ?? "unknown ROM"}`);
       }
       artwork?.classList.toggle("wheel-loaded", loaded);
       artwork?.classList.toggle("wheel-missing", !loaded);
@@ -771,31 +624,73 @@ function wireEvents(): void {
     image.addEventListener("error", updateArtworkState, { once: true });
     if (image.complete) updateArtworkState();
   });
+}
+
+function updateLibrary(): void {
+  const library = document.querySelector<HTMLElement>("#library");
+  if (!library) return;
+  const list = tables();
+  library.innerHTML = renderLibrary(list);
+  const count = document.querySelector("#result-count");
+  if (count) count.textContent = `${visibleTables(list).length} tables`;
+  wireArtwork(library);
+}
+
+function wireEvents(): void {
+  document.querySelector<HTMLInputElement>("#search")?.addEventListener("input", event => {
+    tableSearch = (event.target as HTMLInputElement).value;
+    updateLibrary();
+  });
+  document.querySelector<HTMLSelectElement>("#sort")?.addEventListener("change", event => {
+    const value = (event.target as HTMLSelectElement).value;
+    if (value === "recent" || value === "name" || value === "games") tableSort = value;
+    updateLibrary();
+  });
+  document.querySelectorAll<HTMLButtonElement>("[data-tab]").forEach(button => button.addEventListener("click", () => {
+    detailTab = button.dataset.tab === "history" ? "history" : "overview";
+    render();
+  }));
+  document.querySelectorAll<HTMLButtonElement>("[data-range]").forEach(button => button.addEventListener("click", () => {
+    chartRange = button.dataset.range === "5" ? "5" : "all";
+    render();
+  }));
+  document.querySelectorAll<HTMLElement>("[data-game]").forEach(row => {
+    const select = () => {
+      selectedScoreIndex = Number(row.dataset.game);
+      const table = tables().find(table => table.rom === selectedRom());
+      if (!table) return;
+      if (chartRange === "5" && selectedScoreIndex < table.entries.length - 5) { chartRange = "all"; render(); return; }
+      document.querySelectorAll<HTMLElement>("[data-game]").forEach(other => other.classList.toggle("selected", other === row));
+      const chart = document.querySelector("#chart");
+      if (chart) chart.innerHTML = renderProgressChart(table);
+      wireScorePointTooltips();
+    };
+    row.addEventListener("click", select);
+    row.addEventListener("keydown", event => { if (event.target === row && (event.key === "Enter" || event.key === " ")) { event.preventDefault(); select(); } });
+  });
+  wireScorePointTooltips();
+  wireArtwork();
   document.querySelectorAll<HTMLButtonElement>(".score-remove").forEach((button) => {
-    button.addEventListener("click", () => removeGame(button));
+    button.addEventListener("click", (event) => { event.stopPropagation(); void removeGame(button); });
   });
-  document.querySelector("#choose-root")?.addEventListener("click", chooseRoot);
-  document.querySelector("#show-log")?.addEventListener("click", () => {
-    void invoke("reveal_diagnostic_log").catch((error) => {
-      diagnostic("error", "diagnostic.reveal_failed", errorDetails(error));
-    });
-  });
+  document.querySelector("#choose-native")?.addEventListener("click", () => { void chooseNativeFolder(); });
+  document.querySelector("#quit-native")?.addEventListener("click", () => { void quitNative(); });
+  document.querySelector("#retry-connection")?.addEventListener("click", () => { void initialize(); });
+  document.querySelector<HTMLFormElement>("#setup-form")?.addEventListener("submit", event => { event.preventDefault(); void saveSetup(); });
+  document.querySelector("#choose-vpx")?.addEventListener("click", () => { void chooseSetupPath("vpx"); });
+  document.querySelector("#show-log")?.addEventListener("click", () => { void post("/api/reveal-log").catch(error => { fatalError = String(error); render(); }); });
   document.querySelector("#show-folders")?.addEventListener("click", openFolders);
   document.querySelector("#close-folders")?.addEventListener("click", closeFolders);
   document.querySelector("[data-close-folders]")?.addEventListener("click", (event) => {
     if (event.target === event.currentTarget) closeFolders();
   });
-  document.querySelector("#setup-done")?.addEventListener("click", goHome);
-  document.querySelector("#refresh")?.addEventListener("click", scanConfiguredRoot);
-  document.querySelector("#check-update")?.addEventListener("click", () => {
-    if (availableUpdate) void installAvailableUpdate();
-    else void checkForUpdate(true);
+  document.querySelector("#refresh")?.addEventListener("click", () => {
+    void scanConfiguredRoot();
   });
-  document.querySelector("#install-update")?.addEventListener("click", () => void installAvailableUpdate());
   document.querySelector("#home")?.addEventListener("click", goHome);
   document.querySelector("#back")?.addEventListener("click", goHome);
   document.querySelectorAll<HTMLElement>("[data-rom]").forEach((element) => element.addEventListener("click", () => {
-    location.hash = `#/table/${encodeURIComponent(element.dataset.rom ?? "")}`;
+    navigate(`#/table/${encodeURIComponent(element.dataset.rom ?? "")}`);
   }));
 }
 
@@ -829,7 +724,7 @@ function wireScorePointTooltips(): void {
 
 function goHome(): void {
   foldersOpen = false;
-  if (location.hash) location.hash = "#/";
+  if (route()) navigate("#/");
   else render();
 }
 
@@ -845,9 +740,10 @@ function closeFolders(): void {
   document.querySelector<HTMLButtonElement>("#show-folders")?.focus();
 }
 
-async function ensureNvram(table: TableHistory, tablesRoot: string, mapsRoot: string): Promise<void> {
-  if (!mapsRoot || !tablesRoot || nvramBusy || nvramRom === table.rom) return;
+async function ensureNvram(table: TableHistory, tablesRoot: string): Promise<void> {
+  if (!tablesRoot || nvramBusy || nvramRom === table.rom) return;
   nvramRom = table.rom;
+  if (!table.games.some(game => game.rom)) return;
   nvram = null;
   nvramError = "";
   nvramBusy = true;
@@ -855,7 +751,6 @@ async function ensureNvram(table: TableHistory, tablesRoot: string, mapsRoot: st
   try {
     nvram = await backend<NvramDocument | null>("load_nvram", {
       tablesRoot,
-      mapsRoot,
       rom: table.rom,
       scoreSource: table.latest.game.source,
     });
@@ -867,36 +762,95 @@ async function ensureNvram(table: TableHistory, tablesRoot: string, mapsRoot: st
   }
 }
 
-async function chooseRoot(): Promise<void> {
-  if (WEB_MODE) return;
-  const selected = await open({ directory: true, multiple: false, title: "Choose your VPX tables folder" });
-  if (typeof selected !== "string") return;
-  localStorage.setItem(TABLES_ROOT_KEY, selected);
-  snapshot = null;
-  fatalError = "";
-  await scanConfiguredRoot();
+function adoptConfig(config: Configuration): void {
+  desktopMode = config.native; readOnly = config.readOnly;
+  webConfigurable = config.configurable; webConfigLoaded = true; vpxRoot = config.vpxRoot;
+  preferences.setItem(TABLES_ROOT_KEY, config.tablesRoot);
+}
+async function chooseSetupPath(kind: "vpx"): Promise<void> {
+  try {
+    const result = await post<{path:string} | null>(`/api/choose-folder?kind=${kind}`);
+    if (result) { const input = document.querySelector<HTMLInputElement>("#vpx-path"); if (input) input.value = result.path; }
+  } catch (error) { setupStatus = String(error); const status = document.querySelector("#setup-status"); if (status) status.textContent = setupStatus; }
+}
+async function saveSetup(): Promise<void> {
+  if (setupBusy) return;
+  const form = document.querySelector<HTMLFormElement>("#setup-form"); if (!form) return;
+  const values = new FormData(form);
+  const settings = {tablesRoot: preferences.getItem(TABLES_ROOT_KEY) ?? "", vpxRoot: String(values.get("vpxRoot") ?? ""), mapsRoot: ""};
+  setupBusy = true; setupStatus = "Saving folders…";
+  vpxRoot = settings.vpxRoot; render();
+  try {
+    adoptConfig(await post<Configuration>("/api/config", settings)); setupStatus = "Folders saved.";
+    nvram = null; nvramRom = "";
+  } catch (error) { setupStatus = error instanceof Error ? error.message : String(error); }
+  finally { setupBusy = false; render(); }
+}
+async function chooseNativeFolder(): Promise<void> {
+  if (nativeChoosing) return;
+  nativeChoosing = true;
+  const button = document.querySelector<HTMLButtonElement>("#choose-native");
+  if (button) { button.disabled = true; button.textContent = "Choose in the folder window…"; }
+  try {
+    const config = await post<Configuration | null>("/api/choose-folder");
+    if (!config) return;
+    cancelScan(); scanSerial++; busy = false;
+    preferences.setItem(TABLES_ROOT_KEY, config.tablesRoot);
+    adoptConfig(config);
+    snapshot = null; nvram = null; nvramRom = ""; fatalError = ""; foldersOpen = false;
+    navigate("");
+    await scanConfiguredRoot();
+  } catch (error) { fatalError = error instanceof Error ? error.message : String(error); }
+  finally { nativeChoosing = false; render(); }
+}
+async function quitNative(): Promise<void> {
+  try {
+    await post("/api/quit");
+    app.innerHTML = '<main><section class="panel"><h1>ScoreTracker is closed.</h1><p>Open the application to view your scores again.</p></section></main>';
+  } catch (error) { fatalError = String(error); render(); }
 }
 
 async function scanConfiguredRoot(): Promise<void> {
-  const tablesRoot = localStorage.getItem(TABLES_ROOT_KEY);
+  const tablesRoot = preferences.getItem(TABLES_ROOT_KEY);
   if (!tablesRoot || busy) return;
+  const serial = ++scanSerial;
+  selectedScoreIndex = -1;
+  const refreshingExistingHistory = Boolean(snapshot?.games.length);
   busy = true;
   fatalError = "";
   diagnostic("info", "scores.scan_started", { tablesRoot });
   render();
   try {
-    snapshot = await backend<ScanSnapshot>("scan_scores", { tablesRoot });
+    const started = performance.now();
+    const scanned = await scanScores(partial => {
+      if (serial !== scanSerial) return;
+      const previousGames = snapshot?.games.length ?? 0;
+      snapshot = partial;
+      if (foldersOpen) return;
+      // Keep existing cards and their artwork steady while refreshing. On the
+      // first load, redraw only when a batch adds scores, not on every tick.
+      if (!refreshingExistingHistory && partial.games.length !== previousGames) render();
+      else {
+        const status = document.querySelector("#scan-status");
+        if (status) status.textContent = scanStatusText();
+      }
+    });
+    if (serial !== scanSerial) return;
+    snapshot = scanned;
     diagnostic("info", "scores.scan_completed", {
       tablesRoot,
       games: snapshot.games.length,
       sourcesScanned: snapshot.sourcesScanned,
+      elapsedMs: Math.round(performance.now() - started),
       vpxFilesFound: snapshot.vpxFilesFound,
       warnings: snapshot.warnings.length,
     });
   } catch (error) {
+    if (serial !== scanSerial) return;
     fatalError = error instanceof Error ? error.message : String(error);
     diagnostic("error", "scores.scan_failed", { tablesRoot, ...errorDetails(error) });
   } finally {
+    if (serial !== scanSerial) return;
     busy = false;
     nvramRom = "";
     nvram = null;
@@ -906,12 +860,12 @@ async function scanConfiguredRoot(): Promise<void> {
 
 async function removeGame(button: HTMLButtonElement): Promise<void> {
   if (busy) return;
-  const tablesRoot = localStorage.getItem(TABLES_ROOT_KEY);
+  const tablesRoot = preferences.getItem(TABLES_ROOT_KEY);
   if (!tablesRoot) return;
   const scoreSource = button.dataset.source ?? "";
   const sourceIndex = Number(button.dataset.index ?? "0");
   const rawId = button.dataset.scoreId ?? "";
-  const scoreId = rawId === "" ? null : Number(rawId);
+  const scoreId = rawId === "" ? null : rawId;
   if (!window.confirm("Remove this game from your history? It is permanently deleted from scores.json and cannot be undone.")) {
     return;
   }
@@ -925,100 +879,21 @@ async function removeGame(button: HTMLButtonElement): Promise<void> {
   }
 }
 
-async function checkForUpdate(manual: boolean): Promise<void> {
-  if (updateBusy) return;
-  updateBusy = true;
-  if (manual) updateStatus = "Checking GitHub Releases…";
-  render();
-  try {
-    availableUpdate = await backend<UpdateInfo | null>("check_for_update");
-    localStorage.setItem(UPDATE_CHECK_KEY, String(Date.now()));
-    updateStatus = availableUpdate
-      ? ""
-      : manual
-        ? "VPX Scoretracker Viewer is up to date."
-        : "";
-  } catch (error) {
-    if (manual) {
-      updateStatus = `Update check failed: ${error instanceof Error ? error.message : String(error)}`;
-    }
-  } finally {
-    updateBusy = false;
-    render();
-  }
-}
-
-async function installAvailableUpdate(): Promise<void> {
-  if (!availableUpdate || updateBusy) return;
-
-  updateBusy = true;
-  updateStatus = `Downloading and verifying ScoreTracker ${availableUpdate.version}…`;
-  render();
-  try {
-    await backend("download_and_launch_update", { update: availableUpdate });
-  } catch (error) {
-    updateStatus = `Update failed: ${error instanceof Error ? error.message : String(error)}`;
-    updateBusy = false;
-    render();
-  }
-}
-
-window.addEventListener("hashchange", render);
+window.addEventListener("hashchange", () => { detailTab = "overview"; chartRange = "all"; selectedScoreIndex = -1; render(); window.scrollTo(0, 0); });
 window.addEventListener("keydown", (event) => {
   if (event.key === "Escape" && foldersOpen) closeFolders();
 });
 async function initialize(): Promise<void> {
-  if (!WEB_MODE) {
-    try {
-      diagnosticLogPath = await invoke<string>("diagnostic_log_path");
-    } catch (error) {
-      console.warn("[ScoreTracker] diagnostic.path_failed", error);
-    }
-    diagnostic("info", "application.started", {
-      logPath: diagnosticLogPath,
-      userAgent: navigator.userAgent,
-      language: navigator.language,
-      online: navigator.onLine,
-    });
-  }
-
-  // Adopt installer defaults. The bundled maps path is authoritative and replaces
-  // any map folder saved by older companion versions.
   try {
-    const seed = await backend<{ tablesRoot: string | null; mapsRoot: string | null } | null>("read_seed_config");
-    if (seed?.tablesRoot && !localStorage.getItem(TABLES_ROOT_KEY)) {
-      localStorage.setItem(TABLES_ROOT_KEY, seed.tablesRoot);
-    }
-    if (seed?.mapsRoot) {
-      localStorage.setItem(MAPS_ROOT_KEY, seed.mapsRoot);
-    }
-  } catch {
-    // no seed available; the setup screen will ask for the tables folder
-  }
+    adoptConfig(await request<Configuration>("/api/config"));
+    fatalError = "";
+    render();
+    if (preferences.getItem(TABLES_ROOT_KEY)) void scanConfiguredRoot();
 
-  const selectedMapsRoot = localStorage.getItem(MAPS_ROOT_KEY);
-  if (selectedMapsRoot) {
-    try {
-      const resolved = await backend<string>("resolve_maps_root", { path: selectedMapsRoot });
-      localStorage.setItem(MAPS_ROOT_KEY, resolved);
-    } catch (error) {
-      localStorage.removeItem(MAPS_ROOT_KEY);
-      nvramError = `Bundled maps unavailable: ${error instanceof Error ? error.message : String(error)}`;
-    }
-  }
-
-  render();
-  if (localStorage.getItem(TABLES_ROOT_KEY)) void scanConfiguredRoot();
-
-  if (!WEB_MODE) {
-    const lastCheck = Number(localStorage.getItem(UPDATE_CHECK_KEY) ?? 0);
-    if (!Number.isFinite(lastCheck) || Date.now() - lastCheck >= UPDATE_CHECK_INTERVAL) {
-      void checkForUpdate(false);
-    }
-  }
+  } catch (error) { fatalError = `Cannot connect to the Viewer. ${String(error)}`; render(); }
 }
 
-// Paint the application immediately. Installer defaults are loaded
-// asynchronously and will update the view once IPC is ready.
+// Paint immediately. Saved folder settings are loaded
+// asynchronously and will update the view once the local API is ready.
 render();
 void initialize();

@@ -1,43 +1,18 @@
-# ScoreTracker Companion
+# Viewer interface
 
-Cross-platform Tauri 2 companion application for local game history produced by the ScoreTracker
-VPX plugin. See [ARCHITECTURE.md](ARCHITECTURE.md) and [REQUIREMENTS.md](REQUIREMENTS.md).
-
-## Development
-
-Install the platform-specific [Tauri prerequisites](https://v2.tauri.app/start/prerequisites/), then:
-
-```sh
-npm install
-npm run tauri dev
-```
-
-Useful non-GUI checks:
+The single TypeScript/Vite interface is embedded in the native Viewer. It displays
+local game history and read-only machine high scores. Native folder selection,
+settings, confirmed deletion and logs are provided by the TypeScript backend
+running in Electron. The renderer has no Node.js or filesystem access.
+There is no uploader, signing interface, plugin installer or automatic updater.
 
 ```sh
+npm ci
 npm run check
+npm test
 npm run build
-cargo test --manifest-path src-tauri/Cargo.toml
-cargo check --manifest-path src-tauri/Cargo.toml
+npm start
 ```
 
-The companion asks only for the VPX tables directory. Releases include a pinned NVRAM maps bundle,
-and the plugin installer configures it automatically. The app then provides a Rust scanner
-for ScoreTracker schema history (v1 and v2), full-score progress
-charts, read-only map-based NVRAM high scores, and optional table artwork. Each score row has a
-Remove action that permanently deletes that game from its `scores.json` — useful for pruning wrong
-readings that some ROMs produce. Games are matched by the stable `score_id` field written in schema
-v2 (legacy v1 records are removed by position). The companion resolves
-table identity through the public VPinPlay API and loads matching wheel images from VPinMediaDB;
-successful matches are cached for 30 days and missing network access never blocks local scores. VPX
-hashing is deferred until after history is visible and is used only when lighter name and ROM matching
-cannot identify the table. The companion only ever deletes games you remove yourself and never
-modifies `.nv` files.
-
-## Diagnostic log
-
-The desktop viewer writes a rotating `scoretracker-viewer.log` file with score scanning and table
-artwork diagnostics. Open **Folders & Log** in the viewer to reveal it. On macOS its full location
-is `~/Library/Logs/com.herrmirto.scoretracker.viewer/scoretracker-viewer.log`. The log records
-artwork matching, cache use, API responses, timeouts, wheel image loading, and a native network
-probe when WebView requests fail. The current log rotates at 2 MB and keeps one previous file.
+`npm run dev` starts Vite and Electron using temporary settings.
+See [Viewer development and packaging](../viewer/README.md).

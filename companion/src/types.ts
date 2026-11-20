@@ -1,5 +1,5 @@
 export interface GameRecord {
-  scoreId: number | null;
+  scoreId: string | null;
   date: string;
   rom: string;
   scores: number[];
@@ -10,7 +10,6 @@ export interface GameRecord {
   sourceIndex: number;
   vpxFileName: string | null;
   vpxFileHash: string | null;
-  signed: boolean;
 }
 
 export interface ScanWarning {
@@ -37,16 +36,4 @@ export interface MachineHighScore {
 export interface NvramDocument {
   rom: string;
   highScores: MachineHighScore[];
-}
-
-export interface UpdateInfo {
-  version: string;
-  currentVersion: string;
-  releaseUrl: string;
-  releaseNotes: string;
-  publishedAt: string | null;
-  assetName: string;
-  downloadUrl: string;
-  digest: string;
-  size: number;
 }

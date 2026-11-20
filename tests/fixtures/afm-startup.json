@@ -1,0 +1,857 @@
+{
+  "description": "Actual AFM boot observations, 2026-11-18. Old score and RAM self-test values must not create a completed game. This is not a gameplay-completion trace.",
+  "samples": [
+    {
+      "game": "pinmame::afm_113b",
+      "frame": 1,
+      "fields": [
+        {
+          "format": 8,
+          "path": "audits\\B.3 Standard Audits\\01\\Games Started",
+          "value": 211
+        },
+        {
+          "format": 8,
+          "path": "audits\\B.3 Standard Audits\\02\\Total Plays",
+          "value": 170
+        },
+        {
+          "format": 8,
+          "path": "audits\\B.3 Standard Audits\\23\\Balls Played",
+          "value": 531
+        },
+        {
+          "format": 8,
+          "path": "audits\\B.3 Standard Audits\\24\\Tilts",
+          "value": 2
+        },
+        {
+          "format": 8,
+          "path": "game_state\\current_ball\\Ball",
+          "value": 0
+        },
+        {
+          "format": 8,
+          "path": "game_state\\current_player\\Current Player",
+          "value": 0
+        },
+        {
+          "format": 8,
+          "path": "game_state\\extra_balls\\Extra Balls",
+          "value": 0
+        },
+        {
+          "format": 8,
+          "path": "game_state\\game_over\\Game Over",
+          "value": 0
+        },
+        {
+          "format": 8,
+          "path": "game_state\\player_count\\Players",
+          "value": 1
+        },
+        {
+          "format": 8,
+          "path": "game_state\\scores\\Player 1",
+          "value": 350798730
+        },
+        {
+          "format": 8,
+          "path": "game_state\\scores\\Player 2",
+          "value": 0
+        },
+        {
+          "format": 8,
+          "path": "game_state\\scores\\Player 3",
+          "value": 0
+        },
+        {
+          "format": 8,
+          "path": "game_state\\scores\\Player 4",
+          "value": 0
+        }
+      ]
+    },
+    {
+      "game": "pinmame::afm_113b",
+      "frame": 4,
+      "fields": [
+        {
+          "format": 8,
+          "path": "audits\\B.3 Standard Audits\\01\\Games Started",
+          "value": 211
+        },
+        {
+          "format": 8,
+          "path": "audits\\B.3 Standard Audits\\02\\Total Plays",
+          "value": 170
+        },
+        {
+          "format": 8,
+          "path": "audits\\B.3 Standard Audits\\23\\Balls Played",
+          "value": 531
+        },
+        {
+          "format": 8,
+          "path": "audits\\B.3 Standard Audits\\24\\Tilts",
+          "value": 2
+        },
+        {
+          "format": 8,
+          "path": "game_state\\current_ball\\Ball",
+          "value": 85
+        },
+        {
+          "format": 8,
+          "path": "game_state\\current_player\\Current Player",
+          "value": 85
+        },
+        {
+          "format": 8,
+          "path": "game_state\\extra_balls\\Extra Balls",
+          "value": 85
+        },
+        {
+          "format": 8,
+          "path": "game_state\\game_over\\Game Over",
+          "value": 1
+        },
+        {
+          "format": 8,
+          "path": "game_state\\player_count\\Players",
+          "value": 1
+        },
+        {
+          "format": 8,
+          "path": "game_state\\scores\\Player 1",
+          "value": 350798730
+        },
+        {
+          "format": 8,
+          "path": "game_state\\scores\\Player 2",
+          "value": 0
+        },
+        {
+          "format": 8,
+          "path": "game_state\\scores\\Player 3",
+          "value": 0
+        },
+        {
+          "format": 8,
+          "path": "game_state\\scores\\Player 4",
+          "value": 0
+        }
+      ]
+    },
+    {
+      "game": "pinmame::afm_113b",
+      "frame": 9,
+      "fields": [
+        {
+          "format": 8,
+          "path": "audits\\B.3 Standard Audits\\01\\Games Started",
+          "value": 211
+        },
+        {
+          "format": 8,
+          "path": "audits\\B.3 Standard Audits\\02\\Total Plays",
+          "value": 170
+        },
+        {
+          "format": 8,
+          "path": "audits\\B.3 Standard Audits\\23\\Balls Played",
+          "value": 531
+        },
+        {
+          "format": 8,
+          "path": "audits\\B.3 Standard Audits\\24\\Tilts",
+          "value": 2
+        },
+        {
+          "format": 8,
+          "path": "game_state\\current_ball\\Ball",
+          "value": 170
+        },
+        {
+          "format": 8,
+          "path": "game_state\\current_player\\Current Player",
+          "value": 170
+        },
+        {
+          "format": 8,
+          "path": "game_state\\extra_balls\\Extra Balls",
+          "value": 170
+        },
+        {
+          "format": 8,
+          "path": "game_state\\game_over\\Game Over",
+          "value": 1
+        },
+        {
+          "format": 8,
+          "path": "game_state\\player_count\\Players",
+          "value": 1
+        },
+        {
+          "format": 8,
+          "path": "game_state\\scores\\Player 1",
+          "value": 350798730
+        },
+        {
+          "format": 8,
+          "path": "game_state\\scores\\Player 2",
+          "value": 0
+        },
+        {
+          "format": 8,
+          "path": "game_state\\scores\\Player 3",
+          "value": 0
+        },
+        {
+          "format": 8,
+          "path": "game_state\\scores\\Player 4",
+          "value": 0
+        }
+      ]
+    },
+    {
+      "game": "pinmame::afm_113b",
+      "frame": 15,
+      "fields": [
+        {
+          "format": 8,
+          "path": "audits\\B.3 Standard Audits\\01\\Games Started",
+          "value": 211
+        },
+        {
+          "format": 8,
+          "path": "audits\\B.3 Standard Audits\\02\\Total Plays",
+          "value": 170
+        },
+        {
+          "format": 8,
+          "path": "audits\\B.3 Standard Audits\\23\\Balls Played",
+          "value": 531
+        },
+        {
+          "format": 8,
+          "path": "audits\\B.3 Standard Audits\\24\\Tilts",
+          "value": 2
+        },
+        {
+          "format": 8,
+          "path": "game_state\\current_ball\\Ball",
+          "value": 170
+        },
+        {
+          "format": 8,
+          "path": "game_state\\current_player\\Current Player",
+          "value": 170
+        },
+        {
+          "format": 8,
+          "path": "game_state\\extra_balls\\Extra Balls",
+          "value": 170
+        },
+        {
+          "format": 8,
+          "path": "game_state\\game_over\\Game Over",
+          "value": 0
+        },
+        {
+          "format": 8,
+          "path": "game_state\\player_count\\Players",
+          "value": 1
+        },
+        {
+          "format": 8,
+          "path": "game_state\\scores\\Player 1",
+          "value": 350798730
+        },
+        {
+          "format": 8,
+          "path": "game_state\\scores\\Player 2",
+          "value": 0
+        },
+        {
+          "format": 8,
+          "path": "game_state\\scores\\Player 3",
+          "value": 0
+        },
+        {
+          "format": 8,
+          "path": "game_state\\scores\\Player 4",
+          "value": 0
+        }
+      ]
+    },
+    {
+      "game": "pinmame::afm_113b",
+      "frame": 16,
+      "fields": [
+        {
+          "format": 8,
+          "path": "audits\\B.3 Standard Audits\\01\\Games Started",
+          "value": 211
+        },
+        {
+          "format": 8,
+          "path": "audits\\B.3 Standard Audits\\02\\Total Plays",
+          "value": 170
+        },
+        {
+          "format": 8,
+          "path": "audits\\B.3 Standard Audits\\23\\Balls Played",
+          "value": 531
+        },
+        {
+          "format": 8,
+          "path": "audits\\B.3 Standard Audits\\24\\Tilts",
+          "value": 2
+        },
+        {
+          "format": 8,
+          "path": "game_state\\current_ball\\Ball",
+          "value": 0
+        },
+        {
+          "format": 8,
+          "path": "game_state\\current_player\\Current Player",
+          "value": 0
+        },
+        {
+          "format": 8,
+          "path": "game_state\\extra_balls\\Extra Balls",
+          "value": 0
+        },
+        {
+          "format": 8,
+          "path": "game_state\\game_over\\Game Over",
+          "value": 0
+        },
+        {
+          "format": 8,
+          "path": "game_state\\player_count\\Players",
+          "value": 1
+        },
+        {
+          "format": 8,
+          "path": "game_state\\scores\\Player 1",
+          "value": 350798730
+        },
+        {
+          "format": 8,
+          "path": "game_state\\scores\\Player 2",
+          "value": 0
+        },
+        {
+          "format": 8,
+          "path": "game_state\\scores\\Player 3",
+          "value": 0
+        },
+        {
+          "format": 8,
+          "path": "game_state\\scores\\Player 4",
+          "value": 0
+        }
+      ]
+    },
+    {
+      "game": "pinmame::afm_113b",
+      "frame": 788,
+      "fields": [
+        {
+          "format": 8,
+          "path": "audits\\B.3 Standard Audits\\01\\Games Started",
+          "value": 211
+        },
+        {
+          "format": 8,
+          "path": "audits\\B.3 Standard Audits\\02\\Total Plays",
+          "value": 170
+        },
+        {
+          "format": 8,
+          "path": "audits\\B.3 Standard Audits\\23\\Balls Played",
+          "value": 531
+        },
+        {
+          "format": 8,
+          "path": "audits\\B.3 Standard Audits\\24\\Tilts",
+          "value": 2
+        },
+        {
+          "format": 8,
+          "path": "game_state\\current_ball\\Ball",
+          "value": 0
+        },
+        {
+          "format": 8,
+          "path": "game_state\\current_player\\Current Player",
+          "value": 0
+        },
+        {
+          "format": 8,
+          "path": "game_state\\extra_balls\\Extra Balls",
+          "value": 0
+        },
+        {
+          "format": 8,
+          "path": "game_state\\game_over\\Game Over",
+          "value": 0
+        },
+        {
+          "format": 8,
+          "path": "game_state\\player_count\\Players",
+          "value": 1
+        },
+        {
+          "format": 8,
+          "path": "game_state\\scores\\Player 1",
+          "value": 350798730
+        },
+        {
+          "format": 8,
+          "path": "game_state\\scores\\Player 2",
+          "value": 0
+        },
+        {
+          "format": 8,
+          "path": "game_state\\scores\\Player 3",
+          "value": 0
+        },
+        {
+          "format": 8,
+          "path": "game_state\\scores\\Player 4",
+          "value": 0
+        }
+      ]
+    },
+    {
+      "game": "pinmame::afm_113b",
+      "frame": 1,
+      "fields": [
+        {
+          "format": 8,
+          "path": "audits\\B.3 Standard Audits\\01\\Games Started",
+          "value": 211
+        },
+        {
+          "format": 8,
+          "path": "audits\\B.3 Standard Audits\\02\\Total Plays",
+          "value": 170
+        },
+        {
+          "format": 8,
+          "path": "audits\\B.3 Standard Audits\\23\\Balls Played",
+          "value": 531
+        },
+        {
+          "format": 8,
+          "path": "audits\\B.3 Standard Audits\\24\\Tilts",
+          "value": 2
+        },
+        {
+          "format": 8,
+          "path": "game_state\\current_ball\\Ball",
+          "value": 0
+        },
+        {
+          "format": 8,
+          "path": "game_state\\current_player\\Current Player",
+          "value": 0
+        },
+        {
+          "format": 8,
+          "path": "game_state\\extra_balls\\Extra Balls",
+          "value": 0
+        },
+        {
+          "format": 8,
+          "path": "game_state\\game_over\\Game Over",
+          "value": 0
+        },
+        {
+          "format": 8,
+          "path": "game_state\\player_count\\Players",
+          "value": 1
+        },
+        {
+          "format": 8,
+          "path": "game_state\\scores\\Player 1",
+          "value": 350798730
+        },
+        {
+          "format": 8,
+          "path": "game_state\\scores\\Player 2",
+          "value": 0
+        },
+        {
+          "format": 8,
+          "path": "game_state\\scores\\Player 3",
+          "value": 0
+        },
+        {
+          "format": 8,
+          "path": "game_state\\scores\\Player 4",
+          "value": 0
+        }
+      ]
+    },
+    {
+      "game": "pinmame::afm_113b",
+      "frame": 4,
+      "fields": [
+        {
+          "format": 8,
+          "path": "audits\\B.3 Standard Audits\\01\\Games Started",
+          "value": 211
+        },
+        {
+          "format": 8,
+          "path": "audits\\B.3 Standard Audits\\02\\Total Plays",
+          "value": 170
+        },
+        {
+          "format": 8,
+          "path": "audits\\B.3 Standard Audits\\23\\Balls Played",
+          "value": 531
+        },
+        {
+          "format": 8,
+          "path": "audits\\B.3 Standard Audits\\24\\Tilts",
+          "value": 2
+        },
+        {
+          "format": 8,
+          "path": "game_state\\current_ball\\Ball",
+          "value": 85
+        },
+        {
+          "format": 8,
+          "path": "game_state\\current_player\\Current Player",
+          "value": 85
+        },
+        {
+          "format": 8,
+          "path": "game_state\\extra_balls\\Extra Balls",
+          "value": 85
+        },
+        {
+          "format": 8,
+          "path": "game_state\\game_over\\Game Over",
+          "value": 1
+        },
+        {
+          "format": 8,
+          "path": "game_state\\player_count\\Players",
+          "value": 1
+        },
+        {
+          "format": 8,
+          "path": "game_state\\scores\\Player 1",
+          "value": 350798730
+        },
+        {
+          "format": 8,
+          "path": "game_state\\scores\\Player 2",
+          "value": 0
+        },
+        {
+          "format": 8,
+          "path": "game_state\\scores\\Player 3",
+          "value": 0
+        },
+        {
+          "format": 8,
+          "path": "game_state\\scores\\Player 4",
+          "value": 0
+        }
+      ]
+    },
+    {
+      "game": "pinmame::afm_113b",
+      "frame": 9,
+      "fields": [
+        {
+          "format": 8,
+          "path": "audits\\B.3 Standard Audits\\01\\Games Started",
+          "value": 211
+        },
+        {
+          "format": 8,
+          "path": "audits\\B.3 Standard Audits\\02\\Total Plays",
+          "value": 170
+        },
+        {
+          "format": 8,
+          "path": "audits\\B.3 Standard Audits\\23\\Balls Played",
+          "value": 531
+        },
+        {
+          "format": 8,
+          "path": "audits\\B.3 Standard Audits\\24\\Tilts",
+          "value": 2
+        },
+        {
+          "format": 8,
+          "path": "game_state\\current_ball\\Ball",
+          "value": 170
+        },
+        {
+          "format": 8,
+          "path": "game_state\\current_player\\Current Player",
+          "value": 170
+        },
+        {
+          "format": 8,
+          "path": "game_state\\extra_balls\\Extra Balls",
+          "value": 170
+        },
+        {
+          "format": 8,
+          "path": "game_state\\game_over\\Game Over",
+          "value": 1
+        },
+        {
+          "format": 8,
+          "path": "game_state\\player_count\\Players",
+          "value": 1
+        },
+        {
+          "format": 8,
+          "path": "game_state\\scores\\Player 1",
+          "value": 350798730
+        },
+        {
+          "format": 8,
+          "path": "game_state\\scores\\Player 2",
+          "value": 0
+        },
+        {
+          "format": 8,
+          "path": "game_state\\scores\\Player 3",
+          "value": 0
+        },
+        {
+          "format": 8,
+          "path": "game_state\\scores\\Player 4",
+          "value": 0
+        }
+      ]
+    },
+    {
+      "game": "pinmame::afm_113b",
+      "frame": 14,
+      "fields": [
+        {
+          "format": 8,
+          "path": "audits\\B.3 Standard Audits\\01\\Games Started",
+          "value": 211
+        },
+        {
+          "format": 8,
+          "path": "audits\\B.3 Standard Audits\\02\\Total Plays",
+          "value": 170
+        },
+        {
+          "format": 8,
+          "path": "audits\\B.3 Standard Audits\\23\\Balls Played",
+          "value": 531
+        },
+        {
+          "format": 8,
+          "path": "audits\\B.3 Standard Audits\\24\\Tilts",
+          "value": 2
+        },
+        {
+          "format": 8,
+          "path": "game_state\\current_ball\\Ball",
+          "value": 170
+        },
+        {
+          "format": 8,
+          "path": "game_state\\current_player\\Current Player",
+          "value": 170
+        },
+        {
+          "format": 8,
+          "path": "game_state\\extra_balls\\Extra Balls",
+          "value": 170
+        },
+        {
+          "format": 8,
+          "path": "game_state\\game_over\\Game Over",
+          "value": 0
+        },
+        {
+          "format": 8,
+          "path": "game_state\\player_count\\Players",
+          "value": 1
+        },
+        {
+          "format": 8,
+          "path": "game_state\\scores\\Player 1",
+          "value": 350798730
+        },
+        {
+          "format": 8,
+          "path": "game_state\\scores\\Player 2",
+          "value": 0
+        },
+        {
+          "format": 8,
+          "path": "game_state\\scores\\Player 3",
+          "value": 0
+        },
+        {
+          "format": 8,
+          "path": "game_state\\scores\\Player 4",
+          "value": 0
+        }
+      ]
+    },
+    {
+      "game": "pinmame::afm_113b",
+      "frame": 15,
+      "fields": [
+        {
+          "format": 8,
+          "path": "audits\\B.3 Standard Audits\\01\\Games Started",
+          "value": 211
+        },
+        {
+          "format": 8,
+          "path": "audits\\B.3 Standard Audits\\02\\Total Plays",
+          "value": 170
+        },
+        {
+          "format": 8,
+          "path": "audits\\B.3 Standard Audits\\23\\Balls Played",
+          "value": 531
+        },
+        {
+          "format": 8,
+          "path": "audits\\B.3 Standard Audits\\24\\Tilts",
+          "value": 2
+        },
+        {
+          "format": 8,
+          "path": "game_state\\current_ball\\Ball",
+          "value": 0
+        },
+        {
+          "format": 8,
+          "path": "game_state\\current_player\\Current Player",
+          "value": 0
+        },
+        {
+          "format": 8,
+          "path": "game_state\\extra_balls\\Extra Balls",
+          "value": 0
+        },
+        {
+          "format": 8,
+          "path": "game_state\\game_over\\Game Over",
+          "value": 0
+        },
+        {
+          "format": 8,
+          "path": "game_state\\player_count\\Players",
+          "value": 1
+        },
+        {
+          "format": 8,
+          "path": "game_state\\scores\\Player 1",
+          "value": 350798730
+        },
+        {
+          "format": 8,
+          "path": "game_state\\scores\\Player 2",
+          "value": 0
+        },
+        {
+          "format": 8,
+          "path": "game_state\\scores\\Player 3",
+          "value": 0
+        },
+        {
+          "format": 8,
+          "path": "game_state\\scores\\Player 4",
+          "value": 0
+        }
+      ]
+    },
+    {
+      "game": "pinmame::afm_113b",
+      "frame": 213,
+      "fields": [
+        {
+          "format": 8,
+          "path": "audits\\B.3 Standard Audits\\01\\Games Started",
+          "value": 211
+        },
+        {
+          "format": 8,
+          "path": "audits\\B.3 Standard Audits\\02\\Total Plays",
+          "value": 170
+        },
+        {
+          "format": 8,
+          "path": "audits\\B.3 Standard Audits\\23\\Balls Played",
+          "value": 531
+        },
+        {
+          "format": 8,
+          "path": "audits\\B.3 Standard Audits\\24\\Tilts",
+          "value": 2
+        },
+        {
+          "format": 8,
+          "path": "game_state\\current_ball\\Ball",
+          "value": 0
+        },
+        {
+          "format": 8,
+          "path": "game_state\\current_player\\Current Player",
+          "value": 0
+        },
+        {
+          "format": 8,
+          "path": "game_state\\extra_balls\\Extra Balls",
+          "value": 0
+        },
+        {
+          "format": 8,
+          "path": "game_state\\game_over\\Game Over",
+          "value": 0
+        },
+        {
+          "format": 8,
+          "path": "game_state\\player_count\\Players",
+          "value": 1
+        },
+        {
+          "format": 8,
+          "path": "game_state\\scores\\Player 1",
+          "value": 350798730
+        },
+        {
+          "format": 8,
+          "path": "game_state\\scores\\Player 2",
+          "value": 0
+        },
+        {
+          "format": 8,
+          "path": "game_state\\scores\\Player 3",
+          "value": 0
+        },
+        {
+          "format": 8,
+          "path": "game_state\\scores\\Player 4",
+          "value": 0
+        }
+      ]
+    }
+  ]
+}
