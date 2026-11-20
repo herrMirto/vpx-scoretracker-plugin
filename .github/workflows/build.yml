@@ -8,7 +8,28 @@ on:
 permissions:
   contents: read
 jobs:
+  validate:
+    name: Validate source files
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+      - name: Validate project references and syntax
+        run: python3 scripts/validate-project.py
+      - name: Test CI helper regressions
+        run: python3 -m unittest discover -s tests -p 'test_*.py'
+      - name: Validate shell syntax
+        shell: bash
+        run: |
+          git ls-files -z -- '*.sh' | while IFS= read -r -d '' script; do
+            bash -n "$script"
+          done
   build:
+    needs: [validate]
+    env:
+      PYTHONUTF8: '1'
     strategy:
       fail-fast: false
       matrix:
@@ -32,22 +53,22 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y libgtk-3-0t64 libnss3 libasound2t64 libgbm1 xvfb
           sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
-      - name: Validate project
-        shell: bash
-        run: python3 scripts/validate-project.py
       - name: Stage pinned public plugin SDK
         shell: bash
         run: bash platforms/${{ matrix.platform }}/external.sh
       - name: Build standalone plugin
         shell: bash
         run: |
-          cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+          if [[ "$RUNNER_OS" == "Windows" ]]; then
+            cmake -S . -B build -A x64
+          else
+            cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+          fi
           cmake --build build --config Release --parallel
       - name: Ad-hoc sign local macOS module
         if: runner.os == 'macOS'
         run: codesign --force --sign - build/scoretracker/plugin-scoretracker.dylib
       - name: Test completed-game contract
-        if: runner.os != 'Windows'
         shell: bash
         run: ctest --test-dir build -C Release --output-on-failure
       - name: Build and test Viewer
@@ -68,6 +89,7 @@ jobs:
       - name: Create portable ZIPs
         shell: bash
         run: |
+          python3 -m unittest discover -s tests -p 'test_*.py'
           python3 scripts/package-plugin.py --platform ${{ matrix.platform }}
           python3 scripts/package-viewer.py --platform ${{ matrix.platform }}
       - uses: actions/upload-artifact@v7

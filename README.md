@@ -57,3 +57,8 @@ The plugin build uses the supplied VPX checkout's SDK and never installs anythin
 `third-party/include/revisions.txt` records that checkout's commit. Build the Viewer
 separately; neither build changes the VPX installation. Packaging uses
 `scripts/package-plugin.py` and `scripts/package-viewer.py`.
+
+`validate-project.py` is an optional source consistency check, not a build tool.
+CI runs it once on Linux, alongside a separate Bash syntax check. Each platform
+then compiles the plugin, runs capture/storage and Viewer tests, and packages its
+own binaries. Windows uses MSVC x64 and produces unsigned portable ZIPs.

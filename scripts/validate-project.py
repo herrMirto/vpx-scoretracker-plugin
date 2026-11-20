@@ -3,7 +3,6 @@
 import ast
 import json
 import re
-import shutil
 import subprocess
 import sys
 from html.parser import HTMLParser
@@ -13,19 +12,6 @@ from urllib.parse import unquote, urlsplit
 ROOT = Path(__file__).resolve().parents[1]
 errors = []
 checked = 0
-
-
-def find_bash():
-    if sys.platform != 'win32':
-        return 'bash'
-    git = shutil.which('git')
-    if git:
-        git_directory = Path(git).resolve().parent
-        for directory in (git_directory, git_directory.parent / 'bin', git_directory.parent / 'usr/bin'):
-            candidate = directory / 'bash.exe'
-            if candidate.is_file():
-                return str(candidate)
-    raise RuntimeError('Git Bash is required to validate shell scripts on Windows. Install Git for Windows and add git to PATH.')
 
 
 def require(path, owner):
@@ -130,18 +116,15 @@ for directory in (ROOT, frontend, ROOT / 'viewer', ROOT / 'docs'):
             target = path.parent / unquote(url.path)
             require(target, path.relative_to(ROOT))
 
-bash = find_bash()
+# Shell syntax is checked by the workflow's explicit Bash step. This Python
+# helper must not discover or invoke Bash/WSL on Windows.
 for directory in ('scripts', 'viewer', 'tests'):
     for path in (ROOT / directory).rglob('*.py'):
         ast.parse(path.read_text(encoding='utf-8'), filename=str(path))
-    for path in (ROOT / directory).rglob('*.sh'):
-        subprocess.run([bash, '-n', path.as_posix()], check=True)
-for path in (ROOT / 'build-standalone.sh',):
-    subprocess.run([bash, '-n', path.as_posix()], check=True)
 for path in list((frontend / 'scripts').glob('*.mjs')) + list((ROOT / 'pages').glob('*.js')):
     subprocess.run(['node', '--check', str(path)], check=True)
 subprocess.run([sys.executable, str(ROOT / 'scripts/check-version.py')], check=True)
 if errors:
     print('\n'.join(f'ERROR: {error}' for error in errors), file=sys.stderr)
     raise SystemExit(1)
-print(f'PASS: {checked} file references; TypeScript reachability; C++ manifest; HTML assets; workflow helpers; Python/shell/JavaScript syntax')
+print(f'PASS: {checked} file references; TypeScript reachability; C++ manifest; HTML assets; workflow helpers; Python/JavaScript syntax')

@@ -11,12 +11,12 @@ parser.add_argument('--platform',required=True,choices=['macos-arm64','macos-x64
 parser.add_argument('--build-dir',type=Path,default=ROOT/'build')
 args=parser.parse_args()
 stage=args.build_dir/'scoretracker'
-config=configparser.ConfigParser();config.read(stage/'plugin.cfg')
+config=configparser.ConfigParser();config.read(stage/'plugin.cfg',encoding='utf-8')
 platform,arch=args.platform.split('-',1)
 if platform=='windows' and arch=='mingw-x64':arch='x64'
 module=config['libraries'][f'{platform}.{arch}'].strip('"')
 if not (stage/module).is_file():raise SystemExit(f'Missing staged plugin: {module}')
-version=(ROOT/'VERSION').read_text().strip()
+version=(ROOT/'VERSION').read_text(encoding='utf-8').strip()
 output=ROOT/'dist'/f'scoretracker-plugin-{version}-{args.platform}.zip'
 output.parent.mkdir(exist_ok=True)
 # Allowlist: user histories, preferences and private keys must never enter a release.
@@ -28,5 +28,5 @@ with zipfile.ZipFile(output,'w',zipfile.ZIP_DEFLATED) as archive:
   archive.write(file,Path('scoretracker')/file.relative_to(stage))
  if revisions.exists():archive.write(revisions,'scoretracker/sdk-revisions.txt')
 checksum=hashlib.sha256(output.read_bytes()).hexdigest()
-output.with_suffix('.zip.sha256').write_text(f'{checksum}  {output.name}\n')
+output.with_suffix('.zip.sha256').write_text(f'{checksum}  {output.name}\n',encoding='utf-8')
 print(output)
