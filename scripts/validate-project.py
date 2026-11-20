@@ -31,7 +31,7 @@ def frontend_graph(entries):
         seen.add(path)
         if path.suffix not in ('.ts', '.mjs', '.js'):
             continue
-        for reference in re.findall(r'(?:from\s*|import\s*)[\'\"]([^\'\"]+)[\'\"]', path.read_text()):
+        for reference in re.findall(r'(?:from\s*|import\s*)[\'\"]([^\'\"]+)[\'\"]', path.read_text(encoding='utf-8')):
             if not reference.startswith('.'):
                 continue  # Node built-ins and declared npm dependencies are checked by tsc/build.
             target = path.parent / reference
@@ -48,7 +48,7 @@ for path in (frontend / 'src').rglob('*.ts'):
     if path.resolve() not in reachable:
         errors.append(f'Frontend source is disconnected from main.ts: {path.relative_to(ROOT)}')
 frontend_graph(list((frontend / 'tests').glob('*.ts')))
-package = json.loads((frontend / 'package.json').read_text())
+package = json.loads((frontend / 'package.json').read_text(encoding='utf-8'))
 for command in package['scripts'].values():
     for reference in re.findall(r'node\s+((?:scripts|tests)/[\w.-]+)', command):
         require(frontend / reference, 'companion/package.json')
@@ -61,7 +61,7 @@ if (frontend / 'desktop-dist').exists():
     require(frontend / package['main'], 'Electron entry point')
 
 
-cmake = (ROOT / 'CMakeLists.txt').read_text()
+cmake = (ROOT / 'CMakeLists.txt').read_text(encoding='utf-8')
 manifest_files = set(re.findall(r'((?:src|third-party)/[\w./-]+\.(?:cpp|c|h))(?![\w])', cmake))
 for name in manifest_files:
     if name.startswith('third-party/include/'):
@@ -94,10 +94,10 @@ html_entries = [frontend / 'index.html']
 if (ROOT / 'pages/index.html').is_file():
     html_entries.append(ROOT / 'pages/index.html')
 for path in html_entries:
-    LocalReferences(path).feed(path.read_text())
+    LocalReferences(path).feed(path.read_text(encoding='utf-8'))
 # Build helpers and local workflow actions must exist even on platforms not tested here.
 for path in (ROOT / '.github/workflows').glob('*.yml'):
-    text = path.read_text()
+    text = path.read_text(encoding='utf-8')
     for reference in re.findall(r'uses:\s*\./([^\s]+)', text):
         require(ROOT / reference, path.relative_to(ROOT))
     for reference in re.findall(r'\b(?:python3|bash)\s+((?:scripts|tests|viewer|\.github)/[\w./-]+\.(?:py|sh))', text):
@@ -109,7 +109,7 @@ for path in (ROOT / '.github/workflows').glob('*.yml'):
 # Markdown references are documentation entry points, not runtime imports.
 for directory in (ROOT, frontend, ROOT / 'viewer', ROOT / 'docs'):
     for path in directory.glob('*.md'):
-        for reference in re.findall(r'\[[^\]]*\]\(([^)]+)\)', path.read_text()):
+        for reference in re.findall(r'\[[^\]]*\]\(([^)]+)\)', path.read_text(encoding='utf-8')):
             url = urlsplit(reference)
             if url.scheme or url.netloc or not url.path:
                 continue
@@ -118,7 +118,7 @@ for directory in (ROOT, frontend, ROOT / 'viewer', ROOT / 'docs'):
 
 for directory in ('scripts', 'viewer', 'tests'):
     for path in (ROOT / directory).rglob('*.py'):
-        ast.parse(path.read_text(), filename=str(path))
+        ast.parse(path.read_text(encoding='utf-8'), filename=str(path))
     for path in (ROOT / directory).rglob('*.sh'):
         subprocess.run(['bash', '-n', str(path)], check=True)
 for path in (ROOT / 'build-standalone.sh',):

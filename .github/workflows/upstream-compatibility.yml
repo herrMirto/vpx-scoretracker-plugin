@@ -1,7 +1,5 @@
 name: Upstream compatibility
 on:
-  schedule:
-    - cron: '23 8 * * 1'
   workflow_dispatch:
   pull_request:
 permissions:
