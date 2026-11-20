@@ -79,6 +79,7 @@ jobs:
           npm --prefix companion run build
           npm --prefix companion run package
       - name: Test desktop window
+        timeout-minutes: 3
         shell: bash
         run: |
           if [[ "${{ runner.os }}" == "Linux" ]]; then

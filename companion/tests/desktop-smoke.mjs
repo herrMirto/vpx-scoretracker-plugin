@@ -4,7 +4,6 @@ import { join, resolve } from 'node:path';
 import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { _electron as electron } from 'playwright-core';
-import electronPath from 'electron';
 import { existsSync } from 'node:fs';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
@@ -26,12 +25,26 @@ const packaged = resolve(root, '../build/viewer', process.platform === 'darwin'
   ? `${process.arch === 'arm64' ? 'mac-arm64' : 'mac'}/ScoreTracker.app/Contents/MacOS/ScoreTracker`
   : process.platform === 'win32' ? 'win-unpacked/ScoreTracker.exe'
     : `${process.arch === 'arm64' ? 'linux-arm64-unpacked' : 'linux-unpacked'}/scoretracker-viewer`);
-const executable = process.env.SCORETRACKER_APP ?? (existsSync(packaged) ? packaged : undefined);
-const options = executable ? {executablePath: executable, args: ['--data-dir', data]} : {executablePath: electronPath, args: [root, '--data-dir', data]};
+// Importing the npm electron module can synchronously download another runtime.
+// Exercise the app produced by packaging instead, without a development fallback.
+const executable = process.env.SCORETRACKER_APP ?? packaged;
+const options = {executablePath: executable, args: ['--data-dir', data]};
 let application;
+let stage = 'launch packaged app';
+const deadline = setTimeout(() => {
+  console.error(`Desktop smoke test exceeded 120 seconds during: ${stage}`);
+  application?.process().kill('SIGKILL');
+  process.exit(1);
+}, 120_000);
+function checkpoint(value) { stage = value; console.log(`Desktop smoke: ${stage}`); }
 try {
+  assert.ok(existsSync(executable), `Packaged app missing: ${executable}. Run npm run build and npm run package first.`);
+  checkpoint('launch packaged app');
   application = await electron.launch({...options, timeout: 30000});
+  application.context().setDefaultTimeout(15000);
+  application.context().setDefaultNavigationTimeout(30000);
   const page = await application.firstWindow();
+  checkpoint('load fixture and renderer');
   const errors = [];
   page.on('pageerror', error => errors.push(String(error)));
   await page.route('https://api.vpinplay.com:8888/**', route => route.fulfill({status: 200, contentType: 'application/json', body: JSON.stringify({items: route.request().url().includes('/by-rom/afm_113b') ? [{vpsId: 'fixture-afm', vpsdb: {name: 'Attack from Mars', manufacturer: 'Bally', year: 1995}}] : []})}));
@@ -60,13 +73,15 @@ try {
     return response.json();
   });
   assert.equal(picked.tablesRoot, tables);
-  await promisify(execFile)(options.executablePath, [...(executable ? [] : [root]), '--data-dir', data], {timeout: 10000});
+  checkpoint('check single instance');
+  await promisify(execFile)(options.executablePath, ['--data-dir', data], {timeout: 10000});
   assert.equal(await application.evaluate(({BrowserWindow}) => BrowserWindow.getAllWindows().length), 1);
   await mkdir(resolve(root, '../build/viewer'), {recursive: true});
   await page.screenshot({path: resolve(root, '../build/viewer/desktop-smoke.png')});
   assert.deepEqual(errors, []);
   const original = await readFile(join(tables, 'scores.json'), 'utf8');
   assert.equal(original, fixtureText);
+  checkpoint('check collection');
   assert.equal(await page.locator('.brand strong').textContent(), 'VPX ScoreTracker Viewer');
   assert.equal(await page.locator('footer').innerText(), 'Scores stored locally');
   assert.equal(await page.locator('.table-tile').count(), 2);
@@ -78,6 +93,7 @@ try {
   assert.match(await page.locator('.table-tile').first().innerText(), /Attack from Mars/);
   await page.screenshot({path: resolve(root, '../build/viewer/desktop-home.png'), fullPage: true});
   await page.locator('.table-tile').first().click();
+  checkpoint('check table details');
   await page.waitForSelector('.chart-point');
   await page.waitForFunction(() => document.querySelector('.detail-kpis')?.textContent.includes('40%'));
   assert.equal(await page.locator('.chart-point').count(), 6);
@@ -110,10 +126,13 @@ try {
   assert.equal(removed, 200);
   assert.equal(JSON.parse(await readFile(join(tables, 'scores.json'), 'utf8')).games.length, 6);
   assert.deepEqual(errors, []);
+  checkpoint('close packaged app');
   await application.close(); application = undefined;
   assert.equal(await readFile(join(data, 'session.url'), 'utf8').catch(() => null), null);
   console.log('PASS: desktop layout, search/sort, live wheels and NVRAM, chart selection/range, zero and multiplayer scores, folders, API, single instance, isolated renderer and clean shutdown');
 } finally {
-  await application?.close();
-  await rm(data, {recursive: true, force: true});
+  try {
+    await application?.close();
+    await rm(data, {recursive: true, force: true});
+  } finally { clearTimeout(deadline); }
 }
