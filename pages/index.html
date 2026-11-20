@@ -1,0 +1,100 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="Downloads and installation instructions for the VPX ScoreTracker plugin and desktop Viewer.">
+  <title>VPX ScoreTracker</title>
+  <link rel="stylesheet" href="styles.css">
+  <script src="downloads.js" defer></script>
+</head>
+<body>
+  <a class="skip-link" href="#content">Skip to content</a>
+  <header class="site-header">
+    <div class="header-inner">
+    <a class="brand" href="#download" aria-label="VPX ScoreTracker">
+      <span class="brand-mark" aria-hidden="true"><i></i><i></i></span>
+      <span>VPX ScoreTracker</span>
+    </a>
+    <nav aria-label="Page sections">
+      <a href="#download">Download</a>
+      <a href="#install">Install</a>
+      <a href="#screenshots">Screenshots</a>
+      <a href="https://github.com/herrMirto/vpx-scoretracker-plugin">GitHub</a>
+    </nav>
+    </div>
+  </header>
+  <main id="content">
+    <section class="overview" aria-label="About ScoreTracker">
+      <p>VPX ScoreTracker saves your Visual Pinball X scores locally, with a desktop Viewer for browsing your tables and game history.</p>
+      <p>Score tracking is made possible by Tom Logic’s <a href="https://github.com/tomlogic/pinball-memory-maps">pinball-memory-maps</a> project, while VPX integration follows the example provided by <a href="https://github.com/jsm174/vpx-sample-plugin">jsm174/vpx-sample-plugin</a>.</p>
+    </section>
+    <section class="download" id="download" aria-labelledby="download-title">
+      <h1 id="download-title">Download</h1>
+      <p class="intro">The plugin and desktop Viewer are separate ZIP downloads.</p>
+      <div class="download-heading">
+        <span id="release-status" role="status" aria-live="polite">Checking latest release…</span>
+        <a href="https://github.com/herrMirto/vpx-scoretracker-plugin/releases">All releases</a>
+      </div>
+      <div class="download-options">
+        <article class="platform-card" aria-labelledby="macos-title">
+          <div class="platform-heading"><h2 id="macos-title">macOS</h2><span>Apple Silicon · arm64</span></div>
+          <div class="download-actions">
+            <a class="download-link" data-asset-template="scoretracker-plugin-{version}-macos-arm64.zip" data-kind="Plugin" href="https://github.com/herrMirto/vpx-scoretracker-plugin/releases/latest">Plugin ZIP</a>
+            <a class="download-link secondary" data-asset-template="scoretracker-viewer-{version}-macos-arm64.zip" data-kind="Viewer" href="https://github.com/herrMirto/vpx-scoretracker-plugin/releases/latest">Viewer ZIP</a>
+          </div>
+          <p class="platform-meta" data-platform-status="macos-arm64">Checking version…</p>
+        </article>
+        <article class="platform-card" aria-labelledby="linux-title">
+          <div class="platform-heading"><h2 id="linux-title">Linux</h2><span>x64</span></div>
+          <div class="download-actions">
+            <a class="download-link" data-asset-template="scoretracker-plugin-{version}-linux-x64.zip" data-kind="Plugin" href="https://github.com/herrMirto/vpx-scoretracker-plugin/releases/latest">Plugin ZIP</a>
+            <a class="download-link secondary" data-asset-template="scoretracker-viewer-{version}-linux-x64.zip" data-kind="Viewer" href="https://github.com/herrMirto/vpx-scoretracker-plugin/releases/latest">Viewer ZIP</a>
+          </div>
+          <p class="platform-meta" data-platform-status="linux-x64">Checking version…</p>
+        </article>
+      </div>
+      <noscript><p class="download-fallback">Download links open the latest GitHub release.</p></noscript>
+    </section>
+    <section class="install" id="install" aria-labelledby="install-title">
+      <header class="section-heading"><h2 id="install-title">Install</h2></header>
+      <div class="install-grid">
+        <article class="install-card">
+          <h3>Install Plugin</h3>
+          <ol>
+            <li>Close Visual Pinball X.</li>
+            <li>Extract the <code>scoretracker/</code> folder from the plugin ZIP into your VPX plugins directory.</li>
+            <li>Enable ScoreTracker in VPX settings, or add the following to <code>VPinballX.ini</code>:</li>
+          </ol>
+          <pre><code>[Plugin.ScoreTracker]
+Enable = 1
+Notifications = 1</code></pre>
+          <dl class="paths"><dt>macOS</dt><dd><code>Your VPX app/Contents/PlugIns/scoretracker/</code></dd><dt>Linux</dt><dd><code>plugins/scoretracker/</code> inside your VPX installation.</dd></dl>
+        </article>
+        <article class="install-card">
+          <h3>Install Viewer</h3>
+          <ol>
+            <li>Extract the entire Viewer ZIP.</li>
+            <li>On macOS, open <code>ScoreTracker.app</code>. On Linux, open <code>ScoreTracker/scoretracker-viewer</code>.</li>
+            <li>Choose your tables folder. Select your VPX installation to read the table high scores from NVRAM.</li>
+          </ol>
+        </article>
+      </div>
+    </section>
+    <section class="screenshots" id="screenshots" aria-labelledby="screenshots-title">
+      <header class="section-heading"><h2 id="screenshots-title">Screenshots</h2><p>VPX ScoreTracker Viewer · example data</p></header>
+      <div class="screenshot-grid">
+        <figure class="screenshot-card">
+          <a class="screenshot-frame" href="assets/viewer-collection.png" target="_blank" rel="noopener" aria-label="Open collection screenshot"><img src="assets/viewer-collection.png" alt="Viewer collection with table wheels, personal bests and score history" width="2560" height="1920" loading="lazy"></a>
+          <figcaption>Collection</figcaption>
+        </figure>
+        <figure class="screenshot-card">
+          <a class="screenshot-frame" href="assets/viewer-table-detail.png" target="_blank" rel="noopener" aria-label="Open table details screenshot"><img src="assets/viewer-table-detail.png" alt="Table details with a score chart, game history and NVRAM high scores" width="2560" height="1920" loading="lazy"></a>
+          <figcaption>Table details</figcaption>
+        </figure>
+      </div>
+    </section>
+    <footer><span>VPX ScoreTracker</span><a href="https://github.com/herrMirto/vpx-scoretracker-plugin">GitHub</a></footer>
+  </main>
+</body>
+</html>

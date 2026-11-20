@@ -35,6 +35,7 @@ NVRAM/maps. It does not install the plugin or upload scores.
 - `viewer/`, `companion/`: Electron desktop Viewer, TypeScript interface and read-only decoders.
 - `platforms/`: public VPX SDK staging for supported build targets.
 - `scripts/`, `tests/`, `.github/`: validation, packaging, tests and CI.
+- `pages/`: GitHub Pages downloads, installation instructions and Viewer screenshots.
 - `third-party/`: SDK staging instructions; generated headers are ignored.
 
 Generated output belongs in `build/`, `dist/` and `companion/desktop-dist/`. No profiling tools,

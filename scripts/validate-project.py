@@ -90,7 +90,10 @@ class LocalReferences(HTMLParser):
             require(target, self.path.relative_to(ROOT))
 
 
-for path in (frontend / 'index.html',):
+html_entries = [frontend / 'index.html']
+if (ROOT / 'pages/index.html').is_file():
+    html_entries.append(ROOT / 'pages/index.html')
+for path in html_entries:
     LocalReferences(path).feed(path.read_text())
 # Build helpers and local workflow actions must exist even on platforms not tested here.
 for path in (ROOT / '.github/workflows').glob('*.yml'):
@@ -120,7 +123,7 @@ for directory in ('scripts', 'viewer', 'tests'):
         subprocess.run(['bash', '-n', str(path)], check=True)
 for path in (ROOT / 'build-standalone.sh',):
     subprocess.run(['bash', '-n', str(path)], check=True)
-for path in list((frontend / 'scripts').glob('*.mjs')):
+for path in list((frontend / 'scripts').glob('*.mjs')) + list((ROOT / 'pages').glob('*.js')):
     subprocess.run(['node', '--check', str(path)], check=True)
 subprocess.run([sys.executable, str(ROOT / 'scripts/check-version.py')], check=True)
 if errors:
